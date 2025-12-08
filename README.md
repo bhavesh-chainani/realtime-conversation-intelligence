@@ -8,7 +8,7 @@ A real-time legal call assistant system that provides live AI-powered suggestion
 
 - **Real-Time Transcription**: Live speech-to-text using AssemblyAI WebSocket API (frontend connects directly for lowest latency)
 - **AI-Powered Suggestions**: Intelligent, context-aware recommendations for operators
-- **Pro Bono SG Integration**: Specialized for Pro Bono SG's legal assistance workflow
+- **Legal Entity Integration**: Specialized for legal entity in singapore's legal assistance workflow
 - **Live Conversation Intelligence**: Real-time analysis of ongoing conversations
 - **Operator Support**: Actionable suggestions including follow-up questions, document requests, and issue identification
 - **Customer Data Extraction**: Automatically extracts structured information (name, NRIC, address, purpose) from conversations
@@ -286,7 +286,7 @@ curl http://localhost:8000/config
 - CORS is configured permissively for development (`allow_origins=["*"]`). **Restrict this for production**.
 - The backend provides comprehensive logging for all suggestion requests, making it easy to debug and monitor the system.
 - Suggestions are generated in real-time from finalized transcript turns and update automatically.
-- The system is optimized for Pro Bono SG's workflow, providing context-aware recommendations for legal assistance operators.
+- The system is optimized for legal entity in singapore's workflow, providing context-aware recommendations for legal assistance operators.
 
 ## 📄 License
 

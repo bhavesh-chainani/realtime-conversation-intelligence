@@ -21,7 +21,7 @@ class CustomerDataExtractor:
         self.api_key = OPENAI_API_KEY
         self.client = OpenAI(api_key=self.api_key) if self.api_key else None
     
-    SYSTEM_PROMPT = """You are a customer information extraction system for Pro Bono SG's legal assistance calls.
+    SYSTEM_PROMPT = """You are a customer information extraction system for a legal entity in singapore's legal assistance calls.
 
 Your task is to extract specific customer information from conversation transcripts:
 - Name: Full name of the customer/caller
