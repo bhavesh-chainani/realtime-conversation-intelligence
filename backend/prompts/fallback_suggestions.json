@@ -1,0 +1,21 @@
+[
+  {
+    "type": "Information Gathering",
+    "topic": "Gather essential details about the caller's legal situation and timeline of events.",
+    "confidence": 0.6,
+    "details": {
+      "possibleConversation": "I'd like to understand your situation better. Could you tell me more about what's happening and when this occurred?",
+      "priority": "medium"
+    }
+  },
+  {
+    "type": "Follow-up Question",
+    "topic": "Identify the specific legal area or issue to route the caller to appropriate assistance.",
+    "confidence": 0.6,
+    "details": {
+      "possibleConversation": "To help you better, could you tell me what type of legal assistance you're seeking?",
+      "priority": "high"
+    }
+  }
+]
+

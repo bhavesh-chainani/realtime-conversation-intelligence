@@ -1,0 +1,48 @@
+# Data files
+data/
+
+# Environment variables
+.env
+frontend/.env
+frontend/.env.local
+
+# Logs
+logs/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Cache
+cache/
+__pycache__/
+backend/__pycache__/
+.pytest_cache/
+frontend/.next/
+frontend/.turbo/
+frontend/.vercel/
+frontend/.cache/
+
+# Temp files
+temp/
+
+#Virtual environment
+rag_chatbot_venv/
+.venv/
+venv/
+
+# Node modules and build
+frontend/node_modules/
+frontend/.nuxt/
+frontend/dist/
+frontend/build/
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+
+node_modules/
+frontend/node_modules/
+.next/
+dist/
+

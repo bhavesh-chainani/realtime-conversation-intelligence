@@ -1,0 +1,21 @@
+Analyze this conversation transcript and extract context, then decide if the operator should receive AI suggestions now.
+
+CONVERSATION TRANSCRIPT:
+{conversation_transcript}
+
+FIRST, analyze what information has ALREADY been discussed in this conversation. Identify:
+- Key facts, numbers, dates, or details mentioned (e.g., salary amounts, dates, document types)
+- Topics or questions that have been answered
+- Information gaps that still need to be addressed
+
+THEN, decide if suggestions are needed.
+
+Return a JSON object with:
+- "should_suggest": boolean (true if suggestions should be generated)
+- "confidence": float 0.0-1.0 (confidence in this decision)
+- "reason": string (brief explanation)
+- "known_info": array of strings (key information that has already been gathered, e.g., ["Salary: $1000/month mentioned", "Contract exists but not yet reviewed"])
+- "missing_info": array of strings (information gaps that still need to be addressed)
+
+Be decisive and prioritize real-time responsiveness. CRITICAL: Track what's already been said to avoid redundant suggestions.
+

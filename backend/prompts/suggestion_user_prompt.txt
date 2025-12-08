@@ -1,0 +1,26 @@
+Analyze this live conversation transcript and provide {max_suggestions} real-time suggestions for the operator.
+
+CONVERSATION TRANSCRIPT:
+{conversation_transcript}
+
+CONTEXT ANALYSIS (from previous analysis):
+Information ALREADY GATHERED (DO NOT ask about these again):
+{known_info}
+
+Information STILL MISSING (focus suggestions on these gaps):
+{missing_info}
+
+CRITICAL INSTRUCTIONS:
+- NEVER suggest asking for information that is listed in "Information ALREADY GATHERED" above
+- Focus suggestions on the "Information STILL MISSING" gaps
+- If the caller has already mentioned something (e.g., salary amount, dates, documents), DO NOT ask about it again
+- Acknowledge what you already know from the conversation context
+
+For each suggestion, provide:
+1. TOPIC/CONTEXT - Identify what specific topic or context the operator should follow up on (1-2 sentences). This should be clear and actionable.
+2. POSSIBLE CONVERSATION - Provide the exact words/phrasing the operator should say regarding that topic (1-2 sentences, concise and natural). Reference what's already known if relevant. Focus on gathering missing information, not repeating what's already been said.
+
+Focus on being helpful, empathetic, and gathering essential information efficiently. Keep all suggestions brief and actionable.
+
+Return as JSON array only. Be fast and concise.
+
