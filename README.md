@@ -1,52 +1,70 @@
-## Real-Time Legal Assistant – Pro Bono SG
+# Real-Time Conversation Intelligence
 
 A real-time legal call assistant system that provides live AI-powered suggestions to operators during active calls with clients. Built with FastAPI backend and Next.js frontend, featuring real-time speech-to-text transcription via AssemblyAI and intelligent suggestions powered by OpenAI.
 
-### Features
+![App Screenshot](./screenshot.png)
+
+## ✨ Features
 
 - **Real-Time Transcription**: Live speech-to-text using AssemblyAI WebSocket API (frontend connects directly for lowest latency)
 - **AI-Powered Suggestions**: Intelligent, context-aware recommendations for operators
 - **Pro Bono SG Integration**: Specialized for Pro Bono SG's legal assistance workflow
 - **Live Conversation Intelligence**: Real-time analysis of ongoing conversations
 - **Operator Support**: Actionable suggestions including follow-up questions, document requests, and issue identification
+- **Customer Data Extraction**: Automatically extracts structured information (name, NRIC, address, purpose) from conversations
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.11+
-- Node.js and npm (for frontend)
-- An AssemblyAI API key (for realtime STT)
-- An OpenAI API key (for AI-powered suggestions)
+- **Python 3.11+** (check with `python3 --version`)
+- **Node.js 18+** and npm (check with `node --version` and `npm --version`)
+- **AssemblyAI API Key** ([Get one here](https://www.assemblyai.com/))
+- **OpenAI API Key** ([Get one here](https://platform.openai.com/api-keys))
 
-### 1) Clone and Setup
+### Installation & Setup
+
+#### 1. Clone the Repository
 
 ```bash
-git clone <this-repo> rag_chatbot_legal
-cd rag_chatbot_legal
-
-python3.11 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -U pip
+git clone https://github.com/yourusername/realtime-conversation-intelligence.git
+cd realtime-conversation-intelligence
 ```
 
-### 2) Install Backend Dependencies
+#### 2. Set Up Python Backend
 
 ```bash
+# Create virtual environment
+python3.11 -m venv realtime-venv
+
+# Activate virtual environment
+# On macOS/Linux:
+source realtime-venv/bin/activate
+# On Windows:
+# realtime-venv\Scripts\activate
+
+# Upgrade pip
+pip install --upgrade pip
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3) Configure Environment Variables
+#### 3. Configure Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root directory:
 
 ```bash
 # AssemblyAI for realtime transcription
-ASSEMBLYAI_API_KEY=your_assemblyai_api_key
+ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
 
 # OpenAI API configuration
-OPENAI_API_KEY=your_openai_api_key
+OPENAI_API_KEY=your_openai_api_key_here
 ```
 
-### 4) Configure Suggestion Settings
+**Note**: Replace `your_assemblyai_api_key_here` and `your_openai_api_key_here` with your actual API keys.
+
+#### 4. Configure Suggestion Settings (Optional)
 
 Edit `config.json` to customize suggestion behavior:
 
@@ -54,91 +72,143 @@ Edit `config.json` to customize suggestion behavior:
 {
   "suggestion_model": "gpt-3.5-turbo",
   "suggestion_temperature": 0.3,
-  "max_suggestions": 3
+  "max_suggestions": 2
 }
 ```
 
-**Note**: You can use any OpenAI model (e.g., `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`). The default is `gpt-3.5-turbo` for cost-effectiveness.
+**Available Models**: You can use any OpenAI model (e.g., `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`). The default is `gpt-3.5-turbo` for cost-effectiveness.
 
-### 5) Customize AI Prompts
+#### 5. Set Up Frontend
 
-All AI prompts are stored in separate files for easy customization. Edit the files in `backend/prompts/` to modify the behavior of the agents:
+```bash
+cd frontend
+npm install
+cd ..
+```
 
-**Router Agent Prompts** (controls when suggestions are generated):
-- `router_system_prompt.txt` – System instructions for the router agent that decides when to generate suggestions
-- `router_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` placeholder)
+### Running the Application
 
-**Suggestion Agent Prompts** (controls what suggestions are generated):
-- `suggestion_system_prompt.txt` – System instructions for the suggestion agent that generates actionable recommendations
-- `suggestion_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` and `{max_suggestions}` placeholders)
+#### Start the Backend Server
 
-**Fallback Suggestions** (shown when the AI fails):
-- `fallback_suggestions.json` – JSON array of fallback suggestion objects to use when errors occur
-
-**Example**: To customize the router agent's behavior, edit `backend/prompts/router_system_prompt.txt` and modify the decision criteria or instructions. The changes will take effect after restarting the backend server.
-
-**Note**: Prompt files support template placeholders (e.g., `{conversation_transcript}`) which are automatically replaced with actual values at runtime. Do not modify these placeholders unless you understand the code structure.
-
-### 6) Run the Backend
+In your terminal (with virtual environment activated):
 
 ```bash
 uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The backend provides the following endpoints:
+The backend will be available at `http://localhost:8000`
+
+**Available Endpoints**:
 - `GET /health` – Service health check
 - `GET /config` – Configuration introspection (shows loaded keys/models)
 - `POST /suggest` – AI suggestions endpoint (accepts conversation transcript)
-- `POST /extract-customer-data` – Extract customer information (name, NRIC, address, purpose) from conversation transcript
+- `POST /extract-customer-data` – Extract customer information from conversation transcript
 
-Note: A backend WebSocket proxy (`WS /ws/stt`) exists but is optional. The frontend now connects directly to AssemblyAI for the best latency; the proxy can be used only if your environment requires server-side brokering.
+#### Start the Frontend Development Server
 
-**Backend Logging**: The suggestions endpoint provides detailed logging:
-- Input conversation transcripts with character counts
-- API call details (model, request parameters)
-- Output suggestions with type, text, confidence, priority, and follow-up questions
-- Error traces and fallback suggestions
-
-### 7) Run the Frontend
+Open a **new terminal** (keep backend running):
 
 ```bash
 cd frontend
-npm install
 npm run dev
 ```
 
-The frontend runs at `http://localhost:3000` and automatically connects to the backend at `http://localhost:8000`.
+The frontend will be available at `http://localhost:3000`
 
-**Usage**:
-1. Paste your AssemblyAI API key in the header
-2. Click "Start" to begin transcription (browser will request microphone access)
-3. Speak – partial transcript appears instantly; when finalized it overwrites the partial (no duplicates)
-4. AI suggestions appear in real time on the right, driven by a two‑agent pipeline on the backend
-5. Suggestions are generated from finalized transcript turns only and update automatically
+### Usage
+
+1. **Open the Application**: Navigate to `http://localhost:3000` in your browser
+2. **Enter API Key**: Paste your AssemblyAI API key in the header input field
+3. **Start Transcription**: Click the "Start" button (browser will request microphone access)
+4. **Speak**: Begin speaking - partial transcript appears instantly
+5. **View Suggestions**: AI-powered suggestions appear in real-time on the right side
+6. **Stop**: Click "Stop" to end the transcription session
+
+**How It Works**:
+- Partial transcripts appear instantly as you speak
+- When finalized, transcripts overwrite partial text (no duplicates)
+- AI suggestions are generated automatically from finalized transcript turns
+- Suggestions update in real-time as the conversation progresses
+
+## 🏗️ Architecture
 
 ### How It Works
 
-1. **Real-Time Transcription (Frontend)**: The frontend streams audio directly to AssemblyAI over WebSocket and renders partial text immediately; final text overwrites the partial to avoid duplicates.
-2. **Transcript Analysis (Backend)**: Finalized transcript turns are posted to the `/suggest` endpoint.
-3. **AI Suggestions (Two‑Agent Pipeline)**:
+1. **Real-Time Transcription (Frontend)**: 
+   - Frontend streams audio directly to AssemblyAI over WebSocket
+   - Partial text renders immediately
+   - Final text overwrites partial to avoid duplicates
+
+2. **Transcript Analysis (Backend)**: 
+   - Finalized transcript turns are posted to `/suggest` endpoint
+   - Backend processes conversation context
+
+3. **AI Suggestions (Two-Agent Pipeline)**:
    - **Router Agent**: Analyzes conversation and decides when suggestions are needed
    - **Suggestion Agent**: Generates actionable recommendations including:
      - Follow-up questions to gather essential information
      - Legal issue identification
      - Document requests
      - Urgency assessment
-     - Natural language responses for operators to use
-4. **Customer Data Extraction**: The `/extract-customer-data` endpoint can extract structured information (name, NRIC, address, purpose) from conversation transcripts using AI.
+     - Natural language responses for operators
 
-### Troubleshooting
+4. **Customer Data Extraction**: 
+   - `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from conversation transcripts using AI
 
-- **Microphone not working**: Check browser permissions and ensure your AssemblyAI API key is present in the UI.
-- **Suggestions not appearing**: Verify `OPENAI_API_KEY` is configured in your `.env` file and that you have sufficient OpenAI API credits.
-- **Duplicate lines in conversation**: The UI normalizes final vs partial and replaces duplicates automatically. If you still see duplicates, refresh and try again.
-- **Backend errors**: Check FastAPI logs; `/suggest` logs input and output details.
-- **Frontend connection issues**: Ensure the frontend can reach AssemblyAI WebSocket (corporate networks may require allowing wss to `streaming.assemblyai.com`).
+## 📁 Project Structure
 
-### Optional: RAG Setup with Pinecone
+```
+realtime-conversation-intelligence/
+├── backend/                    # FastAPI backend
+│   ├── api.py                 # FastAPI application and routes
+│   ├── suggestions.py         # Two-agent AI suggestion endpoint
+│   ├── router_agent.py        # Router agent logic
+│   ├── suggestion_agent.py    # Suggestion agent logic
+│   ├── customer_data_extractor.py  # Customer data extraction
+│   ├── prompt_loader.py       # Prompt loading utility
+│   ├── assemblyai_ws.py       # Optional WebSocket proxy
+│   ├── config.py              # Environment and configuration
+│   └── prompts/               # Editable prompt files
+│       ├── router_system_prompt.txt
+│       ├── router_user_prompt.txt
+│       ├── suggestion_system_prompt.txt
+│       ├── suggestion_user_prompt.txt
+│       └── fallback_suggestions.json
+├── frontend/                  # Next.js frontend
+│   ├── app/
+│   │   ├── page.tsx           # Main conversation UI
+│   │   └── layout.tsx          # Next.js layout
+│   └── package.json
+├── database_setup/            # Optional RAG setup
+│   ├── pdf_processor.py
+│   └── pinecone_setup.py
+├── config.json                # Suggestion settings
+├── requirements.txt           # Python dependencies
+└── README.md                  # This file
+```
+
+## 🎨 Customization
+
+### Customizing AI Prompts
+
+All AI prompts are stored in separate files for easy customization. Edit the files in `backend/prompts/` to modify agent behavior:
+
+**Router Agent Prompts** (controls when suggestions are generated):
+- `router_system_prompt.txt` – System instructions for the router agent
+- `router_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` placeholder)
+
+**Suggestion Agent Prompts** (controls what suggestions are generated):
+- `suggestion_system_prompt.txt` – System instructions for the suggestion agent
+- `suggestion_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` and `{max_suggestions}` placeholders)
+
+**Fallback Suggestions** (shown when the AI fails):
+- `fallback_suggestions.json` – JSON array of fallback suggestion objects
+
+**Note**: Prompt files support template placeholders (e.g., `{conversation_transcript}`) which are automatically replaced at runtime. Do not modify these placeholders unless you understand the code structure.
+
+Changes take effect after restarting the backend server.
+
+## 🔧 Optional: RAG Setup with Pinecone
 
 For enhanced legal document retrieval, you can set up a Pinecone vector database:
 
@@ -161,31 +231,71 @@ cd database_setup
 python pinecone_setup.py
 ```
 
-### Project Structure
+## 🐛 Troubleshooting
 
-**Backend** (`backend/`):
-- `api.py` – FastAPI application and route configuration
-- `suggestions.py` – Two‑agent AI suggestion endpoint (Router → Suggestion)
-- `router_agent.py` – Router agent that decides when to generate suggestions
-- `suggestion_agent.py` – Suggestion agent that generates actionable recommendations
-- `customer_data_extractor.py` – Extracts customer information from conversation transcripts
-- `prompt_loader.py` – Utility for loading prompts from external files
-- `assemblyai_ws.py` – Optional WebSocket proxy for AssemblyAI (not required for default flow)
-- `config.py` – Environment and configuration management
-- `prompts/` – Directory containing all editable prompt files (see section 5)
+### Common Issues
 
-**Frontend** (`frontend/`):
-- `app/page.tsx` – Main conversation UI with real-time transcription and suggestions
-- `app/layout.tsx` – Next.js layout configuration
+**Microphone not working**:
+- Check browser permissions (allow microphone access when prompted)
+- Ensure your AssemblyAI API key is present in the UI
+- Try refreshing the page and granting permissions again
 
-**Configuration**:
-- `config.json` – Suggestion model and behavior settings
-- `.env` – Environment variables (not tracked in git)
-- `backend/prompts/` – Editable prompt files for customizing AI agent behavior
+**Suggestions not appearing**:
+- Verify `OPENAI_API_KEY` is configured in your `.env` file
+- Check that you have sufficient OpenAI API credits
+- Review backend logs for error messages
+- Test the `/config` endpoint: `curl http://localhost:8000/config`
 
-### Notes
+**Backend connection issues**:
+- Ensure backend is running on port 8000
+- Check that virtual environment is activated
+- Verify all dependencies are installed: `pip list`
+- Review FastAPI logs for detailed error messages
 
-- CORS is configured permissively for development (`allow_origins=["*"]`). Restrict this for production.
+**Frontend connection issues**:
+- Ensure frontend is running on port 3000
+- Check that backend is accessible at `http://localhost:8000`
+- Verify CORS settings if accessing from different origin
+- Ensure AssemblyAI WebSocket can connect (corporate networks may require allowing `wss://streaming.assemblyai.com`)
+
+**Duplicate lines in conversation**:
+- The UI normalizes final vs partial transcripts automatically
+- If duplicates persist, refresh the page and try again
+- Check browser console for errors
+
+### Debugging
+
+**Backend Logging**: The suggestions endpoint provides detailed logging:
+- Input conversation transcripts with character counts
+- API call details (model, request parameters)
+- Output suggestions with type, text, confidence, priority
+- Error traces and fallback suggestions
+
+**Check Backend Health**:
+```bash
+curl http://localhost:8000/health
+```
+
+**Check Configuration**:
+```bash
+curl http://localhost:8000/config
+```
+
+## 📝 Notes
+
+- CORS is configured permissively for development (`allow_origins=["*"]`). **Restrict this for production**.
 - The backend provides comprehensive logging for all suggestion requests, making it easy to debug and monitor the system.
-- Suggestions are generated in real time from finalized transcript turns and update automatically.
+- Suggestions are generated in real-time from finalized transcript turns and update automatically.
 - The system is optimized for Pro Bono SG's workflow, providing context-aware recommendations for legal assistance operators.
+
+## 📄 License
+
+See [LICENSE](./LICENSE) file for details.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📧 Support
+
+For issues and questions, please open an issue on GitHub.
