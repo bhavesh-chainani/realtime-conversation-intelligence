@@ -1,5 +1,6 @@
 {
   "suggestion_model": "gpt-3.5-turbo",
   "suggestion_temperature": 0.3,
-  "max_suggestions": 2
+  "max_suggestions": 2,
+  "assemblyai_keyterms": []
 }

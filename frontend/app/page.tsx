@@ -36,6 +36,8 @@ type CustomerDataFields = keyof CustomerData;
 export default function Page() {
   const [backendUrl] = useLocalStorage('BACKEND_URL', 'http://localhost:8000');
   const [aaiKey, setAaiKey] = useState<string>('');
+  /** AssemblyAI streaming v3: boosted terms via `keyterms_prompt` query param (not legacy `word_boost`). */
+  const [aaiKeyterms, setAaiKeyterms] = useState<string[]>([]);
   const [turns, setTurns] = useState<string[]>([]);
   const [live, setLive] = useState<string>('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -51,6 +53,9 @@ export default function Page() {
   const mediaRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const mediaSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  /** Bumps on each new `openWs` so stale async continuations do not attach after Stop or a second Start. */
+  const streamAttemptRef = useRef(0);
   const liveRef = useRef<string>(''); // Track live text for deduplication checks
   const lastCustomerDataExtractRef = useRef<string>(''); // Track last transcript we extracted from
 
@@ -63,6 +68,11 @@ export default function Page() {
           const data = await res.json();
           if (data.api_key) {
             setAaiKey(data.api_key);
+            if (Array.isArray(data.keyterms_prompt)) {
+              setAaiKeyterms(data.keyterms_prompt.map((t: unknown) => String(t)));
+            } else {
+              setAaiKeyterms([]);
+            }
           } else if (data.error) {
             console.error('[Frontend] Failed to load AssemblyAI API key:', data.error);
           }
@@ -93,13 +103,21 @@ export default function Page() {
       alert('AssemblyAI API key not loaded. Please ensure ASSEMBLYAI_API_KEY is set in your .env file and the backend is running.');
       return;
     }
-    
+
+    closeWs();
+    const myAttempt = streamAttemptRef.current;
+
     const media = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (myAttempt !== streamAttemptRef.current) {
+      media.getTracks().forEach((t) => t.stop());
+      return;
+    }
     mediaRef.current = media;
     const AudioContextCls = (window as any).AudioContext || (window as any).webkitAudioContext;
     const ctx = new AudioContextCls();
     audioCtxRef.current = ctx;
     const source = ctx.createMediaStreamSource(media);
+    mediaSourceRef.current = source;
     const proc = ctx.createScriptProcessor(4096, 1, 1);
     processorRef.current = proc;
     source.connect(proc); proc.connect(ctx.destination);
@@ -109,15 +127,23 @@ export default function Page() {
       return out.buffer;
     }
     
-    // Connect directly to AssemblyAI WebSocket (original working implementation)
+    // Connect directly to AssemblyAI WebSocket v3 (keyterms_prompt = JSON array string per API docs)
     const params = new URLSearchParams({ sample_rate: String(ctx.sampleRate || 48000), format_turns: 'true', token: aaiKey });
+    if (aaiKeyterms.length > 0) {
+      params.set('keyterms_prompt', JSON.stringify(aaiKeyterms));
+    }
     const ws = new WebSocket(`wss://streaming.assemblyai.com/v3/ws?${params}`);
+    if (myAttempt !== streamAttemptRef.current) {
+      try { ws.close(); } catch {}
+      return;
+    }
     wsRef.current = ws;
-    
+
     proc.onaudioprocess = (e: AudioProcessingEvent) => {
-      if (!ws || ws.readyState !== 1) return;
+      const socket = wsRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
       const pcm = pcmEncode(e.inputBuffer.getChannelData(0));
-      try { ws.send(pcm); } catch {}
+      try { socket.send(pcm); } catch {}
     };
     
     ws.onmessage = (evt) => {
@@ -241,14 +267,36 @@ export default function Page() {
   }
 
   function closeWs() {
-    try { wsRef.current?.close(); } catch {}
+    streamAttemptRef.current += 1;
+
+    const ws = wsRef.current;
     wsRef.current = null;
-    try { processorRef.current?.disconnect(); } catch {}
+    if (ws) {
+      try {
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+      } catch {}
+      try { ws.close(); } catch {}
+    }
+
+    const proc = processorRef.current;
     processorRef.current = null;
-    try { audioCtxRef.current?.close(); } catch {}
+    if (proc) {
+      try { proc.onaudioprocess = null; } catch {}
+      try { proc.disconnect(); } catch {}
+    }
+
+    try { mediaSourceRef.current?.disconnect(); } catch {}
+    mediaSourceRef.current = null;
+
+    const ctx = audioCtxRef.current;
     audioCtxRef.current = null;
-    try { mediaRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+    try { ctx?.close(); } catch {}
+
+    try { mediaRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
     mediaRef.current = null;
+
     setLive('');
     liveRef.current = '';
   }

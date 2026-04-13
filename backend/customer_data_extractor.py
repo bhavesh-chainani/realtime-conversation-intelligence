@@ -9,18 +9,20 @@ from .config import OPENAI_API_KEY, SUGGESTION_MODEL, SUGGESTION_TEMPERATURE
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
 class ExtractCustomerDataRequest(BaseModel):
     conversation_transcript: str
 
+
 class CustomerDataExtractor:
     """Extracts customer information from conversation transcripts using LLM"""
-    
+
     def __init__(self):
         self.model = SUGGESTION_MODEL
         self.temperature = SUGGESTION_TEMPERATURE
         self.api_key = OPENAI_API_KEY
         self.client = OpenAI(api_key=self.api_key) if self.api_key else None
-    
+
     SYSTEM_PROMPT = """You are a customer information extraction system for a legal entity in singapore's legal assistance calls.
 
 Your task is to extract specific customer information from conversation transcripts:
@@ -60,19 +62,21 @@ Return a JSON object with the extracted information. If any field is not mention
                 "name": None,
                 "nric_worker_permit_id": None,
                 "address": None,
-                "purpose_of_call": None
+                "purpose_of_call": None,
             }
-        
+
         try:
             user_prompt = self.USER_PROMPT_TEMPLATE.format(
                 conversation_transcript=conversation_transcript
             )
-            
-            logger.info(f"[Customer Data Extractor] Extracting data from transcript ({len(conversation_transcript)} chars)")
-            
+
+            logger.info(
+                f"[Customer Data Extractor] Extracting data from transcript ({len(conversation_transcript)} chars)"
+            )
+
             if not self.client:
                 raise ValueError("OpenAI API key not configured")
-            
+
             response = self.client.chat.completions.create(
                 model=self.model,
                 temperature=self.temperature,
@@ -80,10 +84,10 @@ Return a JSON object with the extracted information. If any field is not mention
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
             )
             content = (response.choices[0].message.content or "").strip()
-            
+
             # Clean up JSON response (handle markdown code blocks if present)
             if content.startswith("```"):
                 content = content.strip("`")
@@ -91,47 +95,54 @@ Return a JSON object with the extracted information. If any field is not mention
                     content = content[4:].lstrip()
                 if content.startswith("\n"):
                     content = content[1:]
-            
+
             # Parse JSON response
             try:
                 extracted_data = json.loads(content)
-                logger.info(f"[Customer Data Extractor] Successfully extracted: {list(extracted_data.keys())}")
+                logger.info(
+                    f"[Customer Data Extractor] Successfully extracted: {list(extracted_data.keys())}"
+                )
                 return {
                     "name": extracted_data.get("name"),
-                    "nric_worker_permit_id": extracted_data.get("nric_worker_permit_id"),
+                    "nric_worker_permit_id": extracted_data.get(
+                        "nric_worker_permit_id"
+                    ),
                     "address": extracted_data.get("address"),
-                    "purpose_of_call": extracted_data.get("purpose_of_call")
+                    "purpose_of_call": extracted_data.get("purpose_of_call"),
                 }
             except json.JSONDecodeError as e:
-                logger.error(f"[Customer Data Extractor] Failed to parse JSON response: {e}")
+                logger.error(
+                    f"[Customer Data Extractor] Failed to parse JSON response: {e}"
+                )
                 logger.error(f"[Customer Data Extractor] Raw response: {content[:200]}")
                 return {
                     "name": None,
                     "nric_worker_permit_id": None,
                     "address": None,
-                    "purpose_of_call": None
+                    "purpose_of_call": None,
                 }
-                    
+
         except Exception as e:
-            logger.error(f"[Customer Data Extractor] Error: {type(e).__name__}: {str(e)}")
+            logger.error(
+                f"[Customer Data Extractor] Error: {type(e).__name__}: {str(e)}"
+            )
             return {
                 "name": None,
                 "nric_worker_permit_id": None,
                 "address": None,
-                "purpose_of_call": None
+                "purpose_of_call": None,
             }
 
+
 extractor = CustomerDataExtractor()
+
 
 @router.post("/extract-customer-data")
 async def extract_customer_data(req: ExtractCustomerDataRequest) -> Dict[str, Any]:
     """Extract customer information from conversation transcript"""
     try:
         extracted = await extractor.extract(req.conversation_transcript)
-        return {
-            "success": True,
-            "data": extracted
-        }
+        return {"success": True, "data": extracted}
     except Exception as e:
         logger.error(f"[Customer Data Extractor] Endpoint error: {e}")
         return {
@@ -140,8 +151,7 @@ async def extract_customer_data(req: ExtractCustomerDataRequest) -> Dict[str, An
                 "name": None,
                 "nric_worker_permit_id": None,
                 "address": None,
-                "purpose_of_call": None
+                "purpose_of_call": None,
             },
-            "error": str(e)
+            "error": str(e),
         }
-
