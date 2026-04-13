@@ -26,7 +26,7 @@ frontend/.cache/
 temp/
 
 #Virtual environment
-rag_chatbot_venv/
+realtime-venv/
 .venv/
 venv/
 
