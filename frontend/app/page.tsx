@@ -36,6 +36,8 @@ type CustomerDataFields = keyof CustomerData;
 export default function Page() {
   const [backendUrl] = useLocalStorage('BACKEND_URL', 'http://localhost:8000');
   const [aaiKey, setAaiKey] = useState<string>('');
+  /** AssemblyAI streaming v3: boosted terms via `keyterms_prompt` query param (not legacy `word_boost`). */
+  const [aaiKeyterms, setAaiKeyterms] = useState<string[]>([]);
   const [turns, setTurns] = useState<string[]>([]);
   const [live, setLive] = useState<string>('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -63,6 +65,11 @@ export default function Page() {
           const data = await res.json();
           if (data.api_key) {
             setAaiKey(data.api_key);
+            if (Array.isArray(data.keyterms_prompt)) {
+              setAaiKeyterms(data.keyterms_prompt.map((t: unknown) => String(t)));
+            } else {
+              setAaiKeyterms([]);
+            }
           } else if (data.error) {
             console.error('[Frontend] Failed to load AssemblyAI API key:', data.error);
           }
@@ -109,8 +116,11 @@ export default function Page() {
       return out.buffer;
     }
     
-    // Connect directly to AssemblyAI WebSocket (original working implementation)
+    // Connect directly to AssemblyAI WebSocket v3 (keyterms_prompt = JSON array string per API docs)
     const params = new URLSearchParams({ sample_rate: String(ctx.sampleRate || 48000), format_turns: 'true', token: aaiKey });
+    if (aaiKeyterms.length > 0) {
+      params.set('keyterms_prompt', JSON.stringify(aaiKeyterms));
+    }
     const ws = new WebSocket(`wss://streaming.assemblyai.com/v3/ws?${params}`);
     wsRef.current = ws;
     

@@ -20,3 +20,9 @@ CONFIG = load_config_json()
 SUGGESTION_MODEL = CONFIG.get('suggestion_model', 'gpt-3.5-turbo')
 SUGGESTION_TEMPERATURE = CONFIG.get('suggestion_temperature', 0.3)
 SUGGESTION_MAX = CONFIG.get('max_suggestions', 3)
+
+# Streaming v3 uses query param `keyterms_prompt` (JSON array string), not legacy `word_boost`.
+_raw_keyterms = CONFIG.get("assemblyai_keyterms") or []
+if not isinstance(_raw_keyterms, list):
+    _raw_keyterms = []
+ASSEMBLYAI_KEYTERMS = [str(x).strip() for x in _raw_keyterms if str(x).strip()][:100]

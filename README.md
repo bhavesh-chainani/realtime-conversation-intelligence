@@ -72,9 +72,12 @@ Edit `config.json` to customize suggestion behavior:
 {
   "suggestion_model": "gpt-3.5-turbo",
   "suggestion_temperature": 0.3,
-  "max_suggestions": 2
+  "max_suggestions": 2,
+  "assemblyai_keyterms": []
 }
 ```
+
+Optional **`assemblyai_keyterms`**: array of strings passed to AssemblyAI streaming v3 as the **`keyterms_prompt`** query parameter (JSON-encoded). This replaces the older **`word_boost`** style usage on streaming; start empty and add only terms the model often mishears (max 100; see [AssemblyAI keyterms prompting](https://www.assemblyai.com/docs/streaming/keyterms-prompting)).
 
 **Available Models**: You can use any OpenAI model (e.g., `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`). The default is `gpt-3.5-turbo` for cost-effectiveness.
 
@@ -166,7 +169,6 @@ realtime-conversation-intelligence/
 │   ├── suggestion_agent.py    # Suggestion agent logic
 │   ├── customer_data_extractor.py  # Customer data extraction
 │   ├── prompt_loader.py       # Prompt loading utility
-│   ├── assemblyai_ws.py       # Optional WebSocket proxy
 │   ├── config.py              # Environment and configuration
 │   └── prompts/               # Editable prompt files
 │       ├── router_system_prompt.txt
@@ -179,9 +181,6 @@ realtime-conversation-intelligence/
 │   │   ├── page.tsx           # Main conversation UI
 │   │   └── layout.tsx          # Next.js layout
 │   └── package.json
-├── database_setup/            # Optional RAG setup
-│   ├── pdf_processor.py
-│   └── pinecone_setup.py
 ├── config.json                # Suggestion settings
 ├── requirements.txt           # Python dependencies
 └── README.md                  # This file
@@ -207,29 +206,6 @@ All AI prompts are stored in separate files for easy customization. Edit the fil
 **Note**: Prompt files support template placeholders (e.g., `{conversation_transcript}`) which are automatically replaced at runtime. Do not modify these placeholders unless you understand the code structure.
 
 Changes take effect after restarting the backend server.
-
-## 🔧 Optional: RAG Setup with Pinecone
-
-For enhanced legal document retrieval, you can set up a Pinecone vector database:
-
-**Install RAG dependencies**:
-```bash
-pip install PyPDF2 langchain_text_splitters langchain-core langchain-openai langchain-pinecone pinecone-client
-```
-
-**Add to `.env`**:
-```
-PINECONE_API_KEY=your_pinecone_key
-PINECONE_INDEX_NAME=legal-documents
-PINECONE_REGION=us-east-1
-PINECONE_CLOUD=aws
-```
-
-**Process and index documents**:
-```bash
-cd database_setup
-python pinecone_setup.py
-```
 
 ## 🐛 Troubleshooting
 
