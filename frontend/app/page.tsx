@@ -41,6 +41,8 @@ export default function Page() {
   const [turns, setTurns] = useState<string[]>([]);
   const [live, setLive] = useState<string>('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [customerHistory, setCustomerHistory] = useState<string>("");
+  const [isLoadingCustomerHistory, setIsLoadingCustomerHistory] = useState(false);
   const [customerData, setCustomerData] = useState<CustomerData>({
     name: '',
     nric_worker_permit_id: '',
@@ -409,6 +411,20 @@ export default function Page() {
     }
   };
 
+  const obtainCustomerInfo = useCallback(async () => {
+    if (isLoadingCustomerHistory) return;
+    setIsLoadingCustomerHistory(true);
+    try {
+      // Simulate a database lookup for customer profile history.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      setCustomerHistory(
+        "Raja has had previous employer dispute cases. Please refer to Case #CH298D and #PD6301 for more information."
+      );
+    } finally {
+      setIsLoadingCustomerHistory(false);
+    }
+  }, [isLoadingCustomerHistory]);
+
   useEffect(() => {
     // Only request suggestions and extract customer data if there's meaningful transcript content
     if (!transcriptText || transcriptText.trim().length < 10) {
@@ -566,6 +582,24 @@ export default function Page() {
 
             {transcriptText.trim().length < 10 ? (
               <p className="empty-state">Customer fields fill in automatically as the conversation adds enough context.</p>
+            ) : null}
+
+            <div className="customer-info-actions">
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={obtainCustomerInfo}
+                disabled={isLoadingCustomerHistory}
+              >
+                {isLoadingCustomerHistory ? "Obtaining..." : "Obtain customer info"}
+              </button>
+            </div>
+
+            {customerHistory ? (
+              <section className="customer-history" aria-live="polite">
+                <div className="customer-history__title">Customer history</div>
+                <p className="customer-history__text">{customerHistory}</p>
+              </section>
             ) : null}
           </div>
 

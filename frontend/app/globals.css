@@ -287,6 +287,41 @@ body {
   padding-right: 4px;
 }
 
+.customer-info-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.customer-info-actions .btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.customer-history {
+  margin-top: 4px;
+  padding: 12px 14px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.customer-history__title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.customer-history__text {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
 .sidebar-block--customer::-webkit-scrollbar,
 .panel::-webkit-scrollbar {
   width: 6px;
