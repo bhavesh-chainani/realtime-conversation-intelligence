@@ -48,6 +48,7 @@ export default function Page() {
     purpose_of_call: ''
   });
   const [manuallyEditedFields, setManuallyEditedFields] = useState<Set<CustomerDataFields>>(new Set());
+  const [isListening, setIsListening] = useState(false);
   const manuallyEditedFieldsRef = useRef<Set<CustomerDataFields>>(new Set());
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRef = useRef<MediaStream | null>(null);
@@ -138,6 +139,10 @@ export default function Page() {
       return;
     }
     wsRef.current = ws;
+
+    ws.onopen = () => setIsListening(true);
+    ws.onclose = () => setIsListening(false);
+    ws.onerror = () => setIsListening(false);
 
     proc.onaudioprocess = (e: AudioProcessingEvent) => {
       const socket = wsRef.current;
@@ -299,6 +304,7 @@ export default function Page() {
 
     setLive('');
     liveRef.current = '';
+    setIsListening(false);
   }
 
   // Handler for manual customer data field changes
@@ -447,185 +453,158 @@ export default function Page() {
   }, [backendUrl, transcriptText, extractCustomerData]);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', margin: 10 }}>
-      <header style={{ background: 'rgba(255,255,255,.9)', borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontWeight: 700, color: '#4a5568' }}>Real Time Conversation Intelligence</div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button onClick={()=>openWs()} style={{ padding: '6px 10px', borderRadius: 8, border: 'none', background: '#667eea', color: 'white' }}>Start</button>
-          <button onClick={()=>{ setLive(''); closeWs(); }} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #ddd', background: 'white' }}>Stop</button>
+    <div className="shell">
+      <header className="topbar">
+        <div className="topbar-brand">
+          <span className="topbar-title">Conversation intelligence</span>
+          <span className="topbar-sub">Live transcription and operator guidance</span>
+        </div>
+        <div className="topbar-actions">
+          <span
+            className={`status-pill${isListening ? " status-pill--live" : ""}`}
+            aria-live="polite"
+          >
+            <span className="status-pill__dot" aria-hidden />
+            {isListening ? "Listening" : "Idle"}
+          </span>
+          <button type="button" className="btn btn--primary" onClick={() => openWs()}>
+            Start session
+          </button>
+          <button type="button" className="btn btn--ghost" onClick={() => closeWs()}>
+            Stop
+          </button>
         </div>
       </header>
-      <main style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 800px', gap: 20, marginTop: 12 }}>
-        <section style={{ background: 'rgba(255,255,255,.95)', borderRadius: 12, padding: 16, overflow: 'auto' }}>
-          <h2 style={{ margin: 0, marginBottom: 8, color: '#2d3748' }}>Live Conversation</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {turns.map((t, i) => (
-              <div key={i} style={{ background: 'rgba(102,126,234,.1)', border: '1px solid rgba(102,126,234,.2)', color: '#2d3748', padding: '12px 16px', borderRadius: 18, maxWidth: '70%' }}>{t}</div>
-            ))}
-            {live && (
-              <div style={{ background: 'rgba(102,126,234,.1)', border: '1px solid rgba(102,126,234,.2)', color: '#2d3748', padding: '12px 16px', borderRadius: 18, maxWidth: '70%' }}><em>{live}</em></div>
+
+      <main className="layout-main">
+        <section className="panel" aria-label="Live transcript">
+          <div className="panel-header">
+            <h1 className="panel-title">Live conversation</h1>
+            <p className="panel-hint">Final turns and partial text as you speak</p>
+          </div>
+          <div className="transcript-list">
+            {turns.length === 0 && !live && (
+              <p className="empty-state">Start a session and speak to see the transcript here.</p>
             )}
+            {turns.map((t, i) => (
+              <div key={i} className="bubble">
+                {t}
+              </div>
+            ))}
+            {live ? <div className="bubble bubble--live">{live}</div> : null}
           </div>
         </section>
-        <aside style={{ background: 'rgba(255,255,255,.95)', borderRadius: 12, padding: 16, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
-          {/* Customer Data Section */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '35vh', overflowY: 'auto' }}>
-            <div>
-              <h2 style={{ margin: 0, marginBottom: 8, color: '#2d3748', fontSize: 18, fontWeight: 600 }}>Customer Data</h2>
-              <div style={{ fontSize: 13, color: '#718096', marginBottom: 16 }}>
-                Customer information extracted from conversation. You can manually edit any field.
-              </div>
-            </div>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* Name Field */}
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#718096', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Name
-                </label>
-                <input
-                  type="text"
-                  value={customerData.name}
-                  onChange={(e) => handleCustomerDataChange('name', e.target.value)}
-                  placeholder="Customer name"
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 8,
-                    fontSize: 14,
-                    color: '#2d3748',
-                    background: 'white',
-                    boxSizing: 'border-box'
-                  }}
-                />
-              </div>
 
-              {/* NRIC/Worker's Permit ID Field */}
+        <aside className="panel sidebar" aria-label="Customer data and suggestions">
+          <div className="sidebar-block sidebar-block--customer">
+            <div className="panel-header panel-header--compact">
               <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#718096', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  NRIC/Worker's Permit ID
-                </label>
-                <input
-                  type="text"
-                  value={customerData.nric_worker_permit_id}
-                  onChange={(e) => handleCustomerDataChange('nric_worker_permit_id', e.target.value)}
-                  placeholder="S1234567A, T1234567A, or Work Permit ID"
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 8,
-                    fontSize: 14,
-                    color: '#2d3748',
-                    background: 'white',
-                    boxSizing: 'border-box'
-                  }}
-                />
-              </div>
-
-              {/* Address Field */}
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#718096', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Address
-                </label>
-                <textarea
-                  value={customerData.address}
-                  onChange={(e) => handleCustomerDataChange('address', e.target.value)}
-                  placeholder="Customer address"
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 8,
-                    fontSize: 14,
-                    color: '#2d3748',
-                    background: 'white',
-                    boxSizing: 'border-box',
-                    resize: 'vertical',
-                    fontFamily: 'inherit'
-                  }}
-                />
-              </div>
-
-              {/* Purpose of Call Field */}
-              <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#718096', fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Purpose of Call
-                </label>
-                <textarea
-                  value={customerData.purpose_of_call}
-                  onChange={(e) => handleCustomerDataChange('purpose_of_call', e.target.value)}
-                  placeholder="Reason for the call"
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 8,
-                    fontSize: 14,
-                    color: '#2d3748',
-                    background: 'white',
-                    boxSizing: 'border-box',
-                    resize: 'vertical',
-                    fontFamily: 'inherit'
-                  }}
-                />
+                <h2 className="panel-title">Customer data</h2>
+                <p className="panel-hint panel-hint--tight">
+                  Extracted from the call. Edits are kept and not overwritten by automation.
+                </p>
               </div>
             </div>
 
-            {transcriptText.trim().length < 10 && (
-              <div style={{ color: '#718096', fontSize: 13, fontStyle: 'italic', textAlign: 'center', padding: 20, background: '#f7fafc', borderRadius: 8 }}>
-                Customer data will be automatically extracted as the conversation progresses...
-              </div>
-            )}
+            <div className="field-group">
+              <label className="field-label" htmlFor="cust-name">
+                Name
+              </label>
+              <input
+                id="cust-name"
+                className="field-input"
+                type="text"
+                value={customerData.name}
+                onChange={(e) => handleCustomerDataChange("name", e.target.value)}
+                placeholder="Customer name"
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="cust-id">
+                NRIC / Work Permit ID
+              </label>
+              <input
+                id="cust-id"
+                className="field-input"
+                type="text"
+                value={customerData.nric_worker_permit_id}
+                onChange={(e) => handleCustomerDataChange("nric_worker_permit_id", e.target.value)}
+                placeholder="e.g. S1234567A or permit number"
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="cust-address">
+                Address
+              </label>
+              <textarea
+                id="cust-address"
+                className="field-textarea"
+                value={customerData.address}
+                onChange={(e) => handleCustomerDataChange("address", e.target.value)}
+                placeholder="Customer address"
+                rows={3}
+              />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label" htmlFor="cust-purpose">
+                Purpose of call
+              </label>
+              <textarea
+                id="cust-purpose"
+                className="field-textarea"
+                value={customerData.purpose_of_call}
+                onChange={(e) => handleCustomerDataChange("purpose_of_call", e.target.value)}
+                placeholder="Reason for the call"
+                rows={3}
+              />
+            </div>
+
+            {transcriptText.trim().length < 10 ? (
+              <p className="empty-state">Customer fields fill in automatically as the conversation adds enough context.</p>
+            ) : null}
           </div>
 
-          {/* Divider */}
-          <div style={{ borderTop: '2px solid #e2e8f0', margin: '8px 0' }}></div>
+          <div className="divider" />
 
-          {/* AI Suggestions Section */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: '50vh' }}>
-            <h2 style={{ margin: 0, marginBottom: 8, color: '#2d3748', fontSize: 18, fontWeight: 600 }}>AI Suggestions</h2>
+          <div className="sidebar-block suggestions-stack">
+            <div className="panel-header panel-header--compact">
+              <h2 className="panel-title">AI suggestions</h2>
+              <p className="panel-hint panel-hint--tight">Context-aware guidance for the operator</p>
+            </div>
+
             {suggestions.length === 0 ? (
-              <div style={{ color: '#718096', fontSize: 16, fontStyle: 'italic', textAlign: 'center', padding: 20 }}>
-                {transcriptText.trim().length < 10 
-                  ? 'AI suggestions will appear here as the conversation progresses...' 
-                  : 'Analyzing conversation...'}
-              </div>
+              <p className="empty-state">
+                {transcriptText.trim().length < 10
+                  ? "Suggestions appear after there is enough transcript to analyze."
+                  : "Analyzing the latest transcript…"}
+              </p>
             ) : (
               suggestions.map((s, i) => {
                 const details = s.details || {};
-                const topic = s.topic || s.text || 'Follow up on conversation';
-                const possibleConversation = details.possibleConversation || '';
-                
+                const topic = s.topic || s.text || "Follow up on conversation";
+                const possibleConversation = details.possibleConversation || "";
+
                 return (
-                  <div key={i} style={{ background: 'white', border: '1px solid #eee', borderRadius: 12, padding: 12 }}>
-                    <div style={{ fontSize: 14, color: '#667eea', fontWeight: 600, marginBottom: 8 }}>{s.type || 'Suggestion'}</div>
-                    
-                    {/* Topic/Context to follow up on */}
-                    <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: 12, color: '#718096', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Topic/Context:
-                      </div>
-                      <div style={{ fontSize: 16, color: '#2d3748', background: '#f7fafc', padding: 10, borderRadius: 8, borderLeft: '3px solid #667eea' }}>
-                        {topic}
-                      </div>
+                  <article key={i} className="suggestion-card">
+                    <span className="suggestion-badge">{s.type || "Suggestion"}</span>
+
+                    <div>
+                      <div className="suggestion-block-title">Topic / context</div>
+                      <p className="suggestion-topic">{topic}</p>
                     </div>
-                    
-                    {/* Possible conversation for operator */}
-                    {possibleConversation && (
-                      <div>
-                        <div style={{ fontSize: 12, color: '#718096', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          Possible conversation:
-                        </div>
-                        <div style={{ fontSize: 16, color: '#4a5568', fontStyle: 'italic', lineHeight: 1.6 }}>
-                          {possibleConversation}
-                        </div>
+
+                    {possibleConversation ? (
+                      <div className="suggestion-followup">
+                        <div className="suggestion-block-title">Possible phrasing</div>
+                        <p className="suggestion-quote">{possibleConversation}</p>
                       </div>
-                    )}
-                  </div>
+                    ) : null}
+                  </article>
                 );
               })
             )}
