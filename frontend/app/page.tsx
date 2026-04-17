@@ -418,7 +418,7 @@ export default function Page() {
       // Simulate a database lookup for customer profile history.
       await new Promise((resolve) => setTimeout(resolve, 700));
       setCustomerHistory(
-        "Raja has had previous employer dispute cases. Please refer to Case #CH298D and #PD6301 for more information."
+        "Raja has had previous employer dispute cases. Please refer to Case #CH298D for more information."
       );
     } finally {
       setIsLoadingCustomerHistory(false);
@@ -599,6 +599,28 @@ export default function Page() {
               <section className="customer-history" aria-live="polite">
                 <div className="customer-history__title">Customer history</div>
                 <p className="customer-history__text">{customerHistory}</p>
+                <div className="customer-history__table-wrap">
+                  <table className="customer-history__table" aria-label="Customer case summary">
+                    <thead>
+                      <tr>
+                        <th>Case ID</th>
+                        <th>Company</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Summary</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>#CH298D</td>
+                        <td>ABC</td>
+                        <td>Employer dispute</td>
+                        <td>Resolved</td>
+                        <td>Salary underpayment complaint settled through mediation.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </section>
             ) : null}
           </div>

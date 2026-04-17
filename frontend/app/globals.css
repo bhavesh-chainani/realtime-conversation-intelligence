@@ -322,6 +322,42 @@ body {
   color: var(--text-secondary);
 }
 
+.customer-history__table-wrap {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+
+.customer-history__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.customer-history__table th,
+.customer-history__table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.customer-history__table th {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  font-weight: 600;
+}
+
+.customer-history__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .sidebar-block--customer::-webkit-scrollbar,
 .panel::-webkit-scrollbar {
   width: 6px;
