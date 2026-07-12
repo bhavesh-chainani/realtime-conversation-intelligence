@@ -7,11 +7,16 @@ A real-time legal call assistant system that provides live AI-powered suggestion
 ## ✨ Features
 
 - **Real-Time Transcription**: Live speech-to-text using AssemblyAI WebSocket API (frontend connects directly for lowest latency)
+- **Speaker Diarization**: AssemblyAI streaming speaker labels (`speaker_labels`) map two voices to **Staff** / **Customer** on a single laptop mic
 - **AI-Powered Suggestions**: Intelligent, context-aware recommendations for operators
 - **Legal Entity Integration**: Specialized for legal entity in singapore's legal assistance workflow
 - **Live Conversation Intelligence**: Real-time analysis of ongoing conversations
 - **Operator Support**: Actionable suggestions including follow-up questions, document requests, and issue identification
 - **Customer Data Extraction**: Automatically extracts structured information (name, NRIC, address, purpose) from conversations
+
+### Documentation
+
+**[Data science, operations, and production readiness](docs/DATA_SCIENCE_AND_OPS.md)** — full runbook: architecture, env options, sync vs async, persistence, telemetry, and how to avoid “surprise drift” (versioning, eval, vendor drift). Shorter go-live list: [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md).
 
 ## 🚀 Quick Start
 
@@ -60,9 +65,30 @@ ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
 
 # OpenAI API configuration
 OPENAI_API_KEY=your_openai_api_key_here
+
+# API auth mode
+REQUIRE_API_AUTH=false
+API_AUTH_TOKEN=replace_with_long_random_value_when_enabled
+AUTH_JWKS_URL=
+AUTH_ISSUER=
+AUTH_AUDIENCE=
+
+# Restrict backend CORS origins (comma-separated)
+BACKEND_CORS_ORIGINS=http://localhost:3000
+
+# Usage guardrails
+RATE_LIMIT_PER_MINUTE=30
+DAILY_REQUEST_QUOTA=2000
+
+# Session persistence: sqlite (default local) | dynamodb (AWS) | none
+STORAGE_BACKEND=sqlite
+SQLITE_DB_PATH=data/sessions.db
+DYNAMODB_CONVERSATIONS_TABLE=
+AWS_REGION=us-east-1
 ```
 
-**Note**: Replace `your_assemblyai_api_key_here` and `your_openai_api_key_here` with your actual API keys.
+**Note**: Replace `your_assemblyai_api_key_here` and `your_openai_api_key_here` with your actual API keys.  
+You can also copy `.env.example` to `.env` and fill values.
 
 #### 4. Configure Suggestion Settings (Optional)
 
@@ -102,10 +128,20 @@ uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload
 The backend will be available at `http://localhost:8000`
 
 **Available Endpoints**:
-- `GET /health` – Service health check
-- `GET /config` – Configuration introspection (shows loaded keys/models)
-- `POST /suggest` – AI suggestions endpoint (accepts conversation transcript)
-- `POST /extract-customer-data` – Extract customer information from conversation transcript
+- `GET /health` – Liveness: process is up (include `APP_VERSION` / `GIT_SHA` when set).
+- `GET /ready` – Readiness: dependency check; with `STRICT_READINESS=true`, returns 503 until OpenAI + AssemblyAI keys are configured.
+- `GET /metrics` – Prometheus text (when `METRICS_ENABLED=true`; optional `METRICS_TOKEN`).
+- `GET /config` – Configuration introspection (requires auth when enabled)
+- `GET /limits` – Active per-minute and daily quota values
+- `POST /queue/suggestions` – Enqueue suggestion job (needs `ASYNC_JOBS_ENABLED=true` + worker when using async)
+- `POST /queue/extract-customer-data` – Enqueue extraction job
+- `GET /queue/jobs/{job_id}` – Poll job status and `result` payload
+- `POST /sessions/` – Create a persisted call session id
+- `GET /sessions/{session_id}` – Session metadata + recent stored events (same user only)
+- `POST /suggest` – AI suggestions endpoint (accepts conversation transcript + optional session id)
+- `POST /extract-customer-data` – Extract customer information (optional session id)
+
+**Tests & ops**: `pip install -r requirements-dev.txt && pytest` · load probe: `python scripts/load_smoke.py` · production checklist: [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md).
 
 #### Start the Frontend Development Server
 
@@ -118,32 +154,65 @@ npm run dev
 
 The frontend will be available at `http://localhost:3000`
 
+#### Run with Docker Compose (Production-like Local)
+
+```bash
+docker compose up --build
+```
+
+**Async inference (production scale)**:
+
+- Set `ASYNC_JOBS_ENABLED=true` and run the worker: `python -m backend.worker`.
+- `INFERENCE_QUEUE_MODE=poll` uses SQLite locks and a **shared** DB file (good for local / single-node Docker).
+- `INFERENCE_QUEUE_MODE=sqs` + `AWS_SQS_INFERENCE_QUEUE_URL` targets AWS SQS (recommended for multi-instance App Runner/ECS).
+- Frontend: set `NEXT_PUBLIC_USE_ASYNC_JOBS=true`. In Docker, pass it as a **build-arg** (see `Dockerfile.frontend` + `docker-compose.yml`).
+
+
+
 ### Usage
 
 1. **Open the Application**: Navigate to `http://localhost:3000` in your browser
-2. **Enter API Key**: Paste your AssemblyAI API key in the header input field
-3. **Start Transcription**: Click the "Start" button (browser will request microphone access)
-4. **Speak**: Begin speaking - partial transcript appears instantly
-5. **View Suggestions**: AI-powered suggestions appear in real-time on the right side
-6. **Stop**: Click "Stop" to end the transcription session
+2. **Start Transcription**: Click "Start session" (browser will request microphone access)
+3. **Speak**: Staff and customer voices on the same laptop mic are labeled separately; use **Next voice is Staff/Customer** and **Swap roles** if needed
+4. **View Suggestions**: AI-powered suggestions appear in real-time on the right side
+5. **Stop**: Click "Stop" to end the transcription session
 
 **How It Works**:
-- Partial transcripts appear instantly as you speak
+- Partial transcripts appear instantly as you speak, with Staff/Customer badges when diarization has locked roles
 - When finalized, transcripts overwrite partial text (no duplicates)
-- AI suggestions are generated automatically from finalized transcript turns
+- AI suggestions and customer extraction use role-labeled transcript context
 - Suggestions update in real-time as the conversation progresses
+
+### Same-laptop diarization setup
+
+This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setup:
+
+1. Staff opens the UI on their laptop and starts a session.
+2. Customer speaks in-person or via speakerphone into the same room/mic.
+3. AssemblyAI streaming diarization separates speakers; the first new voice defaults to **Staff** (change with “Next voice is Customer” before that speaker appears).
+4. If early labels are swapped, click **Swap roles** — no need to restart the session.
+
+**Persistence**:
+- Default local storage uses SQLite (`data/sessions.db`).
+- Production on AWS uses DynamoDB (`STORAGE_BACKEND=dynamodb`; see `infra/aws/README.md`).
+
+**Auth behavior**:
+- If Cognito frontend vars are configured, users can login via Hosted UI.
+- Backend validates JWTs when `REQUIRE_API_AUTH=true` and JWT settings are configured (`AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`).
 
 ## 🏗️ Architecture
 
 ### How It Works
 
 1. **Real-Time Transcription (Frontend)**: 
-   - Frontend streams audio directly to AssemblyAI over WebSocket
-   - Partial text renders immediately
-   - Final text overwrites partial to avoid duplicates
+   - Frontend streams laptop-mic audio directly to AssemblyAI over WebSocket
+   - Streaming diarization (`speaker_labels=true`, `max_speakers=2`) labels speakers A/B
+   - UI maps labels to **Staff** / **Customer** (lock next voice + Swap roles if inverted)
+   - Partial text renders immediately; finals overwrite partials to avoid duplicates
+   - Suggest/extract receive role-labeled context (`Staff: …` / `Customer: …`)
 
 2. **Transcript Analysis (Backend)**: 
-   - Finalized transcript turns are posted to `/suggest` endpoint
+   - Finalized labeled transcript turns are posted to `/suggest` endpoint
    - Backend processes conversation context
 
 3. **AI Suggestions (Two-Agent Pipeline)**:
@@ -156,7 +225,7 @@ The frontend will be available at `http://localhost:3000`
      - Natural language responses for operators
 
 4. **Customer Data Extraction**: 
-   - `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from conversation transcripts using AI
+   - `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from **Customer**-attributed lines
 
 ## 📁 Project Structure
 
@@ -170,6 +239,8 @@ realtime-conversation-intelligence/
 │   ├── customer_data_extractor.py  # Customer data extraction
 │   ├── prompt_loader.py       # Prompt loading utility
 │   ├── config.py              # Environment and configuration
+│   ├── session_store.py       # SQLite + DynamoDB session persistence
+│   ├── sessions_api.py        # Session REST routes
 │   └── prompts/               # Editable prompt files
 │       ├── router_system_prompt.txt
 │       ├── router_user_prompt.txt
@@ -213,7 +284,7 @@ Changes take effect after restarting the backend server.
 
 **Microphone not working**:
 - Check browser permissions (allow microphone access when prompted)
-- Ensure your AssemblyAI API key is present in the UI
+- Ensure `ASSEMBLYAI_API_KEY` is configured in backend `.env`
 - Try refreshing the page and granting permissions again
 
 **Suggestions not appearing**:
@@ -259,10 +330,21 @@ curl http://localhost:8000/config
 
 ## 📝 Notes
 
-- CORS is configured permissively for development (`allow_origins=["*"]`). **Restrict this for production**.
+- CORS is now controlled by `BACKEND_CORS_ORIGINS`. Use explicit production domains only.
+- `REQUIRE_API_AUTH=true` enforces bearer token checks for backend endpoints as a production hardening scaffold (enable once real JWT login is integrated).
+- JWT auth mode is enabled automatically when `AUTH_JWKS_URL`, `AUTH_ISSUER`, and `AUTH_AUDIENCE` are configured. The backend validates bearer JWTs with JWKS.
+- Rate limiting and quotas are enabled per authenticated user key (`RATE_LIMIT_PER_MINUTE`, `DAILY_REQUEST_QUOTA`).
+- The backend issues short-lived AssemblyAI tokens via `/assemblyai-token`; your permanent AssemblyAI key stays server-side.
 - The backend provides comprehensive logging for all suggestion requests, making it easy to debug and monitor the system.
 - Suggestions are generated in real-time from finalized transcript turns and update automatically.
 - The system is optimized for legal entity in singapore's workflow, providing context-aware recommendations for legal assistance operators.
+
+## ☁️ AWS Deployment
+
+AWS deployment manifests and instructions are in:
+- `infra/aws/README.md`
+- `infra/aws/backend.apprunner.yaml`
+- `infra/aws/frontend.apprunner.yaml`
 
 ## 📄 License
 

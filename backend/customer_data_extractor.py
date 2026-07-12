@@ -1,17 +1,24 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from typing import Dict, Any
 import logging
 import json
 from openai import OpenAI
 from .config import OPENAI_API_KEY, SUGGESTION_MODEL, SUGGESTION_TEMPERATURE
+from .auth import enforce_usage_limits
+from .persistence import persist_customer_extract_event
+
+logger = logging.getLogger(__name__)
+
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 class ExtractCustomerDataRequest(BaseModel):
     conversation_transcript: str
+    session_id: str | None = Field(
+        None, description="Persist to this session when valid and owned"
+    )
 
 
 class CustomerDataExtractor:
@@ -31,8 +38,14 @@ Your task is to extract specific customer information from conversation transcri
 - Address: Full address of the customer
 - Purpose of Call: The reason why the customer is calling (e.g., employment dispute, housing issue, contract review, etc.)
 
+SPEAKER LABELS:
+- Transcript lines are prefixed Staff: (operator), Customer: (caller), or Unknown:.
+- Extract identity and case facts ONLY from Customer: lines.
+- Do NOT treat Staff: questions or statements as customer-provided answers (e.g. Staff asking "What is your name?" is not a name).
+- Prefer not to extract hard facts from Unknown: lines unless clearly the customer speaking.
+
 IMPORTANT RULES:
-1. Only extract information that is EXPLICITLY mentioned in the conversation. Do not infer or guess.
+1. Only extract information that is EXPLICITLY mentioned by the Customer. Do not infer or guess.
 2. If a field is not mentioned, return null for that field.
 3. Preserve the exact information as mentioned (e.g., if name is "John Tan", extract "John Tan", not variations)
 4. For addresses, extract the complete address if mentioned.
@@ -48,7 +61,8 @@ Return ONLY a valid JSON object with these exact keys:
 
 Return JSON only, no markdown, no explanations."""
 
-    USER_PROMPT_TEMPLATE = """Extract customer information from this conversation transcript:
+    USER_PROMPT_TEMPLATE = """Extract customer information from this conversation transcript.
+Lines are labeled Staff: / Customer: / Unknown: — use Customer: lines for facts only.
 
 CONVERSATION TRANSCRIPT:
 {conversation_transcript}
@@ -138,20 +152,41 @@ extractor = CustomerDataExtractor()
 
 
 @router.post("/extract-customer-data")
-async def extract_customer_data(req: ExtractCustomerDataRequest) -> Dict[str, Any]:
+async def extract_customer_data(
+    req: ExtractCustomerDataRequest,
+    user_key: str = Depends(enforce_usage_limits),
+) -> Dict[str, Any]:
     """Extract customer information from conversation transcript"""
     try:
         extracted = await extractor.extract(req.conversation_transcript)
-        return {"success": True, "data": extracted}
+        body: dict[str, Any] = {"success": True, "data": extracted}
+        persist_customer_extract_event(
+            req.session_id,
+            user_key,
+            req.conversation_transcript,
+            True,
+            extracted,
+        )
+        return body
     except Exception as e:
         logger.error(f"[Customer Data Extractor] Endpoint error: {e}")
-        return {
+        empty = {
+            "name": None,
+            "nric_worker_permit_id": None,
+            "address": None,
+            "purpose_of_call": None,
+        }
+        body = {
             "success": False,
-            "data": {
-                "name": None,
-                "nric_worker_permit_id": None,
-                "address": None,
-                "purpose_of_call": None,
-            },
+            "data": empty,
             "error": str(e),
         }
+        persist_customer_extract_event(
+            req.session_id,
+            user_key,
+            req.conversation_transcript,
+            False,
+            empty,
+            error=str(e),
+        )
+        return body

@@ -1,0 +1,19 @@
+ServiceName: conversation-intel-frontend
+SourceConfiguration:
+  ImageRepository:
+    ImageIdentifier: <AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/conversation-intel-frontend:v1
+    ImageRepositoryType: ECR
+    ImageConfiguration:
+      Port: "3000"
+      RuntimeEnvironmentVariables:
+        NEXT_PUBLIC_BACKEND_URL: "https://example-backend-domain"
+        NEXT_PUBLIC_COGNITO_DOMAIN: "https://your-domain.auth.<AWS_REGION>.amazoncognito.com"
+        NEXT_PUBLIC_COGNITO_CLIENT_ID: "your_client_id"
+        NEXT_PUBLIC_COGNITO_REDIRECT_URI: "https://example-frontend-domain"
+        NEXT_PUBLIC_COGNITO_LOGOUT_URI: "https://example-frontend-domain"
+        NEXT_PUBLIC_COGNITO_RESPONSE_TYPE: "token"
+        NEXT_PUBLIC_COGNITO_SCOPE: "openid email profile"
+  AutoDeploymentsEnabled: true
+InstanceConfiguration:
+  Cpu: "1024"
+  Memory: "2048"

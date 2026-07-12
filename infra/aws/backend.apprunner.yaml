@@ -1,0 +1,32 @@
+ServiceName: conversation-intel-backend
+SourceConfiguration:
+  ImageRepository:
+    ImageIdentifier: <AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/conversation-intel-backend:v1
+    ImageRepositoryType: ECR
+    ImageConfiguration:
+      Port: "8000"
+      RuntimeEnvironmentVariables:
+        AWS_REGION: "<AWS_REGION>"
+        BACKEND_CORS_ORIGINS: "https://example-frontend-domain"
+        REQUIRE_API_AUTH: "true"
+        STORAGE_BACKEND: "dynamodb"
+        DYNAMODB_CONVERSATIONS_TABLE: "conversation-intel-sessions"
+        RATE_LIMIT_PER_MINUTE: "30"
+        DAILY_REQUEST_QUOTA: "2000"
+      RuntimeEnvironmentSecrets:
+        ASSEMBLYAI_API_KEY: "arn:aws:secretsmanager:<AWS_REGION>:<AWS_ACCOUNT_ID>:secret:assemblyai_api_key"
+        OPENAI_API_KEY: "arn:aws:secretsmanager:<AWS_REGION>:<AWS_ACCOUNT_ID>:secret:openai_api_key"
+        AUTH_JWKS_URL: "arn:aws:secretsmanager:<AWS_REGION>:<AWS_ACCOUNT_ID>:secret:auth_jwks_url"
+        AUTH_ISSUER: "arn:aws:secretsmanager:<AWS_REGION>:<AWS_ACCOUNT_ID>:secret:auth_issuer"
+        AUTH_AUDIENCE: "arn:aws:secretsmanager:<AWS_REGION>:<AWS_ACCOUNT_ID>:secret:auth_audience"
+  AutoDeploymentsEnabled: true
+InstanceConfiguration:
+  Cpu: "1024"
+  Memory: "2048"
+HealthCheckConfiguration:
+  Protocol: HTTP
+  Path: /health
+  HealthyThreshold: 1
+  UnhealthyThreshold: 5
+  Interval: 10
+  Timeout: 5

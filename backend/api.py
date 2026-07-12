@@ -1,40 +1,98 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from .suggestions import router as suggest_router
-from .customer_data_extractor import router as customer_data_router
+from __future__ import annotations
+
 import logging
 
-# Configure logging for the entire application
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from starlette.responses import Response
+import httpx
+
+from .logging_config import setup_logging
+
+setup_logging()
+
+from .suggestions import router as suggest_router
+from .customer_data_extractor import router as customer_data_router
+from .sessions_api import router as sessions_router
+from .async_jobs_router import router as async_jobs_router
+from .auth import require_api_auth, enforce_usage_limits
+from .config import ASYNC_JOBS_ENABLED, BACKEND_CORS_ORIGINS
+from .http_middleware import RequestContextMiddleware
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
+    allow_origins=BACKEND_CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 app.include_router(suggest_router)
 app.include_router(customer_data_router)
+app.include_router(sessions_router)
+if ASYNC_JOBS_ENABLED:
+    app.include_router(async_jobs_router)
 
 
 @app.get("/health")
 async def health():
-    return {"ok": True}
+    from . import config as cfg
+
+    out: dict = {"ok": True}
+    if cfg.APP_VERSION:
+        out["version"] = cfg.APP_VERSION
+    if cfg.GIT_SHA:
+        out["git_sha"] = cfg.GIT_SHA
+    return out
+
+
+@app.get("/ready")
+async def ready():
+    """Deep readiness: optional strict mode (503 if LLM/STT keys missing)."""
+    from . import config as cfg
+
+    detail = {
+        "ready": True,
+        "openai_configured": bool(cfg.OPENAI_API_KEY),
+        "assemblyai_configured": bool(cfg.ASSEMBLYAI_API_KEY),
+        "version": cfg.APP_VERSION,
+    }
+    if cfg.GIT_SHA:
+        detail["git_sha"] = cfg.GIT_SHA
+    if cfg.STRICT_READINESS:
+        if not detail["openai_configured"] or not detail["assemblyai_configured"]:
+            detail["ready"] = False
+            raise HTTPException(status_code=503, detail=detail)
+    return detail
+
+
+@app.get("/metrics")
+async def metrics(authorization: str | None = Header(None)):
+    from . import config as cfg
+
+    if not cfg.METRICS_ENABLED:
+        raise HTTPException(status_code=404, detail="metrics disabled")
+    if cfg.METRICS_TOKEN:
+        expected = f"Bearer {cfg.METRICS_TOKEN}"
+        if (authorization or "").strip() != expected:
+            raise HTTPException(status_code=401, detail="unauthorized")
+    body = generate_latest()
+    return Response(content=body, media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/config")
-async def config():
+async def config(_: str = Depends(require_api_auth)):
     from .config import (
         ASSEMBLYAI_API_KEY,
         OPENAI_API_KEY,
         SUGGESTION_MODEL,
         ASSEMBLYAI_KEYTERMS,
+        REQUIRE_API_AUTH,
     )
 
     return {
@@ -42,20 +100,55 @@ async def config():
         "openai_api_key_loaded": bool(OPENAI_API_KEY),
         "suggestion_model": SUGGESTION_MODEL,
         "assemblyai_keyterms_count": len(ASSEMBLYAI_KEYTERMS),
+        "require_api_auth": REQUIRE_API_AUTH,
     }
 
 
-@app.get("/assemblyai-key")
-async def get_assemblyai_key():
-    """Returns the AssemblyAI API key and optional streaming keyterms (keyterms_prompt source)."""
+@app.get("/limits")
+async def limits(_: str = Depends(require_api_auth)):
+    from .config import RATE_LIMIT_PER_MINUTE, DAILY_REQUEST_QUOTA
+
+    return {
+        "rate_limit_per_minute": RATE_LIMIT_PER_MINUTE,
+        "daily_request_quota": DAILY_REQUEST_QUOTA,
+    }
+
+
+@app.get("/assemblyai-token")
+async def assemblyai_token(_: str = Depends(enforce_usage_limits)):
     from .config import ASSEMBLYAI_API_KEY, ASSEMBLYAI_KEYTERMS
 
     if not ASSEMBLYAI_API_KEY:
-        return {"error": "AssemblyAI API key not configured in environment variables"}
-    out = {"api_key": ASSEMBLYAI_API_KEY}
-    if ASSEMBLYAI_KEYTERMS:
-        out["keyterms_prompt"] = ASSEMBLYAI_KEYTERMS
-    return out
+        raise HTTPException(status_code=500, detail="AssemblyAI API key not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://streaming.assemblyai.com/v3/token",
+                params={"expires_in_seconds": 300},
+                headers={"Authorization": ASSEMBLYAI_API_KEY},
+            )
+        if resp.status_code >= 400:
+            logger.error(
+                "Failed to create AssemblyAI temporary token: status=%s body=%s",
+                resp.status_code,
+                resp.text[:300],
+            )
+            raise HTTPException(status_code=502, detail="Failed to generate streaming token")
+
+        data = resp.json()
+        token = data.get("token")
+        if not token:
+            raise HTTPException(status_code=502, detail="Token missing from AssemblyAI response")
+        out = {"token": token}
+        if ASSEMBLYAI_KEYTERMS:
+            out["keyterms_prompt"] = ASSEMBLYAI_KEYTERMS
+        return out
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error generating AssemblyAI temporary token: %s", exc)
+        raise HTTPException(status_code=502, detail="Unable to generate streaming token")
 
 
 if __name__ == "__main__":

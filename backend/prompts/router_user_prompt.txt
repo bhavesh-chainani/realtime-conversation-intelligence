@@ -4,8 +4,9 @@ CONVERSATION TRANSCRIPT:
 {conversation_transcript}
 
 FIRST, analyze what information has ALREADY been discussed in this conversation. Identify:
-- Key facts, numbers, dates, or details mentioned (e.g., salary amounts, dates, document types)
-- Topics or questions that have been answered
+- Key facts, numbers, dates, or details from Customer: lines (e.g., salary amounts, dates, document types)
+- Do not count Staff: questions as answered customer facts; treat Unknown: lines cautiously
+- Topics or questions that have been answered by the Customer
 - Information gaps that still need to be addressed
 
 THEN, decide if suggestions are needed.

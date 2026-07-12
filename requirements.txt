@@ -7,3 +7,6 @@ pydantic==2.9.2
 aiofiles==23.2.1
 anyio==4.4.0
 python-dotenv==1.0.1
+PyJWT[crypto]
+boto3>=1.35.0
+prometheus-client>=0.21.0

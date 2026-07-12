@@ -33,13 +33,120 @@ type CustomerData = {
 
 type CustomerDataFields = keyof CustomerData;
 
+type SpeakerRole = "staff" | "customer" | "unknown";
+
+type Turn = {
+  id: string;
+  text: string;
+  speakerLabel: string | null;
+  role: SpeakerRole;
+};
+
+type SpeakerRoleMap = Record<string, "staff" | "customer">;
+
+function newTurnId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function normalizeSpeakerLabel(raw: unknown): string | null {
+  if (raw == null) return null;
+  const label = String(raw).trim().toUpperCase();
+  if (!label || label === "UNKNOWN" || label === "NULL" || label === "NONE") {
+    return null;
+  }
+  return label;
+}
+
+function extractSpeakerLabel(msg: Record<string, unknown>): string | null {
+  const direct = normalizeSpeakerLabel(msg.speaker_label ?? msg.speaker);
+  if (direct) return direct;
+
+  const words = msg.words;
+  if (!Array.isArray(words) || words.length === 0) return null;
+
+  const counts = new Map<string, number>();
+  for (const w of words) {
+    if (!w || typeof w !== "object") continue;
+    const word = w as Record<string, unknown>;
+    const isFinal =
+      word.word_is_final === true ||
+      String(word.word_is_final).toLowerCase() === "true" ||
+      word.end_of_word === true;
+    if (!isFinal && word.word_is_final !== undefined) continue;
+    const label = normalizeSpeakerLabel(word.speaker ?? word.speaker_label);
+    if (!label) continue;
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [label, count] of counts) {
+    if (count > bestCount) {
+      best = label;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function roleDisplayName(role: SpeakerRole): string {
+  if (role === "staff") return "Staff";
+  if (role === "customer") return "Customer";
+  return "Unknown";
+}
+
+function formatLabeledTranscript(turns: Turn[]): string {
+  return turns
+    .map((t) => `${roleDisplayName(t.role)}: ${t.text}`)
+    .join("\n")
+    .trim();
+}
+
+function resolveSpeakerRole(
+  label: string | null,
+  map: SpeakerRoleMap,
+  nextVoiceIsStaff: boolean
+): { role: SpeakerRole; map: SpeakerRoleMap } {
+  if (!label) return { role: "unknown", map };
+
+  const existing = map[label];
+  if (existing) return { role: existing, map };
+
+  const assigned = new Set(Object.values(map));
+  const firstRole: "staff" | "customer" = nextVoiceIsStaff ? "staff" : "customer";
+  const secondRole: "staff" | "customer" = firstRole === "staff" ? "customer" : "staff";
+
+  const nextMap = { ...map };
+  if (!assigned.has(firstRole)) {
+    nextMap[label] = firstRole;
+    return { role: firstRole, map: nextMap };
+  }
+  if (!assigned.has(secondRole)) {
+    nextMap[label] = secondRole;
+    return { role: secondRole, map: nextMap };
+  }
+  return { role: "unknown", map };
+}
+
 export default function Page() {
-  const [backendUrl] = useLocalStorage('BACKEND_URL', 'http://localhost:8000');
-  const [aaiKey, setAaiKey] = useState<string>('');
-  /** AssemblyAI streaming v3: boosted terms via `keyterms_prompt` query param (not legacy `word_boost`). */
-  const [aaiKeyterms, setAaiKeyterms] = useState<string[]>([]);
-  const [turns, setTurns] = useState<string[]>([]);
+  const backendUrl =
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    (typeof window !== 'undefined' ? (localStorage.getItem('BACKEND_URL') || 'http://localhost:8000') : 'http://localhost:8000');
+  const cognitoDomain = process.env.NEXT_PUBLIC_COGNITO_DOMAIN || '';
+  const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || '';
+  const cognitoRedirectUri = process.env.NEXT_PUBLIC_COGNITO_REDIRECT_URI || 'http://localhost:3000';
+  const cognitoLogoutUri = process.env.NEXT_PUBLIC_COGNITO_LOGOUT_URI || 'http://localhost:3000';
+  const cognitoResponseType = process.env.NEXT_PUBLIC_COGNITO_RESPONSE_TYPE || 'token';
+  const cognitoScope = process.env.NEXT_PUBLIC_COGNITO_SCOPE || 'openid email profile';
+  const useAsyncInferenceJobs =
+    process.env.NEXT_PUBLIC_USE_ASYNC_JOBS === 'true';
+
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [live, setLive] = useState<string>('');
+  const [liveRole, setLiveRole] = useState<SpeakerRole>('unknown');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [customerHistory, setCustomerHistory] = useState<string>("");
   const [isLoadingCustomerHistory, setIsLoadingCustomerHistory] = useState(false);
@@ -51,6 +158,9 @@ export default function Page() {
   });
   const [manuallyEditedFields, setManuallyEditedFields] = useState<Set<CustomerDataFields>>(new Set());
   const [isListening, setIsListening] = useState(false);
+  const [speakerRoleMap, setSpeakerRoleMap] = useState<SpeakerRoleMap>({});
+  /** When armed, the next unseen speaker label locks to Staff (default) or Customer. */
+  const [nextVoiceIsStaff, setNextVoiceIsStaff] = useState(true);
   const manuallyEditedFieldsRef = useRef<Set<CustomerDataFields>>(new Set());
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRef = useRef<MediaStream | null>(null);
@@ -61,54 +171,190 @@ export default function Page() {
   const streamAttemptRef = useRef(0);
   const liveRef = useRef<string>(''); // Track live text for deduplication checks
   const lastCustomerDataExtractRef = useRef<string>(''); // Track last transcript we extracted from
-
-  // Fetch AssemblyAI API key from backend on mount
-  useEffect(() => {
-    async function fetchApiKey() {
-      try {
-        const res = await fetch(`${backendUrl}/assemblyai-key`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.api_key) {
-            setAaiKey(data.api_key);
-            if (Array.isArray(data.keyterms_prompt)) {
-              setAaiKeyterms(data.keyterms_prompt.map((t: unknown) => String(t)));
-            } else {
-              setAaiKeyterms([]);
-            }
-          } else if (data.error) {
-            console.error('[Frontend] Failed to load AssemblyAI API key:', data.error);
-          }
-        } else {
-          console.error('[Frontend] Failed to fetch AssemblyAI API key:', res.status);
-        }
-      } catch (err) {
-        console.error('[Frontend] Error fetching AssemblyAI API key:', err);
-      }
-    }
-    fetchApiKey();
-  }, [backendUrl]);
+  const speakerRoleMapRef = useRef<SpeakerRoleMap>({});
+  const nextVoiceIsStaffRef = useRef(true);
 
   // Keep ref in sync with state
   useEffect(() => {
     manuallyEditedFieldsRef.current = manuallyEditedFields;
   }, [manuallyEditedFields]);
 
-  const transcriptText = useMemo(() => turns.join(' ').trim(), [turns]);
+  useEffect(() => {
+    speakerRoleMapRef.current = speakerRoleMap;
+  }, [speakerRoleMap]);
+
+  useEffect(() => {
+    nextVoiceIsStaffRef.current = nextVoiceIsStaff;
+  }, [nextVoiceIsStaff]);
+
+  // Cleanup from earlier auth-token based UI versions.
+  useEffect(() => {
+    try {
+      localStorage.removeItem('API_AUTH_TOKEN');
+    } catch {}
+  }, []);
+
+  // Cognito Hosted UI tokens (hash redirect) + initial auth flag from storage.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const hash = window.location.hash.startsWith('#')
+        ? window.location.hash.slice(1)
+        : '';
+      if (hash) {
+        const params = new URLSearchParams(hash);
+        const accessToken = params.get('access_token') || '';
+        if (accessToken) {
+          localStorage.setItem('AUTH_ACCESS_TOKEN', accessToken);
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+      const storedToken =
+        localStorage.getItem('AUTH_ACCESS_TOKEN') ||
+        localStorage.getItem('access_token') ||
+        localStorage.getItem('id_token') ||
+        '';
+      setIsAuthenticated(Boolean(storedToken.trim()));
+    } catch {
+      setIsAuthenticated(false);
+    }
+  }, []);
+
+  const transcriptText = useMemo(() => formatLabeledTranscript(turns), [turns]);
 
   // Keep liveRef in sync with live state
   useEffect(() => {
     liveRef.current = live;
   }, [live]);
 
-  async function openWs() {
-    if (!aaiKey) {
-      alert('AssemblyAI API key not loaded. Please ensure ASSEMBLYAI_API_KEY is set in your .env file and the backend is running.');
-      return;
-    }
+  const getAuthHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = {};
+    try {
+      const storedToken =
+        localStorage.getItem('AUTH_ACCESS_TOKEN') ||
+        localStorage.getItem('access_token') ||
+        localStorage.getItem('id_token') ||
+        '';
+      if (storedToken.trim()) {
+        headers.Authorization = `Bearer ${storedToken.trim()}`;
+      }
+    } catch {}
+    return headers;
+  };
 
+  const sessionIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function createSession() {
+      sessionIdRef.current = null;
+      try {
+        const res = await fetch(`${backendUrl}/sessions/`, {
+          method: 'POST',
+          headers: { ...getAuthHeaders() },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const sid = typeof data.session_id === 'string' ? data.session_id : '';
+        if (!cancelled && sid) sessionIdRef.current = sid;
+      } catch {
+        /* optional */
+      }
+    }
+    createSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [backendUrl, isAuthenticated]);
+
+  async function pollInferenceJob(jobId: string): Promise<Record<string, unknown>> {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      const res = await fetch(
+        `${backendUrl}/queue/jobs/${encodeURIComponent(jobId)}`,
+        { headers: { ...getAuthHeaders() } }
+      );
+      if (!res.ok) throw new Error(`job status ${res.status}`);
+      const d = (await res.json()) as Record<string, unknown>;
+      if (d.status === 'completed' && d.result && typeof d.result === 'object') {
+        return d.result as Record<string, unknown>;
+      }
+      if (d.status === 'failed') {
+        const err = typeof d.error === 'string' ? d.error : 'Inference job failed';
+        throw new Error(err);
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error('Inference job timed out');
+  }
+
+  const loginWithCognito = () => {
+    if (!cognitoDomain || !cognitoClientId) return;
+    const base = cognitoDomain.startsWith('http') ? cognitoDomain : `https://${cognitoDomain}`;
+    const url = new URL('/login', base);
+    url.searchParams.set('client_id', cognitoClientId);
+    url.searchParams.set('response_type', cognitoResponseType);
+    url.searchParams.set('scope', cognitoScope);
+    url.searchParams.set('redirect_uri', cognitoRedirectUri);
+    window.location.href = url.toString();
+  };
+
+  const logout = () => {
+    try {
+      localStorage.removeItem('AUTH_ACCESS_TOKEN');
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('id_token');
+    } catch {}
+    setIsAuthenticated(false);
+    if (!cognitoDomain || !cognitoClientId) return;
+    const base = cognitoDomain.startsWith('http') ? cognitoDomain : `https://${cognitoDomain}`;
+    const url = new URL('/logout', base);
+    url.searchParams.set('client_id', cognitoClientId);
+    url.searchParams.set('logout_uri', cognitoLogoutUri);
+    window.location.href = url.toString();
+  };
+
+  const swapSpeakerRoles = useCallback(() => {
+    setSpeakerRoleMap((prev) => {
+      const next: SpeakerRoleMap = {};
+      for (const [label, role] of Object.entries(prev)) {
+        next[label] = role === "staff" ? "customer" : "staff";
+      }
+      speakerRoleMapRef.current = next;
+      return next;
+    });
+    setTurns((prev) =>
+      prev.map((t) => ({
+        ...t,
+        role:
+          t.role === "staff" ? "customer" : t.role === "customer" ? "staff" : t.role,
+      }))
+    );
+    setLiveRole((prev) =>
+      prev === "staff" ? "customer" : prev === "customer" ? "staff" : prev
+    );
+    setNextVoiceIsStaff((prev) => {
+      const next = !prev;
+      nextVoiceIsStaffRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const setNextVoiceRole = useCallback((staff: boolean) => {
+    nextVoiceIsStaffRef.current = staff;
+    setNextVoiceIsStaff(staff);
+  }, []);
+
+  async function openWs() {
     closeWs();
     const myAttempt = streamAttemptRef.current;
+
+    // Fresh speaker map for each listening session.
+    speakerRoleMapRef.current = {};
+    nextVoiceIsStaffRef.current = true;
+    setSpeakerRoleMap({});
+    setNextVoiceIsStaff(true);
+    setLiveRole('unknown');
 
     const media = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (myAttempt !== streamAttemptRef.current) {
@@ -130,10 +376,45 @@ export default function Page() {
       return out.buffer;
     }
     
-    // Connect directly to AssemblyAI WebSocket v3 (keyterms_prompt = JSON array string per API docs)
-    const params = new URLSearchParams({ sample_rate: String(ctx.sampleRate || 48000), format_turns: 'true', token: aaiKey });
-    if (aaiKeyterms.length > 0) {
-      params.set('keyterms_prompt', JSON.stringify(aaiKeyterms));
+    let streamingToken = '';
+    let keytermsPrompt: string[] = [];
+    try {
+      const res = await fetch(`${backendUrl}/assemblyai-token`, {
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        alert('Failed to obtain streaming token from backend.');
+        closeWs();
+        return;
+      }
+      const payload = await res.json();
+      streamingToken = String(payload.token || '').trim();
+      keytermsPrompt = Array.isArray(payload.keyterms_prompt)
+        ? payload.keyterms_prompt.map((t: unknown) => String(t))
+        : [];
+      if (!streamingToken) {
+        alert('Backend returned empty streaming token.');
+        closeWs();
+        return;
+      }
+    } catch (err) {
+      console.error('[Frontend] Failed to obtain streaming token:', err);
+      alert('Unable to obtain streaming token. Check backend.');
+      closeWs();
+      return;
+    }
+
+    // Connect directly to AssemblyAI WebSocket v3 with server-issued temporary token.
+    // speaker_labels + max_speakers enable real-time diarization for staff/customer.
+    const params = new URLSearchParams({
+      sample_rate: String(ctx.sampleRate || 48000),
+      format_turns: 'true',
+      speaker_labels: 'true',
+      max_speakers: '2',
+      token: streamingToken,
+    });
+    if (keytermsPrompt.length > 0) {
+      params.set('keyterms_prompt', JSON.stringify(keytermsPrompt));
     }
     const ws = new WebSocket(`wss://streaming.assemblyai.com/v3/ws?${params}`);
     if (myAttempt !== streamAttemptRef.current) {
@@ -155,9 +436,11 @@ export default function Page() {
     
     ws.onmessage = (evt) => {
       try {
-        const d = JSON.parse(evt.data as string);
-        const text: string = d.transcript || d.text || '';
+        const d = JSON.parse(evt.data as string) as Record<string, unknown>;
+        const text: string = String(d.transcript || d.text || '');
         if (!text) return;
+
+        const speakerLabel = extractSpeakerLabel(d);
         
         // Robust final/partial detection (supports AssemblyAI message_type and type)
         const mt = String(d.message_type || '').toLowerCase();
@@ -234,6 +517,19 @@ export default function Page() {
           
           return similarity >= 0.8;
         };
+
+        const assignRole = (label: string | null): SpeakerRole => {
+          const resolved = resolveSpeakerRole(
+            label,
+            speakerRoleMapRef.current,
+            nextVoiceIsStaffRef.current
+          );
+          if (resolved.map !== speakerRoleMapRef.current) {
+            speakerRoleMapRef.current = resolved.map;
+            setSpeakerRoleMap(resolved.map);
+          }
+          return resolved.role;
+        };
         
         // REAL-TIME DISPLAY
         if (isFinal) {
@@ -241,31 +537,69 @@ export default function Page() {
           if (!trimmed) return;
           const normalizedNew = normalizeForCompare(trimmed);
           const normalizedLive = normalizeForCompare(liveRef.current || '');
+          let role = assignRole(speakerLabel);
           
           setTurns(prev => {
             if (prev.length === 0) {
-              return [trimmed];
+              return [{
+                id: newTurnId(),
+                text: trimmed,
+                speakerLabel,
+                role,
+              }];
             }
             const last = prev[prev.length - 1];
-            const normalizedLast = normalizeForCompare(last);
+            const normalizedLast = normalizeForCompare(last.text);
             
             // If final matches current live or last final (normalized or similar), replace last turn
-            if (normalizedNew === normalizedLive || normalizedNew === normalizedLast || areSimilar(trimmed, liveRef.current || '') || areSimilar(trimmed, last)) {
-              return [...prev.slice(0, -1), trimmed];
+            if (
+              normalizedNew === normalizedLive ||
+              normalizedNew === normalizedLast ||
+              areSimilar(trimmed, liveRef.current || '') ||
+              areSimilar(trimmed, last.text)
+            ) {
+              const mergedLabel = speakerLabel || last.speakerLabel;
+              let mergedRole = role;
+              if (mergedRole === "unknown" && mergedLabel) {
+                mergedRole = speakerRoleMapRef.current[mergedLabel]
+                  || last.role
+                  || "unknown";
+              } else if (mergedRole === "unknown") {
+                mergedRole = last.role;
+              }
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...last,
+                  text: trimmed,
+                  speakerLabel: mergedLabel,
+                  role: mergedRole,
+                },
+              ];
             }
             
             // Otherwise append as a new turn
-            return [...prev, trimmed];
+            return [
+              ...prev,
+              {
+                id: newTurnId(),
+                text: trimmed,
+                speakerLabel,
+                role,
+              },
+            ];
           });
           
           // Clear live
           setLive('');
           liveRef.current = '';
+          setLiveRole('unknown');
         } else {
           // Always show partial immediately (no gating)
           const trimmed = text.trim();
           setLive(trimmed);
           liveRef.current = trimmed;
+          setLiveRole(assignRole(speakerLabel));
         }
       } catch (err) {
         console.error('[Frontend] WebSocket message error:', err);
@@ -306,6 +640,7 @@ export default function Page() {
 
     setLive('');
     liveRef.current = '';
+    setLiveRole('unknown');
     setIsListening(false);
   }
 
@@ -331,40 +666,58 @@ export default function Page() {
     
     try {
       lastCustomerDataExtractRef.current = context;
-      
-      const res = await fetch(`${backendUrl}/extract-customer-data`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversation_transcript: context })
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.data) {
-          // Only update fields that haven't been manually edited
-          // Use ref to get the latest manuallyEditedFields value
-          setCustomerData(prev => {
-            const updated = { ...prev };
-            const currentEditedFields = manuallyEditedFieldsRef.current;
-            
-            Object.keys(data.data).forEach((key) => {
-              const field = key as CustomerDataFields;
-              const extractedValue = data.data[field];
-              
-              // Only auto-fill if field hasn't been manually edited and has extracted value
-              if (!currentEditedFields.has(field) && extractedValue) {
-                updated[field] = extractedValue;
-              }
-            });
-            
-            return updated;
-          });
+
+      let data: Record<string, unknown>;
+
+      if (useAsyncInferenceJobs) {
+        const er = await fetch(`${backendUrl}/queue/extract-customer-data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({
+            conversation_transcript: context,
+            session_id: sessionIdRef.current || undefined,
+          }),
+        });
+        const ej = await er.json();
+        if (!er.ok || typeof ej.job_id !== 'string') {
+          console.error('[Frontend] extract enqueue failed:', er.status);
+          return;
         }
+        data = await pollInferenceJob(ej.job_id as string);
+      } else {
+        const res = await fetch(`${backendUrl}/extract-customer-data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({
+            conversation_transcript: context,
+            session_id: sessionIdRef.current || undefined,
+          }),
+        });
+        if (!res.ok) return;
+        data = await res.json();
+      }
+
+      const successVal = Boolean(data.success);
+      const rawData = data.data && typeof data.data === 'object' ? (data.data as Record<string, unknown>) : null;
+      if (successVal && rawData) {
+        setCustomerData((prev) => {
+          const updated = { ...prev };
+          const currentEditedFields = manuallyEditedFieldsRef.current;
+          Object.keys(rawData).forEach((key) => {
+            const field = key as CustomerDataFields;
+            const extractedValue = rawData[field];
+            if (extractedValue == null || extractedValue === '') return;
+            if (!currentEditedFields.has(field)) {
+              updated[field] = String(extractedValue as string);
+            }
+          });
+          return updated;
+        });
       }
     } catch (err) {
       console.error('[Frontend] Failed to extract customer data:', err);
     }
-  }, [backendUrl]);
+  }, [backendUrl, useAsyncInferenceJobs]);
 
   // Ref to track the last transcript we sent to avoid redundant requests
   const lastTranscriptRef = useRef<string>('');
@@ -392,18 +745,45 @@ export default function Page() {
       console.log(`[Frontend] Fetching suggestions for transcript (${context.length} chars): "${context.substring(0, 100)}..."`);
       lastTranscriptRef.current = context;
       lastFetchTimeRef.current = Date.now();
-      
-      const res = await fetch(`${backendUrl}/suggest`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ context: context, max_suggestions: 2 }) 
-      });
-      if (res.ok) {
-        const data = await res.json();
-        console.log(`[Frontend] Received ${data.suggestions?.length || 0} suggestions`);
-        setSuggestions(data.suggestions || []);
+
+      if (useAsyncInferenceJobs) {
+        const er = await fetch(`${backendUrl}/queue/suggestions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({
+            context,
+            max_suggestions: 2,
+            session_id: sessionIdRef.current || undefined,
+          }),
+        });
+        const ej = await er.json();
+        if (!er.ok || typeof ej.job_id !== 'string') {
+          console.error('[Frontend] Suggestion enqueue failed:', er.status);
+          return;
+        }
+        const result = await pollInferenceJob(ej.job_id as string);
+        const sug = Array.isArray((result as Record<string, unknown>).suggestions)
+          ? (result as Record<string, unknown>).suggestions
+          : [];
+        console.log(`[Frontend] Received ${(sug as unknown[]).length} suggestions`);
+        setSuggestions(sug as Suggestion[]);
       } else {
-        console.error(`[Frontend] Suggestion request failed: ${res.status}`);
+        const res = await fetch(`${backendUrl}/suggest`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({
+            context,
+            max_suggestions: 2,
+            session_id: sessionIdRef.current || undefined,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          console.log(`[Frontend] Received ${data.suggestions?.length || 0} suggestions`);
+          setSuggestions(data.suggestions || []);
+        } else {
+          console.error(`[Frontend] Suggestion request failed: ${res.status}`);
+        }
       }
     } catch (err) {
       console.error('[Frontend] Failed to fetch suggestions:', err);
@@ -468,6 +848,10 @@ export default function Page() {
     };
   }, [backendUrl, transcriptText, extractCustomerData]);
 
+  const mappedStaffLabel = Object.entries(speakerRoleMap).find(([, r]) => r === "staff")?.[0];
+  const mappedCustomerLabel = Object.entries(speakerRoleMap).find(([, r]) => r === "customer")?.[0];
+  const hasRoleMapping = Object.keys(speakerRoleMap).length > 0;
+
   return (
     <div className="shell">
       <header className="topbar">
@@ -476,6 +860,17 @@ export default function Page() {
           <span className="topbar-sub">Live transcription and operator guidance</span>
         </div>
         <div className="topbar-actions">
+          {cognitoDomain && cognitoClientId ? (
+            isAuthenticated ? (
+              <button type="button" className="btn btn--ghost" onClick={logout}>
+                Logout
+              </button>
+            ) : (
+              <button type="button" className="btn btn--ghost" onClick={loginWithCognito}>
+                Login
+              </button>
+            )
+          ) : null}
           <span
             className={`status-pill${isListening ? " status-pill--live" : ""}`}
             aria-live="polite"
@@ -496,18 +891,86 @@ export default function Page() {
         <section className="panel" aria-label="Live transcript">
           <div className="panel-header">
             <h1 className="panel-title">Live conversation</h1>
-            <p className="panel-hint">Final turns and partial text as you speak</p>
+            <p className="panel-hint">
+              Speaker-labeled turns (Staff / Customer) from the laptop microphone
+            </p>
           </div>
+
+          <div className="diarization-controls" role="group" aria-label="Speaker role controls">
+            <span className="diarization-controls__label">Next new voice:</span>
+            <button
+              type="button"
+              className={`btn btn--ghost btn--compact${nextVoiceIsStaff ? " btn--active" : ""}`}
+              onClick={() => setNextVoiceRole(true)}
+              aria-pressed={nextVoiceIsStaff}
+              disabled={hasRoleMapping && Boolean(mappedStaffLabel)}
+              title={
+                mappedStaffLabel
+                  ? `Staff already mapped to speaker ${mappedStaffLabel}`
+                  : "Lock the next unseen speaker as Staff"
+              }
+            >
+              Next voice is Staff
+            </button>
+            <button
+              type="button"
+              className={`btn btn--ghost btn--compact${!nextVoiceIsStaff ? " btn--active" : ""}`}
+              onClick={() => setNextVoiceRole(false)}
+              aria-pressed={!nextVoiceIsStaff}
+              disabled={hasRoleMapping && Boolean(mappedCustomerLabel)}
+              title={
+                mappedCustomerLabel
+                  ? `Customer already mapped to speaker ${mappedCustomerLabel}`
+                  : "Lock the next unseen speaker as Customer"
+              }
+            >
+              Next voice is Customer
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--compact"
+              onClick={swapSpeakerRoles}
+              disabled={!hasRoleMapping}
+              title="Swap Staff and Customer labels if diarization inverted them"
+            >
+              Swap roles
+            </button>
+            {hasRoleMapping ? (
+              <span className="diarization-controls__map" aria-live="polite">
+                {mappedStaffLabel ? `Staff ← ${mappedStaffLabel}` : "Staff ← —"}
+                {" · "}
+                {mappedCustomerLabel ? `Customer ← ${mappedCustomerLabel}` : "Customer ← —"}
+              </span>
+            ) : (
+              <span className="diarization-controls__map diarization-controls__map--muted">
+                Waiting for first speaker…
+              </span>
+            )}
+          </div>
+
           <div className="transcript-list">
             {turns.length === 0 && !live && (
               <p className="empty-state">Start a session and speak to see the transcript here.</p>
             )}
-            {turns.map((t, i) => (
-              <div key={i} className="bubble">
-                {t}
+            {turns.map((t) => (
+              <div
+                key={t.id}
+                className={`bubble bubble--${t.role}`}
+              >
+                <span className={`bubble-badge bubble-badge--${t.role}`}>
+                  {roleDisplayName(t.role)}
+                </span>
+                <span className="bubble-text">{t.text}</span>
               </div>
             ))}
-            {live ? <div className="bubble bubble--live">{live}</div> : null}
+            {live ? (
+              <div className={`bubble bubble--live bubble--${liveRole}`}>
+                <span className={`bubble-badge bubble-badge--${liveRole}`}>
+                  {roleDisplayName(liveRole)}
+                </span>
+                <span className="bubble-text">{live}</span>
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -670,5 +1133,3 @@ export default function Page() {
     </div>
   );
 }
-
-

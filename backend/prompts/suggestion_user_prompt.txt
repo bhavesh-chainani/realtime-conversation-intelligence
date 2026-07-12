@@ -11,9 +11,11 @@ Information STILL MISSING (focus suggestions on these gaps):
 {missing_info}
 
 CRITICAL INSTRUCTIONS:
+- Transcript lines are labeled Staff: / Customer: / Unknown: — attribute caller facts to Customer lines only
 - NEVER suggest asking for information that is listed in "Information ALREADY GATHERED" above
 - Focus suggestions on the "Information STILL MISSING" gaps
-- If the caller has already mentioned something (e.g., salary amount, dates, documents), DO NOT ask about it again
+- If the Customer has already mentioned something (e.g., salary amount, dates, documents), DO NOT ask about it again
+- Do not treat Staff questions or statements as customer-provided answers
 - Acknowledge what you already know from the conversation context
 
 For each suggestion, provide:

@@ -1,0 +1,20 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r /app/requirements.txt
+
+COPY backend /app/backend
+COPY config.json /app/config.json
+
+RUN mkdir -p /data
+ENV SQLITE_DB_PATH=/data/sessions.db
+ENV STORAGE_BACKEND=sqlite
+ENV JOB_STORE_BACKEND=sqlite
+
+CMD ["python", "-m", "backend.worker"]
