@@ -29,7 +29,9 @@ async def _one(client: httpx.AsyncClient, counts: dict[int, int]) -> None:
         counts[-1] = counts.get(-1, 0) + 1
 
 
-async def _worker(stop: asyncio.Event, client: httpx.AsyncClient, counts: dict[int, int]) -> None:
+async def _worker(
+    stop: asyncio.Event, client: httpx.AsyncClient, counts: dict[int, int]
+) -> None:
     while not stop.is_set():
         await _one(client, counts)
 
@@ -39,7 +41,8 @@ async def main() -> None:
     stop = asyncio.Event()
     async with httpx.AsyncClient() as client:
         tasks = [
-            asyncio.create_task(_worker(stop, client, counts)) for _ in range(CONCURRENCY)
+            asyncio.create_task(_worker(stop, client, counts))
+            for _ in range(CONCURRENCY)
         ]
         await asyncio.sleep(DURATION_SEC)
         stop.set()
@@ -47,8 +50,12 @@ async def main() -> None:
     total = sum(counts.values())
     elapsed = DURATION_SEC
     rps = total / elapsed if elapsed else 0.0
-    print(f"BASE_URL={BASE_URL} PATH={PATH} concurrency={CONCURRENCY} duration={DURATION_SEC}s")
-    print(f"requests={total} ~{rps:.1f} req/s  status_counts={dict(sorted(counts.items()))}")
+    print(
+        f"BASE_URL={BASE_URL} PATH={PATH} concurrency={CONCURRENCY} duration={DURATION_SEC}s"
+    )
+    print(
+        f"requests={total} ~{rps:.1f} req/s  status_counts={dict(sorted(counts.items()))}"
+    )
 
 
 if __name__ == "__main__":

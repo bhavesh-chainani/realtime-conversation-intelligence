@@ -96,8 +96,7 @@ class SqliteSessionStore(SessionStore):
 
     def _init_db(self) -> None:
         with self._conn() as c:
-            c.execute(
-                """
+            c.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
                     user_key TEXT NOT NULL,
@@ -105,10 +104,8 @@ class SqliteSessionStore(SessionStore):
                     updated_at TEXT NOT NULL,
                     last_transcript TEXT
                 )
-                """
-            )
-            c.execute(
-                """
+                """)
+            c.execute("""
                 CREATE TABLE IF NOT EXISTS session_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -117,8 +114,7 @@ class SqliteSessionStore(SessionStore):
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
                 )
-                """
-            )
+                """)
 
     def create_session(self, user_key: str) -> str:
         sid = str(uuid.uuid4())

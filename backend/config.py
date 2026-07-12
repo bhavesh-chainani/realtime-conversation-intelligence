@@ -30,7 +30,9 @@ SUGGESTION_MAX = CONFIG.get("max_suggestions", 3)
 
 BACKEND_CORS_ORIGINS = [
     origin.strip()
-    for origin in (os.getenv("BACKEND_CORS_ORIGINS") or "http://localhost:3000").split(",")
+    for origin in (os.getenv("BACKEND_CORS_ORIGINS") or "http://localhost:3000").split(
+        ","
+    )
     if origin.strip()
 ]
 REQUIRE_API_AUTH = (os.getenv("REQUIRE_API_AUTH") or "false").strip().lower() in {
@@ -58,16 +60,17 @@ DYNAMODB_CONVERSATIONS_TABLE = (os.getenv("DYNAMODB_CONVERSATIONS_TABLE") or "")
 AWS_REGION = (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "").strip()
 
 # Async inference jobs (Day 5)
-ASYNC_JOBS_ENABLED = (
-    os.getenv("ASYNC_JOBS_ENABLED") or "false"
-).strip().lower() in {"1", "true", "yes", "on"}
+ASYNC_JOBS_ENABLED = (os.getenv("ASYNC_JOBS_ENABLED") or "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 INFERENCE_QUEUE_MODE = (
-    os.getenv("INFERENCE_QUEUE_MODE") or "poll"
-).strip().lower()  # poll | sqs
+    (os.getenv("INFERENCE_QUEUE_MODE") or "poll").strip().lower()
+)  # poll | sqs
 AWS_SQS_INFERENCE_QUEUE_URL = (os.getenv("AWS_SQS_INFERENCE_QUEUE_URL") or "").strip()
-JOB_STORE_BACKEND = (
-    os.getenv("JOB_STORE_BACKEND") or "sqlite"
-).strip().lower()
+JOB_STORE_BACKEND = (os.getenv("JOB_STORE_BACKEND") or "sqlite").strip().lower()
 
 # Day 6–8: observability & ops
 LOG_JSON = (os.getenv("LOG_JSON") or "false").strip().lower() in {
@@ -92,4 +95,3 @@ STRICT_READINESS = (os.getenv("STRICT_READINESS") or "false").strip().lower() in
     "on",
 }
 METRICS_TOKEN = (os.getenv("METRICS_TOKEN") or "").strip()
-

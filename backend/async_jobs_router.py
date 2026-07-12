@@ -96,9 +96,7 @@ async def get_inference_job(job_id: str, user_key: str = Depends(enforce_usage_l
 
     hint = ""
     if INFERENCE_QUEUE_MODE == "poll":
-        hint = (
-            "Queue mode is poll: ensure inference worker container is running."
-        )
+        hint = "Queue mode is poll: ensure inference worker container is running."
 
     resp["queue_mode"] = INFERENCE_QUEUE_MODE
     resp["hint"] = hint.strip()

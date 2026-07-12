@@ -19,9 +19,7 @@ _router_agent = RouterAgent()
 _suggestion_agent = SuggestionAgent()
 
 
-async def compute_suggestions(
-    context: str, max_suggestions: int = 2
-) -> Dict[str, Any]:
+async def compute_suggestions(context: str, max_suggestions: int = 2) -> Dict[str, Any]:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info("=" * 80)
     logger.info(f"[SUGGESTION REQUEST] {timestamp}")

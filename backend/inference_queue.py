@@ -18,7 +18,9 @@ def publish_inference_job(job_id: str) -> None:
     if INFERENCE_QUEUE_MODE != "sqs":
         return
     if not AWS_SQS_INFERENCE_QUEUE_URL:
-        logger.warning("[queue] INFERENCE_QUEUE_MODE=sqs but AWS_SQS_INFERENCE_QUEUE_URL empty")
+        logger.warning(
+            "[queue] INFERENCE_QUEUE_MODE=sqs but AWS_SQS_INFERENCE_QUEUE_URL empty"
+        )
         return
     import boto3
 

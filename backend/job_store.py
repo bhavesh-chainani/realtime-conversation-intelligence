@@ -84,8 +84,6 @@ class NullJobLedger(JobLedger):
         return None
 
 
-
-
 class SqliteJobLedger(JobLedger):
     def __init__(self, db_path: pathlib.Path):
         self._path = db_path
@@ -97,8 +95,7 @@ class SqliteJobLedger(JobLedger):
 
     def _init(self) -> None:
         with self._conn() as c:
-            c.execute(
-                """
+            c.execute("""
                 CREATE TABLE IF NOT EXISTS inference_jobs (
                     job_id TEXT PRIMARY KEY,
                     user_key TEXT NOT NULL,
@@ -110,8 +107,7 @@ class SqliteJobLedger(JobLedger):
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
-                """
-            )
+                """)
 
     def create_pending(
         self,
@@ -129,7 +125,14 @@ class SqliteJobLedger(JobLedger):
                 (job_id, user_key, job_type, payload_json, status, result_json, error, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 'pending', NULL, NULL, ?, ?)
                 """,
-                (job_id, user_key, job_type, json.dumps(payload, default=str), now, now),
+                (
+                    job_id,
+                    user_key,
+                    job_type,
+                    json.dumps(payload, default=str),
+                    now,
+                    now,
+                ),
             )
 
     def get_owned(self, job_id: str, user_key: str) -> dict[str, Any] | None:
@@ -211,14 +214,12 @@ class SqliteJobLedger(JobLedger):
         try:
             with self._conn() as c:
                 c.execute("BEGIN IMMEDIATE")
-                row = c.execute(
-                    """
+                row = c.execute("""
                     SELECT job_id FROM inference_jobs
                     WHERE status = 'pending'
                     ORDER BY created_at ASC
                     LIMIT 1
-                    """
-                ).fetchone()
+                    """).fetchone()
                 if not row:
                     c.execute("COMMIT")
                     return None
@@ -388,4 +389,3 @@ def build_job_ledger() -> JobLedger:
 
 
 JOB_LEDGER = build_job_ledger()
-

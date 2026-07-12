@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from .auth import enforce_usage_limits
 from .session_store import SESSION_STORE
 
-
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 @router.post("/")
-async def create_session(user_key: str = Depends(enforce_usage_limits)) -> dict[str, Any]:
+async def create_session(
+    user_key: str = Depends(enforce_usage_limits),
+) -> dict[str, Any]:
     session_id = SESSION_STORE.create_session(user_key)
     return {"session_id": session_id, "user_key": user_key}
 

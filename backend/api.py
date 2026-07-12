@@ -134,12 +134,16 @@ async def assemblyai_token(_: str = Depends(enforce_usage_limits)):
                 resp.status_code,
                 resp.text[:300],
             )
-            raise HTTPException(status_code=502, detail="Failed to generate streaming token")
+            raise HTTPException(
+                status_code=502, detail="Failed to generate streaming token"
+            )
 
         data = resp.json()
         token = data.get("token")
         if not token:
-            raise HTTPException(status_code=502, detail="Token missing from AssemblyAI response")
+            raise HTTPException(
+                status_code=502, detail="Token missing from AssemblyAI response"
+            )
         out = {"token": token}
         if ASSEMBLYAI_KEYTERMS:
             out["keyterms_prompt"] = ASSEMBLYAI_KEYTERMS
@@ -147,8 +151,12 @@ async def assemblyai_token(_: str = Depends(enforce_usage_limits)):
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Unexpected error generating AssemblyAI temporary token: %s", exc)
-        raise HTTPException(status_code=502, detail="Unable to generate streaming token")
+        logger.exception(
+            "Unexpected error generating AssemblyAI temporary token: %s", exc
+        )
+        raise HTTPException(
+            status_code=502, detail="Unable to generate streaming token"
+        )
 
 
 if __name__ == "__main__":

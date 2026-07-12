@@ -18,6 +18,7 @@ usage_limiter = InMemoryUsageLimiter(
     per_minute_limit=RATE_LIMIT_PER_MINUTE, daily_quota=DAILY_REQUEST_QUOTA
 )
 
+
 def _extract_bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
