@@ -173,11 +173,19 @@ export default function Page() {
   const lastCustomerDataExtractRef = useRef<string>(''); // Track last transcript we extracted from
   const speakerRoleMapRef = useRef<SpeakerRoleMap>({});
   const nextVoiceIsStaffRef = useRef(true);
+  const transcriptListRef = useRef<HTMLDivElement | null>(null);
 
   // Keep ref in sync with state
   useEffect(() => {
     manuallyEditedFieldsRef.current = manuallyEditedFields;
   }, [manuallyEditedFields]);
+
+  // Auto-scroll transcript to the latest turn / partial as the conversation grows.
+  useEffect(() => {
+    const el = transcriptListRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [turns, live]);
 
   useEffect(() => {
     speakerRoleMapRef.current = speakerRoleMap;
@@ -889,52 +897,52 @@ export default function Page() {
 
       <main className="layout-main">
         <section className="panel" aria-label="Live transcript">
-          <div className="panel-header">
+          <div className="panel-header panel-header--compact">
             <h1 className="panel-title">Live conversation</h1>
-            <p className="panel-hint">
-              Speaker-labeled turns (Staff / Customer) from the laptop microphone
-            </p>
+            <p className="panel-hint panel-hint--tight">Speaker-labeled turns from the laptop mic</p>
           </div>
 
           <div className="diarization-controls" role="group" aria-label="Speaker role controls">
-            <span className="diarization-controls__label">Next new voice:</span>
-            <button
-              type="button"
-              className={`btn btn--ghost btn--compact${nextVoiceIsStaff ? " btn--active" : ""}`}
-              onClick={() => setNextVoiceRole(true)}
-              aria-pressed={nextVoiceIsStaff}
-              disabled={hasRoleMapping && Boolean(mappedStaffLabel)}
-              title={
-                mappedStaffLabel
-                  ? `Staff already mapped to speaker ${mappedStaffLabel}`
-                  : "Lock the next unseen speaker as Staff"
-              }
-            >
-              Next voice is Staff
-            </button>
-            <button
-              type="button"
-              className={`btn btn--ghost btn--compact${!nextVoiceIsStaff ? " btn--active" : ""}`}
-              onClick={() => setNextVoiceRole(false)}
-              aria-pressed={!nextVoiceIsStaff}
-              disabled={hasRoleMapping && Boolean(mappedCustomerLabel)}
-              title={
-                mappedCustomerLabel
-                  ? `Customer already mapped to speaker ${mappedCustomerLabel}`
-                  : "Lock the next unseen speaker as Customer"
-              }
-            >
-              Next voice is Customer
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--compact"
-              onClick={swapSpeakerRoles}
-              disabled={!hasRoleMapping}
-              title="Swap Staff and Customer labels if diarization inverted them"
-            >
-              Swap roles
-            </button>
+            <span className="diarization-controls__label">Speakers</span>
+            <div className="diarization-controls__buttons">
+              <button
+                type="button"
+                className={`btn btn--ghost btn--compact${nextVoiceIsStaff ? " btn--active" : ""}`}
+                onClick={() => setNextVoiceRole(true)}
+                aria-pressed={nextVoiceIsStaff}
+                disabled={hasRoleMapping && Boolean(mappedStaffLabel)}
+                title={
+                  mappedStaffLabel
+                    ? `Staff mapped to speaker ${mappedStaffLabel}`
+                    : "Lock the next unseen speaker as Staff"
+                }
+              >
+                Staff
+              </button>
+              <button
+                type="button"
+                className={`btn btn--ghost btn--compact${!nextVoiceIsStaff ? " btn--active" : ""}`}
+                onClick={() => setNextVoiceRole(false)}
+                aria-pressed={!nextVoiceIsStaff}
+                disabled={hasRoleMapping && Boolean(mappedCustomerLabel)}
+                title={
+                  mappedCustomerLabel
+                    ? `Customer mapped to speaker ${mappedCustomerLabel}`
+                    : "Lock the next unseen speaker as Customer"
+                }
+              >
+                Customer
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--compact"
+                onClick={swapSpeakerRoles}
+                disabled={!hasRoleMapping}
+                title="Swap Staff and Customer labels if diarization inverted them"
+              >
+                Swap
+              </button>
+            </div>
             {hasRoleMapping ? (
               <span className="diarization-controls__map" aria-live="polite">
                 {mappedStaffLabel ? `Staff ← ${mappedStaffLabel}` : "Staff ← —"}
@@ -948,7 +956,7 @@ export default function Page() {
             )}
           </div>
 
-          <div className="transcript-list">
+          <div className="transcript-list" ref={transcriptListRef}>
             {turns.length === 0 && !live && (
               <p className="empty-state">Start a session and speak to see the transcript here.</p>
             )}
@@ -974,159 +982,161 @@ export default function Page() {
           </div>
         </section>
 
-        <aside className="panel sidebar" aria-label="Customer data and suggestions">
+        <aside className="panel sidebar" aria-label="AI suggestions and customer data">
+          <div className="sidebar-block sidebar-block--suggestions">
+            <div className="panel-header panel-header--compact">
+              <h2 className="panel-title">AI suggestions</h2>
+              <p className="panel-hint panel-hint--tight">What to say next</p>
+            </div>
+
+            <div className="suggestions-scroll">
+              {suggestions.length === 0 ? (
+                <p className="empty-state">
+                  {transcriptText.trim().length < 10
+                    ? "Suggestions appear after there is enough transcript to analyze."
+                    : "Analyzing the latest transcript…"}
+                </p>
+              ) : (
+                suggestions.map((s, i) => {
+                  const details = s.details || {};
+                  const topic = s.topic || s.text || "Follow up on conversation";
+                  const possibleConversation = details.possibleConversation || "";
+
+                  return (
+                    <article key={i} className="suggestion-card">
+                      <span className="suggestion-badge">{s.type || "Suggestion"}</span>
+
+                      <div>
+                        <div className="suggestion-block-title">Topic / context</div>
+                        <p className="suggestion-topic">{topic}</p>
+                      </div>
+
+                      {possibleConversation ? (
+                        <div className="suggestion-followup">
+                          <div className="suggestion-block-title">Possible phrasing</div>
+                          <p className="suggestion-quote">{possibleConversation}</p>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="divider" />
+
           <div className="sidebar-block sidebar-block--customer">
             <div className="panel-header panel-header--compact">
               <div>
                 <h2 className="panel-title">Customer data</h2>
                 <p className="panel-hint panel-hint--tight">
-                  Extracted from the call. Edits are kept and not overwritten by automation.
+                  Auto-filled from the call. Your edits are kept.
                 </p>
               </div>
             </div>
 
-            <div className="field-group">
-              <label className="field-label" htmlFor="cust-name">
-                Name
-              </label>
-              <input
-                id="cust-name"
-                className="field-input"
-                type="text"
-                value={customerData.name}
-                onChange={(e) => handleCustomerDataChange("name", e.target.value)}
-                placeholder="Customer name"
-                autoComplete="off"
-              />
-            </div>
-
-            <div className="field-group">
-              <label className="field-label" htmlFor="cust-id">
-                NRIC / Work Permit ID
-              </label>
-              <input
-                id="cust-id"
-                className="field-input"
-                type="text"
-                value={customerData.nric_worker_permit_id}
-                onChange={(e) => handleCustomerDataChange("nric_worker_permit_id", e.target.value)}
-                placeholder="e.g. S1234567A or permit number"
-                autoComplete="off"
-              />
-            </div>
-
-            <div className="field-group">
-              <label className="field-label" htmlFor="cust-address">
-                Address
-              </label>
-              <textarea
-                id="cust-address"
-                className="field-textarea"
-                value={customerData.address}
-                onChange={(e) => handleCustomerDataChange("address", e.target.value)}
-                placeholder="Customer address"
-                rows={3}
-              />
-            </div>
-
-            <div className="field-group">
-              <label className="field-label" htmlFor="cust-purpose">
-                Purpose of call
-              </label>
-              <textarea
-                id="cust-purpose"
-                className="field-textarea"
-                value={customerData.purpose_of_call}
-                onChange={(e) => handleCustomerDataChange("purpose_of_call", e.target.value)}
-                placeholder="Reason for the call"
-                rows={3}
-              />
-            </div>
-
-            {transcriptText.trim().length < 10 ? (
-              <p className="empty-state">Customer fields fill in automatically as the conversation adds enough context.</p>
-            ) : null}
-
-            <div className="customer-info-actions">
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={obtainCustomerInfo}
-                disabled={isLoadingCustomerHistory}
-              >
-                {isLoadingCustomerHistory ? "Obtaining..." : "Obtain customer info"}
-              </button>
-            </div>
-
-            {customerHistory ? (
-              <section className="customer-history" aria-live="polite">
-                <div className="customer-history__title">Customer history</div>
-                <p className="customer-history__text">{customerHistory}</p>
-                <div className="customer-history__table-wrap">
-                  <table className="customer-history__table" aria-label="Customer case summary">
-                    <thead>
-                      <tr>
-                        <th>Case ID</th>
-                        <th>Company</th>
-                        <th>Type</th>
-                        <th>Status</th>
-                        <th>Summary</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td>#CH298D</td>
-                        <td>ABC</td>
-                        <td>Employer dispute</td>
-                        <td>Resolved</td>
-                        <td>Salary underpayment complaint settled through mediation.</td>
-                      </tr>
-                    </tbody>
-                  </table>
+            <div className="customer-scroll">
+              <div className="field-grid">
+                <div className="field-group">
+                  <label className="field-label" htmlFor="cust-name">
+                    Name
+                  </label>
+                  <input
+                    id="cust-name"
+                    className="field-input"
+                    type="text"
+                    value={customerData.name}
+                    onChange={(e) => handleCustomerDataChange("name", e.target.value)}
+                    placeholder="Customer name"
+                    autoComplete="off"
+                  />
                 </div>
-              </section>
-            ) : null}
-          </div>
 
-          <div className="divider" />
+                <div className="field-group">
+                  <label className="field-label" htmlFor="cust-id">
+                    NRIC / Work Permit ID
+                  </label>
+                  <input
+                    id="cust-id"
+                    className="field-input"
+                    type="text"
+                    value={customerData.nric_worker_permit_id}
+                    onChange={(e) => handleCustomerDataChange("nric_worker_permit_id", e.target.value)}
+                    placeholder="e.g. S1234567A"
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
 
-          <div className="sidebar-block suggestions-stack">
-            <div className="panel-header panel-header--compact">
-              <h2 className="panel-title">AI suggestions</h2>
-              <p className="panel-hint panel-hint--tight">Context-aware guidance for the operator</p>
+              <div className="field-group">
+                <label className="field-label" htmlFor="cust-address">
+                  Address
+                </label>
+                <textarea
+                  id="cust-address"
+                  className="field-textarea"
+                  value={customerData.address}
+                  onChange={(e) => handleCustomerDataChange("address", e.target.value)}
+                  placeholder="Customer address"
+                  rows={2}
+                />
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="cust-purpose">
+                  Purpose of call
+                </label>
+                <textarea
+                  id="cust-purpose"
+                  className="field-textarea"
+                  value={customerData.purpose_of_call}
+                  onChange={(e) => handleCustomerDataChange("purpose_of_call", e.target.value)}
+                  placeholder="Reason for the call"
+                  rows={2}
+                />
+              </div>
+
+              <div className="customer-info-actions">
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={obtainCustomerInfo}
+                  disabled={isLoadingCustomerHistory}
+                >
+                  {isLoadingCustomerHistory ? "Obtaining..." : "Obtain customer info"}
+                </button>
+              </div>
+
+              {customerHistory ? (
+                <section className="customer-history" aria-live="polite">
+                  <div className="customer-history__title">Customer history</div>
+                  <p className="customer-history__text">{customerHistory}</p>
+                  <div className="customer-history__table-wrap">
+                    <table className="customer-history__table" aria-label="Customer case summary">
+                      <thead>
+                        <tr>
+                          <th>Case ID</th>
+                          <th>Company</th>
+                          <th>Type</th>
+                          <th>Status</th>
+                          <th>Summary</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>#CH298D</td>
+                          <td>ABC</td>
+                          <td>Employer dispute</td>
+                          <td>Resolved</td>
+                          <td>Salary underpayment complaint settled through mediation.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              ) : null}
             </div>
-
-            {suggestions.length === 0 ? (
-              <p className="empty-state">
-                {transcriptText.trim().length < 10
-                  ? "Suggestions appear after there is enough transcript to analyze."
-                  : "Analyzing the latest transcript…"}
-              </p>
-            ) : (
-              suggestions.map((s, i) => {
-                const details = s.details || {};
-                const topic = s.topic || s.text || "Follow up on conversation";
-                const possibleConversation = details.possibleConversation || "";
-
-                return (
-                  <article key={i} className="suggestion-card">
-                    <span className="suggestion-badge">{s.type || "Suggestion"}</span>
-
-                    <div>
-                      <div className="suggestion-block-title">Topic / context</div>
-                      <p className="suggestion-topic">{topic}</p>
-                    </div>
-
-                    {possibleConversation ? (
-                      <div className="suggestion-followup">
-                        <div className="suggestion-block-title">Possible phrasing</div>
-                        <p className="suggestion-quote">{possibleConversation}</p>
-                      </div>
-                    ) : null}
-                  </article>
-                );
-              })
-            )}
           </div>
         </aside>
       </main>

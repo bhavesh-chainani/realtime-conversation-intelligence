@@ -2,7 +2,7 @@
 
 A real-time legal call assistant system that provides live AI-powered suggestions to operators during active calls with clients. Built with FastAPI backend and Next.js frontend, featuring real-time speech-to-text transcription via AssemblyAI and intelligent suggestions powered by OpenAI.
 
-![App Screenshot](./screenshot.png)
+App Screenshot
 
 ## ✨ Features
 
@@ -14,11 +14,15 @@ A real-time legal call assistant system that provides live AI-powered suggestion
 - **Operator Support**: Actionable suggestions including follow-up questions, document requests, and issue identification
 - **Customer Data Extraction**: Automatically extracts structured information (name, NRIC, address, purpose) from conversations
 
+
+
 ### Documentation
 
 **[Data science, operations, and production readiness](docs/DATA_SCIENCE_AND_OPS.md)** — full runbook: architecture, env options, sync vs async, persistence, telemetry, and how to avoid “surprise drift” (versioning, eval, vendor drift). Shorter go-live list: [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md).
 
 ## 🚀 Quick Start
+
+
 
 ### Prerequisites
 
@@ -27,7 +31,11 @@ A real-time legal call assistant system that provides live AI-powered suggestion
 - **AssemblyAI API Key** ([Get one here](https://www.assemblyai.com/))
 - **OpenAI API Key** ([Get one here](https://platform.openai.com/api-keys))
 
+
+
 ### Installation & Setup
+
+
 
 #### 1. Clone the Repository
 
@@ -36,9 +44,16 @@ git clone https://github.com/yourusername/realtime-conversation-intelligence.git
 cd realtime-conversation-intelligence
 ```
 
+
+
 #### 2. Set Up Python Backend
 
 ```bash
+# Create virtual environment
+python3.11 -m venv realtime-venv
+
+# Activate virtual environment
+# On macOS/Linux:
 # Create virtual environment
 python3.11 -m venv realtime-venv
 
@@ -53,7 +68,17 @@ pip install --upgrade pip
 
 # Install dependencies
 pip install -r requirements.txt
+# On Windows:
+# realtime-venv\Scripts\activate
+
+# Upgrade pip
+pip install --upgrade pip
+
+# Install dependencies
+pip install -r requirements.txt
 ```
+
+
 
 #### 3. Configure Environment Variables
 
@@ -103,7 +128,7 @@ Edit `config.json` to customize suggestion behavior:
 }
 ```
 
-Optional **`assemblyai_keyterms`**: array of strings passed to AssemblyAI streaming v3 as the **`keyterms_prompt`** query parameter (JSON-encoded). This replaces the older **`word_boost`** style usage on streaming; start empty and add only terms the model often mishears (max 100; see [AssemblyAI keyterms prompting](https://www.assemblyai.com/docs/streaming/keyterms-prompting)).
+Optional `assemblyai_keyterms`: array of strings passed to AssemblyAI streaming v3 as the `keyterms_prompt` query parameter (JSON-encoded). This replaces the older `word_boost` style usage on streaming; start empty and add only terms the model often mishears (max 100; see [AssemblyAI keyterms prompting](https://www.assemblyai.com/docs/streaming/keyterms-prompting)).
 
 **Available Models**: You can use any OpenAI model (e.g., `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`). The default is `gpt-3.5-turbo` for cost-effectiveness.
 
@@ -115,7 +140,11 @@ npm install
 cd ..
 ```
 
+
+
 ### Running the Application
+
+
 
 #### Start the Backend Server
 
@@ -128,6 +157,7 @@ uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload
 The backend will be available at `http://localhost:8000`
 
 **Available Endpoints**:
+
 - `GET /health` – Liveness: process is up (include `APP_VERSION` / `GIT_SHA` when set).
 - `GET /ready` – Readiness: dependency check; with `STRICT_READINESS=true`, returns 503 until OpenAI + AssemblyAI keys are configured.
 - `GET /metrics` – Prometheus text (when `METRICS_ENABLED=true`; optional `METRICS_TOKEN`).
@@ -178,10 +208,13 @@ docker compose up --build
 5. **Stop**: Click "Stop" to end the transcription session
 
 **How It Works**:
+
 - Partial transcripts appear instantly as you speak, with Staff/Customer badges when diarization has locked roles
 - When finalized, transcripts overwrite partial text (no duplicates)
 - AI suggestions and customer extraction use role-labeled transcript context
 - Suggestions update in real-time as the conversation progresses
+
+
 
 ### Same-laptop diarization setup
 
@@ -193,39 +226,44 @@ This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setu
 4. If early labels are swapped, click **Swap roles** — no need to restart the session.
 
 **Persistence**:
+
 - Default local storage uses SQLite (`data/sessions.db`).
 - Production on AWS uses DynamoDB (`STORAGE_BACKEND=dynamodb`; see `infra/aws/README.md`).
 
 **Auth behavior**:
+
 - If Cognito frontend vars are configured, users can login via Hosted UI.
 - Backend validates JWTs when `REQUIRE_API_AUTH=true` and JWT settings are configured (`AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`).
 
+
+
 ## 🏗️ Architecture
+
+
 
 ### How It Works
 
-1. **Real-Time Transcription (Frontend)**: 
-   - Frontend streams laptop-mic audio directly to AssemblyAI over WebSocket
-   - Streaming diarization (`speaker_labels=true`, `max_speakers=2`) labels speakers A/B
-   - UI maps labels to **Staff** / **Customer** (lock next voice + Swap roles if inverted)
-   - Partial text renders immediately; finals overwrite partials to avoid duplicates
-   - Suggest/extract receive role-labeled context (`Staff: …` / `Customer: …`)
-
-2. **Transcript Analysis (Backend)**: 
-   - Finalized labeled transcript turns are posted to `/suggest` endpoint
-   - Backend processes conversation context
-
+1. **Real-Time Transcription (Frontend)**:
+  - Frontend streams laptop-mic audio directly to AssemblyAI over WebSocket
+  - Streaming diarization (`speaker_labels=true`, `max_speakers=2`) labels speakers A/B
+  - UI maps labels to **Staff** / **Customer** (lock next voice + Swap roles if inverted)
+  - Partial text renders immediately; finals overwrite partials to avoid duplicates
+  - Suggest/extract receive role-labeled context (`Staff: …` / `Customer: …`)
+2. **Transcript Analysis (Backend)**:
+  - Finalized labeled transcript turns are posted to `/suggest` endpoint
+  - Backend processes conversation context
 3. **AI Suggestions (Two-Agent Pipeline)**:
-   - **Router Agent**: Analyzes conversation and decides when suggestions are needed
-   - **Suggestion Agent**: Generates actionable recommendations including:
-     - Follow-up questions to gather essential information
-     - Legal issue identification
-     - Document requests
-     - Urgency assessment
-     - Natural language responses for operators
+  - **Router Agent**: Analyzes conversation and decides when suggestions are needed
+  - **Suggestion Agent**: Generates actionable recommendations including:
+    - Follow-up questions to gather essential information
+    - Legal issue identification
+    - Document requests
+    - Urgency assessment
+    - Natural language responses for operators
+4. **Customer Data Extraction**:
+  - `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from **Customer**-attributed lines
 
-4. **Customer Data Extraction**: 
-   - `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from **Customer**-attributed lines
+
 
 ## 📁 Project Structure
 
@@ -257,21 +295,28 @@ realtime-conversation-intelligence/
 └── README.md                  # This file
 ```
 
+
+
 ## 🎨 Customization
+
+
 
 ### Customizing AI Prompts
 
 All AI prompts are stored in separate files for easy customization. Edit the files in `backend/prompts/` to modify agent behavior:
 
 **Router Agent Prompts** (controls when suggestions are generated):
+
 - `router_system_prompt.txt` – System instructions for the router agent
 - `router_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` placeholder)
 
 **Suggestion Agent Prompts** (controls what suggestions are generated):
+
 - `suggestion_system_prompt.txt` – System instructions for the suggestion agent
 - `suggestion_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` and `{max_suggestions}` placeholders)
 
 **Fallback Suggestions** (shown when the AI fails):
+
 - `fallback_suggestions.json` – JSON array of fallback suggestion objects
 
 **Note**: Prompt files support template placeholders (e.g., `{conversation_transcript}`) which are automatically replaced at runtime. Do not modify these placeholders unless you understand the code structure.
@@ -280,53 +325,67 @@ Changes take effect after restarting the backend server.
 
 ## 🐛 Troubleshooting
 
+
+
 ### Common Issues
 
 **Microphone not working**:
+
 - Check browser permissions (allow microphone access when prompted)
 - Ensure `ASSEMBLYAI_API_KEY` is configured in backend `.env`
 - Try refreshing the page and granting permissions again
 
 **Suggestions not appearing**:
+
 - Verify `OPENAI_API_KEY` is configured in your `.env` file
 - Check that you have sufficient OpenAI API credits
 - Review backend logs for error messages
 - Test the `/config` endpoint: `curl http://localhost:8000/config`
 
 **Backend connection issues**:
+
 - Ensure backend is running on port 8000
 - Check that virtual environment is activated
 - Verify all dependencies are installed: `pip list`
 - Review FastAPI logs for detailed error messages
 
 **Frontend connection issues**:
+
 - Ensure frontend is running on port 3000
 - Check that backend is accessible at `http://localhost:8000`
 - Verify CORS settings if accessing from different origin
 - Ensure AssemblyAI WebSocket can connect (corporate networks may require allowing `wss://streaming.assemblyai.com`)
 
 **Duplicate lines in conversation**:
+
 - The UI normalizes final vs partial transcripts automatically
 - If duplicates persist, refresh the page and try again
 - Check browser console for errors
 
+
+
 ### Debugging
 
 **Backend Logging**: The suggestions endpoint provides detailed logging:
+
 - Input conversation transcripts with character counts
 - API call details (model, request parameters)
 - Output suggestions with type, text, confidence, priority
 - Error traces and fallback suggestions
 
 **Check Backend Health**:
+
 ```bash
 curl http://localhost:8000/health
 ```
 
 **Check Configuration**:
+
 ```bash
 curl http://localhost:8000/config
 ```
+
+
 
 ## 📝 Notes
 
@@ -339,12 +398,17 @@ curl http://localhost:8000/config
 - Suggestions are generated in real-time from finalized transcript turns and update automatically.
 - The system is optimized for legal entity in singapore's workflow, providing context-aware recommendations for legal assistance operators.
 
+
+
 ## ☁️ AWS Deployment
 
 AWS deployment manifests and instructions are in:
+
 - `infra/aws/README.md`
 - `infra/aws/backend.apprunner.yaml`
 - `infra/aws/frontend.apprunner.yaml`
+
+
 
 ## 📄 License
 
