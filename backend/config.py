@@ -1,12 +1,18 @@
+import json
 import os
 import pathlib
-import json
-from dotenv import load_dotenv, find_dotenv
+
+from dotenv import find_dotenv, load_dotenv
 
 load_dotenv(find_dotenv(usecwd=True), override=True)
 
 ASSEMBLYAI_API_KEY = (os.getenv("ASSEMBLYAI_API_KEY") or "").strip()
-OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+
+# LiteLLM/OpenAI-compatible proxy configuration for all LLM tasks.
+LLM_API_KEY = (os.getenv("LLM_API_KEY") or "").strip()
+LLM_BASE_URL = (os.getenv("LLM_BASE_URL") or "").strip()
+LLM_TIMEOUT_SECONDS = float((os.getenv("LLM_TIMEOUT_SECONDS") or "20").strip())
+
 API_AUTH_TOKEN = (os.getenv("API_AUTH_TOKEN") or "").strip()
 AUTH_JWKS_URL = (os.getenv("AUTH_JWKS_URL") or "").strip()
 AUTH_ISSUER = (os.getenv("AUTH_ISSUER") or "").strip()
@@ -24,9 +30,27 @@ def load_config_json():
 
 
 CONFIG = load_config_json()
-SUGGESTION_MODEL = CONFIG.get("suggestion_model", "gpt-3.5-turbo")
-SUGGESTION_TEMPERATURE = CONFIG.get("suggestion_temperature", 0.3)
-SUGGESTION_MAX = CONFIG.get("max_suggestions", 3)
+
+# Per-task model settings with config.json fallback.
+ROUTER_MODEL = (
+    os.getenv("ROUTER_MODEL")
+    or CONFIG.get("router_model")
+    or CONFIG.get("suggestion_model")
+    or "gpt-4o-mini"
+)
+SUGGESTION_MODEL = (
+    os.getenv("SUGGESTION_MODEL") or CONFIG.get("suggestion_model") or ROUTER_MODEL
+)
+EXTRACTION_MODEL = (
+    os.getenv("EXTRACTION_MODEL") or CONFIG.get("extraction_model") or SUGGESTION_MODEL
+)
+SQL_LOOKUP_MODEL = (
+    os.getenv("SQL_LOOKUP_MODEL") or CONFIG.get("sql_lookup_model") or EXTRACTION_MODEL
+)
+SUGGESTION_TEMPERATURE = float(
+    os.getenv("SUGGESTION_TEMPERATURE") or CONFIG.get("suggestion_temperature") or 0.3
+)
+SUGGESTION_MAX = int(os.getenv("MAX_SUGGESTIONS") or CONFIG.get("max_suggestions") or 3)
 
 BACKEND_CORS_ORIGINS = [
     origin.strip()
@@ -71,6 +95,20 @@ INFERENCE_QUEUE_MODE = (
 )  # poll | sqs
 AWS_SQS_INFERENCE_QUEUE_URL = (os.getenv("AWS_SQS_INFERENCE_QUEUE_URL") or "").strip()
 JOB_STORE_BACKEND = (os.getenv("JOB_STORE_BACKEND") or "sqlite").strip().lower()
+
+# Customer history lookup: curated Postgres view, read-only only.
+CUSTOMER_HISTORY_DATABASE_URL = (
+    os.getenv("CUSTOMER_HISTORY_DATABASE_URL") or ""
+).strip()
+CUSTOMER_HISTORY_VIEW = (
+    os.getenv("CUSTOMER_HISTORY_VIEW") or "public.customer_history_view"
+).strip()
+CUSTOMER_HISTORY_QUERY_TIMEOUT_MS = int(
+    (os.getenv("CUSTOMER_HISTORY_QUERY_TIMEOUT_MS") or "2500").strip()
+)
+CUSTOMER_HISTORY_MAX_ROWS = int(
+    (os.getenv("CUSTOMER_HISTORY_MAX_ROWS") or "10").strip()
+)
 
 # Day 6–8: observability & ops
 LOG_JSON = (os.getenv("LOG_JSON") or "false").strip().lower() in {

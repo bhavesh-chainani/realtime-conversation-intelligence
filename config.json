@@ -1,5 +1,8 @@
 {
-  "suggestion_model": "gpt-3.5-turbo",
+  "router_model": "gpt-4o-mini",
+  "suggestion_model": "gpt-4o-mini",
+  "extraction_model": "gpt-4o-mini",
+  "sql_lookup_model": "gpt-4o-mini",
   "suggestion_temperature": 0.3,
   "max_suggestions": 2,
   "assemblyai_keyterms": []

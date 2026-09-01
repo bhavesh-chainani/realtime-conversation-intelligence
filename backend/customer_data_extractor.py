@@ -3,9 +3,10 @@ from pydantic import BaseModel, Field
 from typing import Dict, Any
 import logging
 import json
-from openai import OpenAI
-from .config import OPENAI_API_KEY, SUGGESTION_MODEL, SUGGESTION_TEMPERATURE
+
 from .auth import enforce_usage_limits
+from .config import SUGGESTION_TEMPERATURE
+from .llm import get_extraction_model, get_llm_client
 from .persistence import persist_customer_extract_event
 
 logger = logging.getLogger(__name__)
@@ -25,10 +26,7 @@ class CustomerDataExtractor:
     """Extracts customer information from conversation transcripts using LLM"""
 
     def __init__(self):
-        self.model = SUGGESTION_MODEL
         self.temperature = SUGGESTION_TEMPERATURE
-        self.api_key = OPENAI_API_KEY
-        self.client = OpenAI(api_key=self.api_key) if self.api_key else None
 
     SYSTEM_PROMPT = """You are a customer information extraction system for a legal entity in singapore's legal assistance calls.
 
@@ -88,11 +86,12 @@ Return a JSON object with the extracted information. If any field is not mention
                 f"[Customer Data Extractor] Extracting data from transcript ({len(conversation_transcript)} chars)"
             )
 
-            if not self.client:
-                raise ValueError("OpenAI API key not configured")
+            client = get_llm_client()
+            if not client:
+                raise ValueError("LLM API key not configured")
 
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = client.chat.completions.create(
+                model=get_extraction_model(),
                 temperature=self.temperature,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},

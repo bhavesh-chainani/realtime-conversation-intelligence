@@ -16,12 +16,15 @@ def test_ready_lax(client):
     assert r.status_code == 200
     body = r.json()
     assert body.get("ready") is True
-    assert "openai_configured" in body
+    assert "llm_configured" in body
+    assert "llm_api_key_loaded" in body
+    assert "llm_base_url_configured" in body
     assert "assemblyai_configured" in body
 
 
 def test_ready_strict_missing_keys_returns_503(client, monkeypatch):
-    monkeypatch.setattr("backend.config.OPENAI_API_KEY", "")
+    monkeypatch.setattr("backend.config.LLM_API_KEY", "")
+    monkeypatch.setattr("backend.config.LLM_BASE_URL", "")
     monkeypatch.setattr("backend.config.ASSEMBLYAI_API_KEY", "")
     monkeypatch.setattr("backend.config.STRICT_READINESS", True)
     r = client.get("/ready")

@@ -4,20 +4,16 @@ This agent generates actionable suggestions when called by the router agent.
 Optimized for low latency and real-time interaction.
 """
 
-from openai import OpenAI
-from typing import List, Dict, Any, Optional
 import json
 import logging
-from .config import (
-    OPENAI_API_KEY,
-    SUGGESTION_MODEL,
-    SUGGESTION_TEMPERATURE,
-    SUGGESTION_MAX,
-)
+from typing import Any, Dict, List, Optional
+
+from .config import SUGGESTION_MAX, SUGGESTION_TEMPERATURE
+from .llm import get_llm_client, get_suggestion_model
 from .prompt_loader import (
+    get_fallback_suggestions,
     get_suggestion_system_prompt,
     get_suggestion_user_prompt,
-    get_fallback_suggestions,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,11 +23,8 @@ class SuggestionAgent:
     """Agent that generates real-time suggestions for operators."""
 
     def __init__(self):
-        self.model = SUGGESTION_MODEL
         self.temperature = SUGGESTION_TEMPERATURE
         self.max_suggestions = SUGGESTION_MAX
-        self.api_key = OPENAI_API_KEY
-        self.client = OpenAI(api_key=self.api_key) if self.api_key else None
 
     async def generate_suggestions(
         self,
@@ -65,11 +58,12 @@ class SuggestionAgent:
         )
 
         try:
-            if not self.client:
-                raise ValueError("OpenAI API key not configured")
+            client = get_llm_client()
+            if not client:
+                raise ValueError("LLM API key not configured")
 
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = client.chat.completions.create(
+                model=get_suggestion_model(),
                 temperature=self.temperature,
                 messages=[
                     {"role": "system", "content": system_prompt},

@@ -2,23 +2,25 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
-import httpx
 
 from .logging_config import setup_logging
 
 setup_logging()
 
-from .suggestions import router as suggest_router
-from .customer_data_extractor import router as customer_data_router
-from .sessions_api import router as sessions_router
 from .async_jobs_router import router as async_jobs_router
-from .auth import require_api_auth, enforce_usage_limits
+from .auth import enforce_usage_limits, require_api_auth
 from .config import ASYNC_JOBS_ENABLED, BACKEND_CORS_ORIGINS
+from .customer_data_extractor import router as customer_data_router
+from .customer_history import router as customer_history_router
 from .http_middleware import RequestContextMiddleware
+from .llm import llm_runtime_config
+from .sessions_api import router as sessions_router
+from .suggestions import router as suggest_router
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ app.add_middleware(
 
 app.include_router(suggest_router)
 app.include_router(customer_data_router)
+app.include_router(customer_history_router)
 app.include_router(sessions_router)
 if ASYNC_JOBS_ENABLED:
     app.include_router(async_jobs_router)
@@ -56,16 +59,25 @@ async def ready():
     """Deep readiness: optional strict mode (503 if LLM/STT keys missing)."""
     from . import config as cfg
 
+    llm_cfg = llm_runtime_config()
+    customer_history_configured = bool(cfg.CUSTOMER_HISTORY_DATABASE_URL)
     detail = {
         "ready": True,
-        "openai_configured": bool(cfg.OPENAI_API_KEY),
+        "llm_configured": bool(llm_cfg["llm_configured"]),
+        "llm_api_key_loaded": bool(llm_cfg["llm_api_key_loaded"]),
+        "llm_base_url_configured": bool(llm_cfg["llm_base_url_configured"]),
+        "router_model_configured": bool(llm_cfg["router_model_configured"]),
+        "suggestion_model_configured": bool(llm_cfg["suggestion_model_configured"]),
+        "extraction_model_configured": bool(llm_cfg["extraction_model_configured"]),
+        "sql_lookup_model_configured": bool(llm_cfg["sql_lookup_model_configured"]),
+        "customer_history_configured": customer_history_configured,
         "assemblyai_configured": bool(cfg.ASSEMBLYAI_API_KEY),
         "version": cfg.APP_VERSION,
     }
     if cfg.GIT_SHA:
         detail["git_sha"] = cfg.GIT_SHA
     if cfg.STRICT_READINESS:
-        if not detail["openai_configured"] or not detail["assemblyai_configured"]:
+        if not detail["llm_configured"] or not detail["assemblyai_configured"]:
             detail["ready"] = False
             raise HTTPException(status_code=503, detail=detail)
     return detail
@@ -89,24 +101,25 @@ async def metrics(authorization: str | None = Header(None)):
 async def config(_: str = Depends(require_api_auth)):
     from .config import (
         ASSEMBLYAI_API_KEY,
-        OPENAI_API_KEY,
-        SUGGESTION_MODEL,
         ASSEMBLYAI_KEYTERMS,
+        CUSTOMER_HISTORY_DATABASE_URL,
+        CUSTOMER_HISTORY_VIEW,
         REQUIRE_API_AUTH,
     )
 
     return {
         "assemblyai_key_loaded": bool(ASSEMBLYAI_API_KEY),
-        "openai_api_key_loaded": bool(OPENAI_API_KEY),
-        "suggestion_model": SUGGESTION_MODEL,
+        "customer_history_configured": bool(CUSTOMER_HISTORY_DATABASE_URL),
+        "customer_history_view": CUSTOMER_HISTORY_VIEW,
         "assemblyai_keyterms_count": len(ASSEMBLYAI_KEYTERMS),
         "require_api_auth": REQUIRE_API_AUTH,
+        **llm_runtime_config(),
     }
 
 
 @app.get("/limits")
 async def limits(_: str = Depends(require_api_auth)):
-    from .config import RATE_LIMIT_PER_MINUTE, DAILY_REQUEST_QUOTA
+    from .config import DAILY_REQUEST_QUOTA, RATE_LIMIT_PER_MINUTE
 
     return {
         "rate_limit_per_minute": RATE_LIMIT_PER_MINUTE,

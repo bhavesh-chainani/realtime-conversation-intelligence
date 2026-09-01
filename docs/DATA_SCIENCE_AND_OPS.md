@@ -14,12 +14,13 @@ Companion docs:
 
 **Goal:** Live **speech-to-text** on the client’s microphone, streamed to **AssemblyAI** with **streaming speaker diarization**, with **finalized role-labeled transcript segments** periodically sent to a **FastAPI backend** that runs:
 
-1. A **two-step LLM pipeline** (router → suggestion generator), and/or  
-2. A **structured extraction** endpoint (customer fields from **Customer**-attributed transcript lines),
+1. A **two-step LLM pipeline** (router → suggestion generator),
+2. A **structured extraction** endpoint (customer fields from **Customer**-attributed transcript lines), and/or  
+3. A **read-only customer-history lookup** against a curated Postgres view,
 
-optionally persisted per **session** and optionally executed **asynchronously** via a **worker**.
+with LLM calls routed through a **LiteLLM-hosted OpenAI-compatible proxy**, optionally persisted per **session** and optionally executed **asynchronously** via a **worker** where applicable.
 
-**Important boundary:** Permanent **AssemblyAI** and **OpenAI** keys stay on the server. The browser receives only a **short-lived streaming token** from `GET /assemblyai-token` (see [`backend/api.py`](../backend/api.py)).
+**Important boundary:** Permanent **AssemblyAI** and **LiteLLM** credentials stay on the server. The browser receives only a **short-lived streaming token** from `GET /assemblyai-token` (see [`backend/api.py`](../backend/api.py)).
 
 **Speaker roles:** The frontend enables AssemblyAI `speaker_labels=true` (`max_speakers=2`) on the streaming WebSocket, maps A/B labels to Staff/Customer (with operator lock + swap), and posts context like `Staff: …` / `Customer: …`. This is a **same-laptop single-mic** path (in-person or speakerphone), not dual-channel telephony.
 
@@ -46,8 +47,8 @@ flowchart LR
     Jobs[(Job ledger)]
   end
 
-  subgraph llm [OpenAI Cloud]
-    OAI[Chat Completions API]
+  subgraph llm [LiteLLM Proxy]
+    OAI[OpenAI-compatible Chat API]
   end
 
   subgraph worker [Worker optional]
@@ -139,12 +140,13 @@ BASE_URL=http://127.0.0.1:8000 python scripts/load_smoke.py
 
 | Area | Variables | Meaning |
 |------|-----------|---------|
-| **LLM/STT secrets** | `OPENAI_API_KEY`, `ASSEMBLYAI_API_KEY` | Server-side only; `/ready` with `STRICT_READINESS=true` fails if missing. |
+| **LLM/STT secrets** | `LLM_API_KEY`, `LLM_BASE_URL`, `ASSEMBLYAI_API_KEY` | Server-side only; `LLM_BASE_URL` and `LLM_API_KEY` are both required for the LiteLLM/OpenAI-compatible proxy path; `/ready` with `STRICT_READINESS=true` fails if LLM or STT credentials are missing. |
 | **Auth** | `REQUIRE_API_AUTH`, `API_AUTH_TOKEN`, `AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE` | If `REQUIRE_API_AUTH=true`, either static bearer token hash or JWT (Cognito/OIDC-style). Frontend stores Cognito-derived token in localStorage (`AUTH_ACCESS_TOKEN`, etc.). |
 | **CORS** | `BACKEND_CORS_ORIGINS` | Comma-separated allowlist — **must match** real frontend origins in production. |
 | **Quotas** | `RATE_LIMIT_PER_MINUTE`, `DAILY_REQUEST_QUOTA` | Per **auth user key** (see [`backend/auth.py`](../backend/auth.py)) — in-memory ledger; resets on process restart unless you extend it. |
 | **Sessions** | `STORAGE_BACKEND` (`sqlite` \| `dynamodb` \| `none`), `SQLITE_DB_PATH`, `DYNAMODB_CONVERSATIONS_TABLE`, `AWS_REGION` | Where transcript snapshots and events are recorded. |
 | **Async jobs** | `ASYNC_JOBS_ENABLED`, `JOB_STORE_BACKEND`, `INFERENCE_QUEUE_MODE` (`poll` \| `sqs`), `AWS_SQS_INFERENCE_QUEUE_URL` | Job queue + worker model. Dynamo job store + poll mode is intentionally disallowed — use **SQS** ([`worker.py`](../backend/worker.py)). |
+| **Customer history** | `CUSTOMER_HISTORY_DATABASE_URL`, `CUSTOMER_HISTORY_VIEW`, `CUSTOMER_HISTORY_QUERY_TIMEOUT_MS`, `CUSTOMER_HISTORY_MAX_ROWS` | Read-only Postgres lookup against a curated customer-history view; intended for operator context, not arbitrary SQL execution. |
 | **Observability** | `LOG_JSON`, `LOG_LEVEL`, `APP_VERSION`, `GIT_SHA`, `METRICS_ENABLED`, `METRICS_TOKEN`, `STRICT_READINESS` | Structured logs, Prometheus `/metrics`, readiness strictness — see §7. |
 
 **`.env.example`** is the authoritative list for copy-paste; values are loaded with **override from `.env`** via `python-dotenv` in [`config.py`](../backend/config.py).
@@ -155,7 +157,10 @@ Stored at repo root [`config.json`](../config.json), read at startup:
 
 | Field | Role |
 |-------|------|
-| `suggestion_model` | OpenAI model name for suggestion stack. |
+| `router_model` | Default model name for the lightweight routing/gating decision. |
+| `suggestion_model` | Default model name for operator suggestions. |
+| `extraction_model` | Default model name for structured customer-field extraction. |
+| `sql_lookup_model` | Reserved model slot for future SQL/NL retrieval layers; the first customer-history release is deterministic and view-based. |
 | `suggestion_temperature` | Sampling temperature for generation. |
 | `max_suggestions` | Upper bound routed into agents (bounded by runtime `max_suggestions` on payloads where applicable). |
 | `assemblyai_keyterms` | Up to ~100 boosted terms forwarded as **streaming** hint (not a substitute for fine-tuning). |
@@ -183,6 +188,7 @@ If the client sends a **`session_id`** (after `POST /sessions/`) and the session
 
 - **`suggestions.response`** — model output (and errors if any) tied to a transcript snapshot.
 - **`customer_data.extract`** — extraction result or error.
+- **`customer_history.lookup`** — read-only customer-history lookup inputs and response payload.
 
 Session store implementation: [`session_store.py`](../session_store.py) (`sqlite` | `dynamodb` | `none`).
 
@@ -191,7 +197,7 @@ Session store implementation: [`session_store.py`](../session_store.py) (`sqlite
 ### 5.2 What is *not* automatically stored
 
 - Raw audio is **not** persisted by this app (only goes to AssemblyAI per their product flow).
-- Full OpenAI request/response bodies are **not** stored as structured fields by default; verbose **logs** may contain transcript snippets — lock down logs in production (`LOG_JSON` + access controls).
+- Full LLM request/response bodies are **not** stored as structured fields by default; verbose **logs** may contain transcript snippets — lock down logs in production (`LOG_JSON` + access controls).
 
 ---
 
@@ -217,7 +223,7 @@ Recommended **outside** this repo but enabled by persisted events:
 
 ### 6.3 LLM vendor drift
 
-OpenAI models and AssemblyAI decoding can change subtly over time without your code changing. Mitigations:
+Upstream LLM providers behind LiteLLM, and AssemblyAI decoding, can change subtly over time without your code changing. Mitigations:
 
 - Pin **`suggestion_model`** to stable model IDs you trust; document allowances for upgrades.
 - Record **approximate timestamps** (`suggestions.response` events are tied to session times in store) and correlate with vendor incident windows.
@@ -249,7 +255,7 @@ Useful for latency SLOs, error ratios, and traffic shape — **not** for semanti
 | Endpoint | Use |
 |---------|-----|
 | `GET /health` | **Liveness:** process responding; cheap; suitable for Compose healthchecks. Includes `version` / `git_sha` when configured. |
-| `GET /ready` | **Readiness:** surfaces whether OpenAI/AssemblyAI keys are configured; **`STRICT_READINESS=true`** returns **503** if either missing — gate load balancers that should not admit traffic until secrets exist. |
+| `GET /ready` | **Readiness:** surfaces whether LiteLLM proxy and AssemblyAI configuration are present; **`STRICT_READINESS=true`** returns **503** if either is missing — gate load balancers that should not admit traffic until secrets exist. |
 
 ---
 
@@ -283,7 +289,7 @@ Full list maintained in [`README.md`](../README.md).
 
 ## 10. Mental model checklist for data scientists onboarding
 
-1. **Where does “the model” live?** → OpenAI APIs, driven by **`config.json`** + **prompt `.txt`** files + agent code (`router_agent.py`, `suggestion_agent.py`, `customer_data_extractor`).
+1. **Where does “the model” live?** → Behind your LiteLLM OpenAI-compatible endpoint, driven by **`config.json`** + **prompt `.txt`** files + agent code (`router_agent.py`, `suggestion_agent.py`, `customer_data_extractor`).
 2. **What changes output without a redeploy?** → Vendor-side model drift; ephemeral temperature sampling; streamed partial transcripts triggering different routers.
 3. **What freezes behavior for forensics?** → **`GIT_SHA`**, **`APP_VERSION`**, image digest, **`config.json`**, Git revision of **`backend/prompts/`**.
 4. **Where is ground truth for quality?** → Not auto-generated; use stored session events plus human labels or SME review — build pipelines accordingly.

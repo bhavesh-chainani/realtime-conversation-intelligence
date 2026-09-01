@@ -31,6 +31,23 @@ type CustomerData = {
   purpose_of_call: string;
 };
 
+type CustomerHistoryCase = {
+  case_id: string;
+  company: string;
+  type: string;
+  status: string;
+  summary: string;
+};
+
+type CustomerHistoryStatus =
+  | "idle"
+  | "loading"
+  | "invalid_input"
+  | "not_configured"
+  | "not_found"
+  | "ok"
+  | "error";
+
 type CustomerDataFields = keyof CustomerData;
 
 type SpeakerRole = "staff" | "customer" | "unknown";
@@ -148,7 +165,9 @@ export default function Page() {
   const [live, setLive] = useState<string>('');
   const [liveRole, setLiveRole] = useState<SpeakerRole>('unknown');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [customerHistoryStatus, setCustomerHistoryStatus] = useState<CustomerHistoryStatus>("idle");
   const [customerHistory, setCustomerHistory] = useState<string>("");
+  const [customerHistoryCases, setCustomerHistoryCases] = useState<CustomerHistoryCase[]>([]);
   const [isLoadingCustomerHistory, setIsLoadingCustomerHistory] = useState(false);
   const [customerData, setCustomerData] = useState<CustomerData>({
     name: '',
@@ -801,17 +820,204 @@ export default function Page() {
 
   const obtainCustomerInfo = useCallback(async () => {
     if (isLoadingCustomerHistory) return;
+
     setIsLoadingCustomerHistory(true);
+    setCustomerHistoryStatus("loading");
+    setCustomerHistory("");
+    setCustomerHistoryCases([]);
+
     try {
-      // Simulate a database lookup for customer profile history.
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      setCustomerHistory(
-        "Raja has had previous employer dispute cases. Please refer to Case #CH298D for more information."
+      const res = await fetch(`${backendUrl}/customer-history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({
+          name: customerData.name || undefined,
+          nric_worker_permit_id: customerData.nric_worker_permit_id || undefined,
+          session_id: sessionIdRef.current || undefined,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body || typeof body !== 'object') {
+        setCustomerHistoryStatus("error");
+        setCustomerHistory('Unable to obtain customer history at the moment.');
+        return;
+      }
+
+      const status = typeof body.status === 'string' ? body.status : 'error';
+      const summary = typeof body.history_summary === 'string' ? body.history_summary : '';
+      const message = typeof body.message === 'string' ? body.message : '';
+      const cases = Array.isArray(body.cases) ? body.cases : [];
+      const normalizedStatus: CustomerHistoryStatus =
+        status === 'invalid_input' ||
+        status === 'not_configured' ||
+        status === 'not_found' ||
+        status === 'ok' ||
+        status === 'error'
+          ? status
+          : 'error';
+
+      setCustomerHistoryStatus(normalizedStatus);
+      setCustomerHistory(summary || message || 'No customer history found.');
+      setCustomerHistoryCases(
+        normalizedStatus === 'ok'
+          ? cases.map((row: any) => ({
+              case_id: String(row.case_id || ''),
+              company: String(row.company || ''),
+              type: String(row.type || ''),
+              status: String(row.status || ''),
+              summary: String(row.summary || ''),
+            }))
+          : []
       );
+    } catch (err) {
+      console.error('[Frontend] Failed to obtain customer history:', err);
+      setCustomerHistoryStatus("error");
+      setCustomerHistory('Unable to obtain customer history at the moment.');
+      setCustomerHistoryCases([]);
     } finally {
       setIsLoadingCustomerHistory(false);
     }
-  }, [isLoadingCustomerHistory]);
+  }, [backendUrl, customerData.name, customerData.nric_worker_permit_id, isLoadingCustomerHistory]);
+
+  useEffect(() => {
+    setCustomerHistoryStatus("idle");
+    setCustomerHistory("");
+    setCustomerHistoryCases([]);
+  }, [customerData.name, customerData.nric_worker_permit_id]);
+
+  const showCustomerHistoryTable = customerHistoryStatus === "ok" && customerHistoryCases.length > 0;
+  const customerHistoryToneClass =
+    customerHistoryStatus === "error" || customerHistoryStatus === "not_configured"
+      ? "customer-history customer-history--warning"
+      : customerHistoryStatus === "invalid_input"
+        ? "customer-history customer-history--muted"
+        : "customer-history";
+
+  const customerHistoryTitle =
+    customerHistoryStatus === "ok"
+      ? "Customer history"
+      : customerHistoryStatus === "not_found"
+        ? "No history found"
+        : customerHistoryStatus === "not_configured"
+          ? "Lookup unavailable"
+          : customerHistoryStatus === "invalid_input"
+            ? "More details needed"
+            : customerHistoryStatus === "error"
+              ? "Lookup failed"
+              : "Customer history";
+
+  const customerHistoryActionHint =
+    customerHistoryStatus === "idle"
+      ? "Use the extracted or edited identity fields to search prior cases."
+      : customerHistoryStatus === "loading"
+        ? "Searching the backend for prior customer cases…"
+        : "";
+
+  const canSearchCustomerHistory =
+    isLoadingCustomerHistory ||
+    Boolean(customerData.name.trim()) ||
+    Boolean(customerData.nric_worker_permit_id.trim());
+
+  const customerHistoryButtonDisabled =
+    isLoadingCustomerHistory ||
+    (!customerData.name.trim() && !customerData.nric_worker_permit_id.trim());
+
+  const customerHistoryButtonLabel = isLoadingCustomerHistory ? "Obtaining..." : "Obtain customer info";
+
+  const customerHistoryEmptyText =
+    customerHistoryStatus === "idle"
+      ? "Search results will appear here after you look up a customer."
+      : customerHistoryStatus === "loading"
+        ? "Searching customer history…"
+        : customerHistory || "No customer history rows to display.";
+
+  const customerHistoryShouldRender =
+    customerHistoryStatus !== "idle" ||
+    Boolean(customerHistory) ||
+    customerHistoryCases.length > 0 ||
+    canSearchCustomerHistory;
+
+  const customerHistoryMessage = customerHistory || customerHistoryActionHint;
+
+  const customerHistoryAriaLive = customerHistoryStatus === "loading" ? "polite" : "polite";
+
+  const customerHistoryNoRowsMessage =
+    customerHistoryStatus === "ok"
+      ? "No customer history rows to display."
+      : customerHistoryEmptyText;
+
+  const customerHistoryHasMessage = Boolean(customerHistoryMessage.trim());
+
+  const customerHistoryShowPlaceholder =
+    !customerHistoryHasMessage && !showCustomerHistoryTable;
+
+  const customerHistoryShouldShowSection =
+    customerHistoryShouldRender || customerHistoryStatus === "loading";
+
+  const customerHistoryShouldShowTable = showCustomerHistoryTable;
+
+  const customerHistoryShouldShowMessage = customerHistoryHasMessage || customerHistoryShowPlaceholder;
+
+  const customerHistoryResolvedMessage = customerHistoryHasMessage
+    ? customerHistoryMessage
+    : customerHistoryEmptyText;
+
+  const customerHistoryStatusLabel =
+    customerHistoryStatus === "ok"
+      ? "ready"
+      : customerHistoryStatus === "loading"
+        ? "loading"
+        : customerHistoryStatus === "idle"
+          ? "idle"
+          : customerHistoryStatus.replace('_', ' ');
+
+  const customerHistorySectionLabel = `${customerHistoryTitle} (${customerHistoryStatusLabel})`;
+
+  const customerHistoryShouldShowStatus = customerHistoryStatus !== "idle";
+
+  const customerHistoryStatusText =
+    customerHistoryStatus === "loading"
+      ? "Searching…"
+      : customerHistoryStatus === "ok"
+        ? "Found"
+        : customerHistoryStatus === "not_found"
+          ? "No match"
+          : customerHistoryStatus === "invalid_input"
+            ? "Need details"
+            : customerHistoryStatus === "not_configured"
+              ? "Unavailable"
+              : customerHistoryStatus === "error"
+                ? "Error"
+                : "";
+
+  const customerHistoryStatusClass =
+    customerHistoryStatus === "ok"
+      ? "bubble-badge bubble-badge--staff"
+      : customerHistoryStatus === "loading"
+        ? "bubble-badge bubble-badge--unknown"
+        : "bubble-badge bubble-badge--customer";
+
+  const customerHistoryTableRows = customerHistoryCases;
+
+  const customerHistoryMessageText = customerHistoryResolvedMessage;
+
+  const customerHistoryShowTableWrap = customerHistoryShouldShowTable;
+
+  const customerHistoryShowMessageBlock = customerHistoryShouldShowMessage;
+
+  const customerHistoryRenderStatus = customerHistoryShouldShowStatus && Boolean(customerHistoryStatusText);
+
+  const customerHistorySectionClass = customerHistoryToneClass;
+
+  const customerHistoryTableAriaLabel = "Customer case summary";
+
+  const customerHistoryColspan = 5;
+
+  const customerHistoryPlaceholderText = customerHistoryNoRowsMessage;
+
+  const customerHistoryCanRender = customerHistoryShouldShowSection;
+  const customerHistoryCanSearch = !customerHistoryButtonDisabled;
+  const customerHistoryDisableReason = customerHistoryCanSearch ? "" : "Enter a name or NRIC / Work Permit ID first.";
 
   useEffect(() => {
     // Only request suggestions and extract customer data if there's meaningful transcript content
@@ -1102,38 +1308,76 @@ export default function Page() {
                   type="button"
                   className="btn btn--primary"
                   onClick={obtainCustomerInfo}
-                  disabled={isLoadingCustomerHistory}
+                  disabled={customerHistoryButtonDisabled}
+                  title={customerHistoryDisableReason || undefined}
                 >
-                  {isLoadingCustomerHistory ? "Obtaining..." : "Obtain customer info"}
+                  {customerHistoryButtonLabel}
                 </button>
               </div>
 
-              {customerHistory ? (
-                <section className="customer-history" aria-live="polite">
-                  <div className="customer-history__title">Customer history</div>
-                  <p className="customer-history__text">{customerHistory}</p>
-                  <div className="customer-history__table-wrap">
-                    <table className="customer-history__table" aria-label="Customer case summary">
-                      <thead>
-                        <tr>
-                          <th>Case ID</th>
-                          <th>Company</th>
-                          <th>Type</th>
-                          <th>Status</th>
-                          <th>Summary</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td>#CH298D</td>
-                          <td>ABC</td>
-                          <td>Employer dispute</td>
-                          <td>Resolved</td>
-                          <td>Salary underpayment complaint settled through mediation.</td>
-                        </tr>
-                      </tbody>
-                    </table>
+              {customerHistoryCanRender ? (
+                <section
+                  className={customerHistorySectionClass}
+                  aria-live={customerHistoryAriaLive}
+                  aria-label={customerHistorySectionLabel}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "0.75rem",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div className="customer-history__title">{customerHistoryTitle}</div>
+                    {customerHistoryRenderStatus ? (
+                      <span className={customerHistoryStatusClass}>{customerHistoryStatusText}</span>
+                    ) : null}
                   </div>
+
+                  {customerHistoryShowMessageBlock ? (
+                    <p className="customer-history__text">{customerHistoryMessageText}</p>
+                  ) : null}
+
+                  {customerHistoryShowTableWrap ? (
+                    <div className="customer-history__table-wrap">
+                      <table className="customer-history__table" aria-label={customerHistoryTableAriaLabel}>
+                        <thead>
+                          <tr>
+                            <th>Case ID</th>
+                            <th>Company</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Summary</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {customerHistoryTableRows.map((row, idx) => (
+                            <tr key={`${row.case_id || 'case'}-${idx}`}>
+                              <td>{row.case_id || '—'}</td>
+                              <td>{row.company || '—'}</td>
+                              <td>{row.type || '—'}</td>
+                              <td>{row.status || '—'}</td>
+                              <td>{row.summary || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+
+                  {!customerHistoryShowTableWrap && !customerHistoryShowMessageBlock ? (
+                    <div className="customer-history__table-wrap">
+                      <table className="customer-history__table" aria-label={customerHistoryTableAriaLabel}>
+                        <tbody>
+                          <tr>
+                            <td colSpan={customerHistoryColspan}>{customerHistoryPlaceholderText}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
                 </section>
               ) : null}
             </div>

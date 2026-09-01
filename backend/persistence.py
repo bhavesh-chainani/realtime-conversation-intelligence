@@ -63,3 +63,29 @@ def persist_customer_extract_event(
         )
     except Exception as exc:
         logger.warning("[persist] extract failed: %s", exc)
+
+
+def persist_customer_history_lookup_event(
+    session_id: str | None,
+    user_key: str,
+    lookup_inputs: dict[str, Any],
+    response: dict[str, Any],
+    error: str | None = None,
+) -> None:
+    if not session_id:
+        return
+    try:
+        if not SESSION_STORE.ensure_session_owned(session_id, user_key):
+            logger.warning(
+                "[persist] customer history skipped: session_id not owned session_id=%s",
+                session_id,
+            )
+            return
+        SESSION_STORE.append_event(
+            session_id,
+            user_key,
+            "customer_history.lookup",
+            {"lookup": lookup_inputs, "response": response, "error": error},
+        )
+    except Exception as exc:
+        logger.warning("[persist] customer history failed: %s", exc)

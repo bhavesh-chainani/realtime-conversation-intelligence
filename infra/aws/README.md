@@ -72,7 +72,8 @@ aws apprunner create-service \
 After service is created, set runtime environment variables in App Runner console:
 
 - `ASSEMBLYAI_API_KEY` (Secret)
-- `OPENAI_API_KEY` (Secret)
+- `LLM_API_KEY` (Secret)
+- `LLM_BASE_URL=<your LiteLLM base URL>`
 - `REQUIRE_API_AUTH=true`
 - `AUTH_JWKS_URL=<cognito jwks url>`
 - `AUTH_ISSUER=<cognito issuer>`
@@ -112,7 +113,7 @@ Set runtime environment variables:
 
 ## 6) Async inference worker (optional scale path)
 
-For heavy OpenAI load, enable the job queue:
+For heavy LLM load through LiteLLM, enable the job queue:
 
 1. Create an SQS standard queue (or FIFO if you enforce ordering globally).
 2. Grant the API instance role `sqs:SendMessage` on that queue URL.

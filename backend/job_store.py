@@ -95,7 +95,8 @@ class SqliteJobLedger(JobLedger):
 
     def _init(self) -> None:
         with self._conn() as c:
-            c.execute("""
+            c.execute(
+                """
                 CREATE TABLE IF NOT EXISTS inference_jobs (
                     job_id TEXT PRIMARY KEY,
                     user_key TEXT NOT NULL,
@@ -107,7 +108,8 @@ class SqliteJobLedger(JobLedger):
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
-                """)
+                """
+            )
 
     def create_pending(
         self,
@@ -214,12 +216,14 @@ class SqliteJobLedger(JobLedger):
         try:
             with self._conn() as c:
                 c.execute("BEGIN IMMEDIATE")
-                row = c.execute("""
+                row = c.execute(
+                    """
                     SELECT job_id FROM inference_jobs
                     WHERE status = 'pending'
                     ORDER BY created_at ASC
                     LIMIT 1
-                    """).fetchone()
+                    """
+                ).fetchone()
                 if not row:
                     c.execute("COMMIT")
                     return None

@@ -1,6 +1,6 @@
 # Real-Time Conversation Intelligence
 
-A real-time legal call assistant system that provides live AI-powered suggestions to operators during active calls with clients. Built with FastAPI backend and Next.js frontend, featuring real-time speech-to-text transcription via AssemblyAI and intelligent suggestions powered by OpenAI.
+A real-time legal call assistant system that provides live AI-powered suggestions to operators during active calls with clients. Built with a FastAPI backend and Next.js frontend, featuring real-time speech-to-text transcription via AssemblyAI and task-specific LLM routing through LiteLLM over an OpenAI-compatible API surface.
 
 App Screenshot
 
@@ -13,6 +13,7 @@ App Screenshot
 - **Live Conversation Intelligence**: Real-time analysis of ongoing conversations
 - **Operator Support**: Actionable suggestions including follow-up questions, document requests, and issue identification
 - **Customer Data Extraction**: Automatically extracts structured information (name, NRIC, address, purpose) from conversations
+- **Customer History Lookup**: Uses extracted or manually corrected identity fields to retrieve prior case history from a read-only Postgres view
 
 
 
@@ -29,7 +30,7 @@ App Screenshot
 - **Python 3.11+** (check with `python3 --version`)
 - **Node.js 18+** and npm (check with `node --version` and `npm --version`)
 - **AssemblyAI API Key** ([Get one here](https://www.assemblyai.com/))
-- **OpenAI API Key** ([Get one here](https://platform.openai.com/api-keys))
+- **LiteLLM proxy URL, API key, and model names**
 
 
 
@@ -88,8 +89,16 @@ Create a `.env` file in the project root directory:
 # AssemblyAI for realtime transcription
 ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
 
-# OpenAI API configuration
-OPENAI_API_KEY=your_openai_api_key_here
+# LiteLLM / OpenAI-compatible proxy configuration for all LLM tasks
+LLM_API_KEY=your_litellm_proxy_key_here
+LLM_BASE_URL=http://your-litellm-host:4000
+LLM_TIMEOUT_SECONDS=20
+ROUTER_MODEL=gpt-4o-mini
+SUGGESTION_MODEL=claude-sonnet-5
+EXTRACTION_MODEL=claude-sonnet-5
+SQL_LOOKUP_MODEL=claude-sonnet-5
+SUGGESTION_TEMPERATURE=0.3
+MAX_SUGGESTIONS=2
 
 # API auth mode
 REQUIRE_API_AUTH=false
@@ -110,18 +119,27 @@ STORAGE_BACKEND=sqlite
 SQLITE_DB_PATH=data/sessions.db
 DYNAMODB_CONVERSATIONS_TABLE=
 AWS_REGION=us-east-1
+
+# Customer history lookup (read-only Postgres view)
+CUSTOMER_HISTORY_DATABASE_URL=
+CUSTOMER_HISTORY_VIEW=public.customer_history_view
+CUSTOMER_HISTORY_QUERY_TIMEOUT_MS=2500
+CUSTOMER_HISTORY_MAX_ROWS=10
 ```
 
-**Note**: Replace `your_assemblyai_api_key_here` and `your_openai_api_key_here` with your actual API keys.  
+**Note**: Replace the example AssemblyAI and LiteLLM values with your real credentials and model aliases. In this project, LiteLLM is the intended LLM runtime contract, so `LLM_BASE_URL` and `LLM_API_KEY` should both be set.  
 You can also copy `.env.example` to `.env` and fill values.
 
 #### 4. Configure Suggestion Settings (Optional)
 
-Edit `config.json` to customize suggestion behavior:
+Edit `config.json` to customize fallback model-routing defaults when env vars are not set:
 
 ```json
 {
-  "suggestion_model": "gpt-3.5-turbo",
+  "router_model": "gpt-4o-mini",
+  "suggestion_model": "gpt-4o-mini",
+  "extraction_model": "gpt-4o-mini",
+  "sql_lookup_model": "gpt-4o-mini",
   "suggestion_temperature": 0.3,
   "max_suggestions": 2,
   "assemblyai_keyterms": []
@@ -130,7 +148,7 @@ Edit `config.json` to customize suggestion behavior:
 
 Optional `assemblyai_keyterms`: array of strings passed to AssemblyAI streaming v3 as the `keyterms_prompt` query parameter (JSON-encoded). This replaces the older `word_boost` style usage on streaming; start empty and add only terms the model often mishears (max 100; see [AssemblyAI keyterms prompting](https://www.assemblyai.com/docs/streaming/keyterms-prompting)).
 
-**Available Models**: You can use any OpenAI model (e.g., `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`). The default is `gpt-3.5-turbo` for cost-effectiveness.
+**Model routing**: task-specific env vars take precedence over `config.json`, which makes it easy to point the backend at LiteLLM aliases without editing code.
 
 #### 5. Set Up Frontend
 
@@ -159,7 +177,7 @@ The backend will be available at `http://localhost:8000`
 **Available Endpoints**:
 
 - `GET /health` – Liveness: process is up (include `APP_VERSION` / `GIT_SHA` when set).
-- `GET /ready` – Readiness: dependency check; with `STRICT_READINESS=true`, returns 503 until OpenAI + AssemblyAI keys are configured.
+- `GET /ready` – Readiness: dependency check; with `STRICT_READINESS=true`, returns 503 until LiteLLM and AssemblyAI configuration is present.
 - `GET /metrics` – Prometheus text (when `METRICS_ENABLED=true`; optional `METRICS_TOKEN`).
 - `GET /config` – Configuration introspection (requires auth when enabled)
 - `GET /limits` – Active per-minute and daily quota values
@@ -170,6 +188,7 @@ The backend will be available at `http://localhost:8000`
 - `GET /sessions/{session_id}` – Session metadata + recent stored events (same user only)
 - `POST /suggest` – AI suggestions endpoint (accepts conversation transcript + optional session id)
 - `POST /extract-customer-data` – Extract customer information (optional session id)
+- `POST /customer-history` – Read-only customer-history lookup using name and/or NRIC / Work Permit ID (optional session id)
 
 **Tests & ops**: `pip install -r requirements-dev.txt && pytest` · load probe: `python scripts/load_smoke.py` · production checklist: [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md).
 
@@ -205,7 +224,8 @@ docker compose up --build
 2. **Start Transcription**: Click "Start session" (browser will request microphone access)
 3. **Speak**: Staff and customer voices on the same laptop mic are labeled separately; use **Next voice is Staff/Customer** and **Swap roles** if needed
 4. **View Suggestions**: AI-powered suggestions appear in real-time on the right side
-5. **Stop**: Click "Stop" to end the transcription session
+5. **Use customer lookup**: After extraction fills name or NRIC / Work Permit ID, click **Obtain customer info** to search the read-only history view
+6. **Stop**: Click "Stop" to end the transcription session
 
 **How It Works**:
 
@@ -213,6 +233,7 @@ docker compose up --build
 - When finalized, transcripts overwrite partial text (no duplicates)
 - AI suggestions and customer extraction use role-labeled transcript context
 - Suggestions update in real-time as the conversation progresses
+- Customer history lookup prefers NRIC / Work Permit ID and falls back to exact customer-name matching
 
 
 
@@ -251,7 +272,7 @@ This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setu
   - Suggest/extract receive role-labeled context (`Staff: …` / `Customer: …`)
 2. **Transcript Analysis (Backend)**:
   - Finalized labeled transcript turns are posted to `/suggest` endpoint
-  - Backend processes conversation context
+  - Backend processes conversation context through LiteLLM-routed models
 3. **AI Suggestions (Two-Agent Pipeline)**:
   - **Router Agent**: Analyzes conversation and decides when suggestions are needed
   - **Suggestion Agent**: Generates actionable recommendations including:
@@ -262,6 +283,8 @@ This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setu
     - Natural language responses for operators
 4. **Customer Data Extraction**:
   - `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from **Customer**-attributed lines
+5. **Customer History Lookup**:
+  - `/customer-history` uses customer identity fields to perform a read-only lookup against a curated Postgres customer-history view and returns case summaries for the operator
 
 
 
@@ -278,7 +301,6 @@ realtime-conversation-intelligence/
 │   ├── prompt_loader.py       # Prompt loading utility
 │   ├── config.py              # Environment and configuration
 │   ├── session_store.py       # SQLite + DynamoDB session persistence
-│   ├── sessions_api.py        # Session REST routes
 │   └── prompts/               # Editable prompt files
 │       ├── router_system_prompt.txt
 │       ├── router_user_prompt.txt
@@ -290,7 +312,7 @@ realtime-conversation-intelligence/
 │   │   ├── page.tsx           # Main conversation UI
 │   │   └── layout.tsx          # Next.js layout
 │   └── package.json
-├── config.json                # Suggestion settings
+├── config.json                # Model defaults
 ├── requirements.txt           # Python dependencies
 └── README.md                  # This file
 ```
@@ -337,10 +359,16 @@ Changes take effect after restarting the backend server.
 
 **Suggestions not appearing**:
 
-- Verify `OPENAI_API_KEY` is configured in your `.env` file
-- Check that you have sufficient OpenAI API credits
+- Verify `LLM_API_KEY`, `LLM_BASE_URL`, and task model names are configured in your `.env` file
+- Check that your LiteLLM proxy is reachable and healthy
 - Review backend logs for error messages
 - Test the `/config` endpoint: `curl http://localhost:8000/config`
+
+**Customer history lookup not working**:
+
+- Ensure `CUSTOMER_HISTORY_DATABASE_URL` is configured
+- Verify `CUSTOMER_HISTORY_VIEW` points at a readable view with the expected columns
+- Confirm the backend database role is read-only and has access to the configured view
 
 **Backend connection issues**:
 
