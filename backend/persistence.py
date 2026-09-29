@@ -41,8 +41,7 @@ def persist_customer_extract_event(
     session_id: str | None,
     user_key: str,
     transcript: str,
-    success: bool,
-    data: dict[str, Any],
+    response: dict[str, Any],
     error: str | None = None,
 ) -> None:
     if not session_id:
@@ -59,7 +58,7 @@ def persist_customer_extract_event(
             session_id,
             user_key,
             "customer_data.extract",
-            {"success": success, "data": data, "error": error},
+            {"response": response, "error": error},
         )
     except Exception as exc:
         logger.warning("[persist] extract failed: %s", exc)

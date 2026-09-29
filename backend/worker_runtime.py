@@ -29,10 +29,14 @@ async def dispatch_inference_job(record: dict[str, Any]) -> dict[str, Any]:
 
     if job_type == "customer_extract":
         transcript = payload.get("conversation_transcript") or ""
-        extracted = await extractor.extract(transcript)
-        body: dict[str, Any] = {"success": True, "data": extracted}
+        body = await extractor.extract(transcript)
+        err = body.get("error") if isinstance(body.get("error"), str) else None
         persist_customer_extract_event(
-            session_id, user_key, transcript, True, extracted
+            session_id,
+            user_key,
+            transcript,
+            body,
+            error=err,
         )
         return body
 

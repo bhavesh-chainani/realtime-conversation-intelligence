@@ -15,15 +15,11 @@ App Screenshot
 - **Customer Data Extraction**: Automatically extracts structured information (name, NRIC, address, purpose) from conversations
 - **Customer History Lookup**: Uses extracted or manually corrected identity fields to retrieve prior case history from a read-only Postgres view
 
-
-
 ### Documentation
 
 **[Data science, operations, and production readiness](docs/DATA_SCIENCE_AND_OPS.md)** — full runbook: architecture, env options, sync vs async, persistence, telemetry, and how to avoid “surprise drift” (versioning, eval, vendor drift). Shorter go-live list: [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md).
 
 ## 🚀 Quick Start
-
-
 
 ### Prerequisites
 
@@ -32,11 +28,7 @@ App Screenshot
 - **AssemblyAI API Key** ([Get one here](https://www.assemblyai.com/))
 - **LiteLLM proxy URL, API key, and model names**
 
-
-
 ### Installation & Setup
-
-
 
 #### 1. Clone the Repository
 
@@ -44,8 +36,6 @@ App Screenshot
 git clone https://github.com/yourusername/realtime-conversation-intelligence.git
 cd realtime-conversation-intelligence
 ```
-
-
 
 #### 2. Set Up Python Backend
 
@@ -78,8 +68,6 @@ pip install --upgrade pip
 # Install dependencies
 pip install -r requirements.txt
 ```
-
-
 
 #### 3. Configure Environment Variables
 
@@ -127,7 +115,7 @@ CUSTOMER_HISTORY_QUERY_TIMEOUT_MS=2500
 CUSTOMER_HISTORY_MAX_ROWS=10
 ```
 
-**Note**: Replace the example AssemblyAI and LiteLLM values with your real credentials and model aliases. In this project, LiteLLM is the intended LLM runtime contract, so `LLM_BASE_URL` and `LLM_API_KEY` should both be set.  
+**Note**: Replace the example AssemblyAI and LiteLLM values with your real credentials and model aliases. In this project, LiteLLM is the intended LLM runtime contract, so `LLM_BASE_URL` and `LLM_API_KEY` should both be set.
 You can also copy `.env.example` to `.env` and fill values.
 
 #### 4. Configure Suggestion Settings (Optional)
@@ -158,11 +146,7 @@ npm install
 cd ..
 ```
 
-
-
 ### Running the Application
-
-
 
 #### Start the Backend Server
 
@@ -216,8 +200,6 @@ docker compose up --build
 - `INFERENCE_QUEUE_MODE=sqs` + `AWS_SQS_INFERENCE_QUEUE_URL` targets AWS SQS (recommended for multi-instance App Runner/ECS).
 - Frontend: set `NEXT_PUBLIC_USE_ASYNC_JOBS=true`. In Docker, pass it as a **build-arg** (see `Dockerfile.frontend` + `docker-compose.yml`).
 
-
-
 ### Usage
 
 1. **Open the Application**: Navigate to `http://localhost:3000` in your browser
@@ -234,8 +216,6 @@ docker compose up --build
 - AI suggestions and customer extraction use role-labeled transcript context
 - Suggestions update in real-time as the conversation progresses
 - Customer history lookup prefers NRIC / Work Permit ID and falls back to exact customer-name matching
-
-
 
 ### Same-laptop diarization setup
 
@@ -256,37 +236,40 @@ This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setu
 - If Cognito frontend vars are configured, users can login via Hosted UI.
 - Backend validates JWTs when `REQUIRE_API_AUTH=true` and JWT settings are configured (`AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`).
 
-
-
 ## 🏗️ Architecture
-
-
 
 ### How It Works
 
 1. **Real-Time Transcription (Frontend)**:
-  - Frontend streams laptop-mic audio directly to AssemblyAI over WebSocket
-  - Streaming diarization (`speaker_labels=true`, `max_speakers=2`) labels speakers A/B
-  - UI maps labels to **Staff** / **Customer** (lock next voice + Swap roles if inverted)
-  - Partial text renders immediately; finals overwrite partials to avoid duplicates
-  - Suggest/extract receive role-labeled context (`Staff: …` / `Customer: …`)
+
+- Frontend streams laptop-mic audio directly to AssemblyAI over WebSocket
+- Streaming diarization (`speaker_labels=true`, `max_speakers=2`) labels speakers A/B
+- UI maps labels to **Staff** / **Customer** (lock next voice + Swap roles if inverted)
+- Partial text renders immediately; finals overwrite partials to avoid duplicates
+- Suggest/extract receive role-labeled context (`Staff: …` / `Customer: …`)
+
 2. **Transcript Analysis (Backend)**:
-  - Finalized labeled transcript turns are posted to `/suggest` endpoint
-  - Backend processes conversation context through LiteLLM-routed models
+
+- Finalized labeled transcript turns are posted to `/suggest` endpoint
+- Backend processes conversation context through LiteLLM-routed models
+
 3. **AI Suggestions (Two-Agent Pipeline)**:
-  - **Router Agent**: Analyzes conversation and decides when suggestions are needed
-  - **Suggestion Agent**: Generates actionable recommendations including:
-    - Follow-up questions to gather essential information
-    - Legal issue identification
-    - Document requests
-    - Urgency assessment
-    - Natural language responses for operators
+
+- **Router Agent**: Analyzes conversation and decides when suggestions are needed
+- **Suggestion Agent**: Generates actionable recommendations including:
+  - Follow-up questions to gather essential information
+  - Legal issue identification
+  - Document requests
+  - Urgency assessment
+  - Natural language responses for operators
+
 4. **Customer Data Extraction**:
-  - `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from **Customer**-attributed lines
+
+- `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from **Customer**-attributed lines
+
 5. **Customer History Lookup**:
-  - `/customer-history` uses customer identity fields to perform a read-only lookup against a curated Postgres customer-history view and returns case summaries for the operator
 
-
+- `/customer-history` uses customer identity fields to perform a read-only lookup against a curated Postgres customer-history view and returns case summaries for the operator
 
 ## 📁 Project Structure
 
@@ -317,11 +300,7 @@ realtime-conversation-intelligence/
 └── README.md                  # This file
 ```
 
-
-
 ## 🎨 Customization
-
-
 
 ### Customizing AI Prompts
 
@@ -346,8 +325,6 @@ All AI prompts are stored in separate files for easy customization. Edit the fil
 Changes take effect after restarting the backend server.
 
 ## 🐛 Troubleshooting
-
-
 
 ### Common Issues
 
@@ -390,8 +367,6 @@ Changes take effect after restarting the backend server.
 - If duplicates persist, refresh the page and try again
 - Check browser console for errors
 
-
-
 ### Debugging
 
 **Backend Logging**: The suggestions endpoint provides detailed logging:
@@ -413,8 +388,6 @@ curl http://localhost:8000/health
 curl http://localhost:8000/config
 ```
 
-
-
 ## 📝 Notes
 
 - CORS is now controlled by `BACKEND_CORS_ORIGINS`. Use explicit production domains only.
@@ -426,8 +399,6 @@ curl http://localhost:8000/config
 - Suggestions are generated in real-time from finalized transcript turns and update automatically.
 - The system is optimized for legal entity in singapore's workflow, providing context-aware recommendations for legal assistance operators.
 
-
-
 ## ☁️ AWS Deployment
 
 AWS deployment manifests and instructions are in:
@@ -435,8 +406,6 @@ AWS deployment manifests and instructions are in:
 - `infra/aws/README.md`
 - `infra/aws/backend.apprunner.yaml`
 - `infra/aws/frontend.apprunner.yaml`
-
-
 
 ## 📄 License
 
