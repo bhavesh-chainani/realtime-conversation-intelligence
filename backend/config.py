@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 import json
 import os
 import pathlib
@@ -133,3 +134,56 @@ STRICT_READINESS = (os.getenv("STRICT_READINESS") or "false").strip().lower() in
     "on",
 }
 METRICS_TOKEN = (os.getenv("METRICS_TOKEN") or "").strip()
+=======
+import os
+import pathlib
+import json
+from typing import Optional
+from dotenv import load_dotenv, find_dotenv
+from openai import OpenAI
+
+load_dotenv(find_dotenv(usecwd=True), override=True)
+
+ASSEMBLYAI_API_KEY = (os.getenv("ASSEMBLYAI_API_KEY") or "").strip()
+# OpenAI-compatible LLM gateway (e.g. LiteLLM proxy) used for all LLM tasks
+LLM_API_KEY = (os.getenv("LLM_API_KEY") or "").strip()
+LLM_BASE_URL = (os.getenv("LLM_BASE_URL") or "").strip() or None
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS") or 20)
+
+CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config.json"
+
+
+def load_config_json():
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+CONFIG = load_config_json()
+# Env vars take precedence over config.json
+SUGGESTION_MODEL = (
+    os.getenv("SUGGESTION_MODEL") or CONFIG.get("suggestion_model") or "openai.gpt-5.4-mini"
+).strip()
+ROUTER_MODEL = (os.getenv("ROUTER_MODEL") or SUGGESTION_MODEL).strip()
+EXTRACTION_MODEL = (os.getenv("EXTRACTION_MODEL") or SUGGESTION_MODEL).strip()
+SUGGESTION_TEMPERATURE = float(
+    os.getenv("SUGGESTION_TEMPERATURE") or CONFIG.get("suggestion_temperature", 0.3)
+)
+SUGGESTION_MAX = int(os.getenv("MAX_SUGGESTIONS") or CONFIG.get("max_suggestions", 3))
+
+
+def get_llm_client() -> Optional[OpenAI]:
+    """Returns an OpenAI-compatible client pointed at LLM_BASE_URL, or None if no key is set."""
+    if not LLM_API_KEY:
+        return None
+    return OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL, timeout=LLM_TIMEOUT_SECONDS)
+
+
+# Streaming v3 uses query param `keyterms_prompt` (JSON array string), not legacy `word_boost`.
+_raw_keyterms = CONFIG.get("assemblyai_keyterms") or []
+if not isinstance(_raw_keyterms, list):
+    _raw_keyterms = []
+ASSEMBLYAI_KEYTERMS = [str(x).strip() for x in _raw_keyterms if str(x).strip()][:100]
+>>>>>>> Stashed changes

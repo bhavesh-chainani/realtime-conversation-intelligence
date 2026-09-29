@@ -1,9 +1,13 @@
 {
+<<<<<<< Updated upstream
   "router_model": "gpt-4o-mini",
   "suggestion_model": "gpt-4o-mini",
   "extraction_model": "gpt-4o-mini",
   "sql_lookup_model": "gpt-4o-mini",
+=======
+  "suggestion_model": "openai.gpt-5.4-mini",
+>>>>>>> Stashed changes
   "suggestion_temperature": 0.3,
-  "max_suggestions": 2,
+  "max_suggestions": 1,
   "assemblyai_keyterms": []
 }
