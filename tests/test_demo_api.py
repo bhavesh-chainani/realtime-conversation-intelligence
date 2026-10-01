@@ -117,3 +117,29 @@ def test_failed_cache_steps_are_skipped(demo_env, monkeypatch):
 
     status = asyncio.run(demo_cache.build_cache("unit_scenario"))
     assert status["steps"] == 0 and status["total"] == 2
+
+
+def test_token_endpoint_uses_u3_model_and_prompt_for_scenarios(demo_env, monkeypatch, client):
+    from backend import api
+
+    async def fake_token(expires_in_seconds=300):
+        return "tok"
+
+    monkeypatch.setattr(api, "create_streaming_token", fake_token)
+    monkeypatch.setattr(api, "DEMO_MODE", True)
+    monkeypatch.setattr(cfg, "ASSEMBLYAI_SPEECH_MODEL", "")
+    monkeypatch.setattr(cfg, "DEMO_SPEECH_MODEL", "u3-rt-pro")
+
+    body = client.get("/assemblyai-token?scenario=unit_scenario").json()
+    assert body["speech_model"] == "u3-rt-pro"
+    assert body["prompt"] == "A test call."
+    assert "Brightpath" in body["keyterms_prompt"]
+
+    # A non-u3 model must never receive a prompt (AssemblyAI rejects the session).
+    monkeypatch.setattr(cfg, "DEMO_SPEECH_MODEL", "universal-streaming-english")
+    body = client.get("/assemblyai-token?scenario=unit_scenario").json()
+    assert "prompt" not in body
+
+    # Without a scenario nothing demo-specific is added.
+    body = client.get("/assemblyai-token").json()
+    assert "prompt" not in body and "speech_model" not in body

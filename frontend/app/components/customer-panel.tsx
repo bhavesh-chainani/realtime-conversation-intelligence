@@ -1,39 +1,50 @@
-type CustomerHistoryStatus =
-  | "idle"
-  | "loading"
-  | "invalid_input"
-  | "not_configured"
-  | "not_found"
-  | "ok"
-  | "error";
+import type { ReactNode } from "react";
 
-type CustomerData = {
-  name: string;
-  nric_worker_permit_id: string;
-  address: string;
-  purpose_of_call: string;
-};
-
-type CustomerHistoryCase = {
-  case_id: string;
-  company: string;
-  type: string;
-  status: string;
-  summary: string;
-};
+import {
+  isOpenCaseStatus,
+  type CustomerData,
+  type CustomerDataField,
+  type CustomerHistoryCase,
+  type CustomerHistoryStatus,
+  type FieldSource,
+  type HistoryMeta,
+} from "../lib/types.ts";
 
 type CustomerPanelProps = {
   customerData: CustomerData;
-  onCustomerDataChange: (
-    field: "name" | "nric_worker_permit_id" | "address" | "purpose_of_call",
-    value: string
-  ) => void;
+  fieldSources: Partial<Record<CustomerDataField, FieldSource>>;
+  onCustomerDataChange: (field: CustomerDataField, value: string) => void;
   onLookup: () => void;
   customerHistoryStatus: CustomerHistoryStatus;
   customerHistoryMessage: string;
   customerHistoryCases: CustomerHistoryCase[];
+  historyMeta: HistoryMeta | null;
   isLoadingCustomerHistory: boolean;
 };
+
+const SOURCE_LABELS: Record<FieldSource, string> = {
+  heard: "Heard on call",
+  ai: "AI extracted",
+  records: "Verified from records",
+  manual: "Edited by staff",
+};
+
+function FieldLabel({
+  htmlFor,
+  source,
+  children,
+}: {
+  htmlFor: string;
+  source?: FieldSource;
+  children: ReactNode;
+}) {
+  return (
+    <label className="field-label field-label--with-source" htmlFor={htmlFor}>
+      <span>{children}</span>
+      {source ? <span className={`source-tag source-tag--${source}`}>{SOURCE_LABELS[source]}</span> : null}
+    </label>
+  );
+}
 
 const HISTORY_TITLES: Record<CustomerHistoryStatus, string> = {
   idle: "Customer history",
@@ -67,11 +78,13 @@ const HISTORY_TONES: Record<CustomerHistoryStatus, string> = {
 
 export function CustomerPanel({
   customerData,
+  fieldSources,
   onCustomerDataChange,
   onLookup,
   customerHistoryStatus,
   customerHistoryMessage,
   customerHistoryCases,
+  historyMeta,
   isLoadingCustomerHistory,
 }: CustomerPanelProps) {
   const filledFieldCount = [
@@ -89,11 +102,12 @@ export function CustomerPanel({
   const historyTone = HISTORY_TONES[customerHistoryStatus];
   const historyMessage =
     customerHistoryStatus === "idle"
-      ? "Review the extracted details, make any corrections, then search prior customer cases."
+      ? "Prior cases are looked up automatically once the caller's NRIC or full name is heard."
       : customerHistoryStatus === "loading"
         ? "Searching the backend for prior customer cases…"
         : customerHistoryMessage || "No customer history information is available yet.";
   const showHistoryTable = customerHistoryStatus === "ok" && customerHistoryCases.length > 0;
+  const nameOnlyMatch = historyMeta?.matchedOn === "name";
 
   return (
     <section className="rail-section" aria-label="Customer profile and history">
@@ -106,6 +120,24 @@ export function CustomerPanel({
           </p>
         </div>
       </div>
+
+      {historyMeta && customerHistoryCases.length > 0 ? (
+        <div
+          className={`returning-banner${nameOnlyMatch ? " returning-banner--unverified" : ""}`}
+          role="status"
+        >
+          <strong>
+            {nameOnlyMatch ? "Possible returning customer" : "Returning customer"} ·{" "}
+            {customerHistoryCases.length} prior case{customerHistoryCases.length === 1 ? "" : "s"}
+            {historyMeta.openCount ? `, ${historyMeta.openCount} open` : ""}
+          </strong>
+          <span>
+            {nameOnlyMatch
+              ? "Matched by name only. Verify NRIC / FIN before discussing case details."
+              : historyMeta.companies.join(", ") || "Verified on NRIC / FIN."}
+          </span>
+        </div>
+      ) : null}
 
       <div className="summary-grid" aria-label="Customer profile summary">
         <article className="summary-card">
@@ -122,9 +154,9 @@ export function CustomerPanel({
 
       <div className="field-grid">
         <div className="field-group">
-          <label className="field-label" htmlFor="cust-name">
+          <FieldLabel htmlFor="cust-name" source={fieldSources.name}>
             Name
-          </label>
+          </FieldLabel>
           <input
             id="cust-name"
             className="field-input"
@@ -137,9 +169,9 @@ export function CustomerPanel({
         </div>
 
         <div className="field-group">
-          <label className="field-label" htmlFor="cust-id">
+          <FieldLabel htmlFor="cust-id" source={fieldSources.nric_worker_permit_id}>
             NRIC / Work Permit ID
-          </label>
+          </FieldLabel>
           <input
             id="cust-id"
             className="field-input"
@@ -153,9 +185,9 @@ export function CustomerPanel({
       </div>
 
       <div className="field-group">
-        <label className="field-label" htmlFor="cust-address">
+        <FieldLabel htmlFor="cust-address" source={fieldSources.address}>
           Address
-        </label>
+        </FieldLabel>
         <textarea
           id="cust-address"
           className="field-textarea"
@@ -167,9 +199,9 @@ export function CustomerPanel({
       </div>
 
       <div className="field-group">
-        <label className="field-label" htmlFor="cust-purpose">
+        <FieldLabel htmlFor="cust-purpose" source={fieldSources.purpose_of_call}>
           Purpose of call
-        </label>
+        </FieldLabel>
         <textarea
           id="cust-purpose"
           className="field-textarea"
@@ -224,7 +256,11 @@ export function CustomerPanel({
                     <td>{row.case_id || "—"}</td>
                     <td>{row.company || "—"}</td>
                     <td>{row.type || "—"}</td>
-                    <td>{row.status || "—"}</td>
+                    <td>
+                      <span className={`case-status${isOpenCaseStatus(row.status) ? " case-status--open" : ""}`}>
+                        {row.status || "—"}
+                      </span>
+                    </td>
                     <td>{row.summary || "—"}</td>
                   </tr>
                 ))}

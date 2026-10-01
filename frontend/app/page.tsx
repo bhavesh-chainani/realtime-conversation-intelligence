@@ -3,60 +3,72 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CustomerPanel } from "./components/customer-panel";
+import { DemoBar } from "./components/demo-bar";
 import { SessionHeader } from "./components/session-header";
 import { SuggestionsPanel } from "./components/suggestions-panel";
 import { TranscriptPanel } from "./components/transcript-panel";
+import { createAutopilot, type Autopilot } from "./lib/autopilot.ts";
+import { nextLookup } from "./lib/lookup-guard.ts";
+import { extractIntroName, extractNric } from "./lib/quick-entities.ts";
+import {
+  alignTurn,
+  deriveLabelMap,
+  initialAlignState,
+  opposite,
+  relabelDiarizedTurns,
+  skippedLineIds,
+  type AlignSegment,
+  type AlignState,
+  type ScriptRole,
+} from "./lib/script-align.ts";
+import { areSimilar } from "./lib/text-normalize.ts";
+import {
+  isOpenCaseStatus,
+  type AutopilotState,
+  type CacheStatus,
+  type CustomerData,
+  type CustomerDataField,
+  type CustomerHistoryCase,
+  type CustomerHistoryStatus,
+  type DemoScenario,
+  type DemoScenarioSummary,
+  type FieldSource,
+  type HistoryMeta,
+  type InputMode,
+  type Preflight,
+  type SpeakerRole,
+  type Suggestion,
+  type SuggestionMeta,
+  type Turn,
+} from "./lib/types.ts";
 
-type Suggestion = {
-  type?: string;
-  text?: string;
-  topic?: string;
-  confidence?: number;
-  details?: {
-    possibleConversation?: string;
-    operatorResponse?: string;
-    suggestedConversation?: string;
-    priority?: string;
-    [key: string]: any;
-  };
-};
+type SpeakerRoleMap = Record<string, ScriptRole>;
 
-type CustomerData = {
-  name: string;
-  nric_worker_permit_id: string;
-  address: string;
-  purpose_of_call: string;
-};
-
-type CustomerHistoryCase = {
-  case_id: string;
-  company: string;
-  type: string;
-  status: string;
-  summary: string;
-};
-
-type CustomerHistoryStatus =
-  | "idle"
-  | "loading"
-  | "invalid_input"
-  | "not_configured"
-  | "not_found"
-  | "ok"
-  | "error";
-
-type CustomerDataFields = keyof CustomerData;
-
-type SpeakerRole = "staff" | "customer" | "unknown";
-
-type Turn = {
-  id: string;
+type FinalTurnInput = {
   text: string;
   speakerLabel: string | null;
-  role: SpeakerRole;
+  wordLabels?: Array<string | null>;
+  turnOrder?: number;
+  source: "mic" | "autopilot";
 };
 
-type SpeakerRoleMap = Record<string, "staff" | "customer">;
+type CachedStep = { suggestions: Suggestion[] };
+
+/** Customer-turn work waits this long so a split second fragment can merge first. */
+const SUGGESTION_DEBOUNCE_MS = 250;
+/** If the live suggestion hasn't landed this long after the turn ended, show the prepared one. */
+const CACHE_RACE_MS = 1300;
+/** Max time a suggestion request waits for an in-flight history lookup. */
+const LOOKUP_WAIT_MS = 700;
+const PREWARM_INTERVAL_MS = 45_000;
+const TRANSCRIPT_WINDOW_TURNS = 16;
+
+const EMPTY_CUSTOMER: CustomerData = {
+  name: "",
+  nric_worker_permit_id: "",
+  address: "",
+  purpose_of_call: "",
+};
 
 function newTurnId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -106,6 +118,18 @@ function extractSpeakerLabel(msg: Record<string, unknown>): string | null {
   return best;
 }
 
+/** Per-word diarization labels, only when they line up 1:1 with the transcript's words. */
+function extractWordLabels(msg: Record<string, unknown>, text: string): Array<string | null> | undefined {
+  const words = msg.words;
+  if (!Array.isArray(words)) return undefined;
+  const labels = words.map((w) =>
+    w && typeof w === "object"
+      ? normalizeSpeakerLabel((w as Record<string, unknown>).speaker ?? (w as Record<string, unknown>).speaker_label)
+      : null
+  );
+  return labels.length === text.split(/\s+/).filter(Boolean).length ? labels : undefined;
+}
+
 function roleDisplayName(role: SpeakerRole): string {
   if (role === "staff") return "Staff";
   if (role === "customer") return "Customer";
@@ -119,6 +143,13 @@ function formatLabeledTranscript(turns: Turn[]): string {
     .trim();
 }
 
+function formatTranscriptWindow(turns: Turn[]): string {
+  const recent = turns.slice(-TRANSCRIPT_WINDOW_TURNS);
+  const omitted = turns.length - recent.length;
+  const body = formatLabeledTranscript(recent);
+  return omitted > 0 ? `[Earlier: ${omitted} turns omitted]\n${body}` : body;
+}
+
 function resolveSpeakerRole(
   label: string | null,
   map: SpeakerRoleMap,
@@ -130,8 +161,8 @@ function resolveSpeakerRole(
   if (existing) return { role: existing, map };
 
   const assigned = new Set(Object.values(map));
-  const firstRole: "staff" | "customer" = nextVoiceIsStaff ? "staff" : "customer";
-  const secondRole: "staff" | "customer" = firstRole === "staff" ? "customer" : "staff";
+  const firstRole: ScriptRole = nextVoiceIsStaff ? "staff" : "customer";
+  const secondRole: ScriptRole = firstRole === "staff" ? "customer" : "staff";
 
   const nextMap = { ...map };
   if (!assigned.has(firstRole)) {
@@ -143,6 +174,10 @@ function resolveSpeakerRole(
     return { role: secondRole, map: nextMap };
   }
   return { role: "unknown", map };
+}
+
+function casesKey(match: string | null, cases: CustomerHistoryCase[]): string {
+  return `${match || "-"}|${cases.map((c) => c.case_id).join(",")}`;
 }
 
 export default function Page() {
@@ -166,26 +201,37 @@ export default function Page() {
   const [live, setLive] = useState("");
   const [liveRole, setLiveRole] = useState<SpeakerRole>("unknown");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suggestionMeta, setSuggestionMeta] = useState<SuggestionMeta | null>(null);
   const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
   const [customerHistoryStatus, setCustomerHistoryStatus] =
     useState<CustomerHistoryStatus>("idle");
   const [customerHistory, setCustomerHistory] = useState("");
   const [customerHistoryCases, setCustomerHistoryCases] = useState<CustomerHistoryCase[]>([]);
+  const [historyMeta, setHistoryMeta] = useState<HistoryMeta | null>(null);
   const [isLoadingCustomerHistory, setIsLoadingCustomerHistory] = useState(false);
-  const [customerData, setCustomerData] = useState<CustomerData>({
-    name: "",
-    nric_worker_permit_id: "",
-    address: "",
-    purpose_of_call: "",
-  });
-  const [manuallyEditedFields, setManuallyEditedFields] = useState<Set<CustomerDataFields>>(
-    new Set()
-  );
+  const [customerData, setCustomerData] = useState<CustomerData>(EMPTY_CUSTOMER);
+  const [fieldSources, setFieldSources] = useState<Partial<Record<CustomerDataField, FieldSource>>>({});
   const [isListening, setIsListening] = useState(false);
   const [speakerRoleMap, setSpeakerRoleMap] = useState<SpeakerRoleMap>({});
   const [nextVoiceIsStaff, setNextVoiceIsStaff] = useState(true);
+  const [resetNonce, setResetNonce] = useState(0);
 
-  const manuallyEditedFieldsRef = useRef<Set<CustomerDataFields>>(new Set());
+  // Demo mode
+  const [demoEnabled, setDemoEnabled] = useState(false);
+  const [scenarios, setScenarios] = useState<DemoScenarioSummary[]>([]);
+  const [scenarioId, setScenarioId] = useState<string>("");
+  const [scenario, setScenario] = useState<DemoScenario | null>(null);
+  const [inputMode, setInputMode] = useState<InputMode>("live");
+  const [autopilotState, setAutopilotState] = useState<AutopilotState>("idle");
+  const [speed, setSpeed] = useState(1);
+  const [stepMode, setStepMode] = useState(false);
+  const [cursor, setCursor] = useState(0);
+  const [skippedLines, setSkippedLines] = useState<string[]>([]);
+  const [cacheStatus, setCacheStatus] = useState<CacheStatus | null>(null);
+  const [isBuildingCache, setIsBuildingCache] = useState(false);
+  const [preflight, setPreflight] = useState<Preflight | null>(null);
+  const [isCheckingPreflight, setIsCheckingPreflight] = useState(false);
+
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -193,17 +239,37 @@ export default function Page() {
   const mediaSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const streamAttemptRef = useRef(0);
   const liveRef = useRef("");
-  const lastCustomerDataExtractRef = useRef("");
   const speakerRoleMapRef = useRef<SpeakerRoleMap>({});
   const nextVoiceIsStaffRef = useRef(true);
   const transcriptListRef = useRef<HTMLDivElement>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const lastTranscriptRef = useRef("");
-  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const debugRef = useRef(false);
 
-  useEffect(() => {
-    manuallyEditedFieldsRef.current = manuallyEditedFields;
-  }, [manuallyEditedFields]);
+  // Conversation state mirrored in refs so async handlers never read stale values.
+  const turnsRef = useRef<Turn[]>([]);
+  const alignStateRef = useRef<AlignState>(initialAlignState());
+  /** State before the latest final, so a re-sent (formatted) version can replace it. */
+  const lastFinalSnapshotRef = useRef<{ key: string; turns: Turn[]; align: AlignState } | null>(null);
+  const customerDataRef = useRef<CustomerData>(EMPTY_CUSTOMER);
+  const fieldSourcesRef = useRef<Partial<Record<CustomerDataField, FieldSource>>>({});
+  const historyCasesRef = useRef<CustomerHistoryCase[]>([]);
+  const historyMatchRef = useRef<string | null>(null);
+  const lookupKeyRef = useRef<string | null>(null);
+  const lookupPromiseRef = useRef<Promise<void> | null>(null);
+  const lookupReqIdRef = useRef(0);
+  const lastCustomerTurnRef = useRef<Turn | null>(null);
+  const lastSuggestionCasesKeyRef = useRef("");
+  const suggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suggestReqIdRef = useRef(0);
+  const suggestAbortRef = useRef<AbortController | null>(null);
+  const extractReqIdRef = useRef(0);
+  const lastCustomerDataExtractRef = useRef("");
+
+  const scenarioRef = useRef<DemoScenario | null>(null);
+  const cacheStepsRef = useRef<Record<string, CachedStep>>({});
+  const autopilotRef = useRef<Autopilot | null>(null);
+  const speedRef = useRef(1);
+  const stepModeRef = useRef(false);
 
   useEffect(() => {
     const el = transcriptListRef.current;
@@ -223,6 +289,13 @@ export default function Page() {
     try {
       localStorage.removeItem("API_AUTH_TOKEN");
     } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    debugRef.current = params.get("debug") === "1";
+    setDemoEnabled(process.env.NEXT_PUBLIC_DEMO_MODE === "true" || params.get("demo") === "1");
   }, []);
 
   useEffect(() => {
@@ -252,10 +325,6 @@ export default function Page() {
 
   const transcriptText = useMemo(() => formatLabeledTranscript(turns), [turns]);
   const hasTranscript = transcriptText.trim().length >= 10;
-
-  useEffect(() => {
-    liveRef.current = live;
-  }, [live]);
 
   const getAuthHeaders = (): Record<string, string> => {
     const headers: Record<string, string> = {};
@@ -295,7 +364,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [backendUrl, isAuthenticated]);
+  }, [backendUrl, isAuthenticated, resetNonce]);
 
   async function pollInferenceJob(jobId: string): Promise<Record<string, unknown>> {
     const deadline = Date.now() + 120_000;
@@ -343,17 +412,518 @@ export default function Page() {
     window.location.href = url.toString();
   };
 
-  const swapSpeakerRoles = useCallback(() => {
-    setSpeakerRoleMap((prev) => {
-      const next: SpeakerRoleMap = {};
-      for (const [label, role] of Object.entries(prev)) {
-        next[label] = role === "staff" ? "customer" : "staff";
-      }
-      speakerRoleMapRef.current = next;
-      return next;
+  // ---------------------------------------------------------------------------
+  // State helpers (keep refs and React state in step)
+  // ---------------------------------------------------------------------------
+
+  const commitTurns = (next: Turn[]) => {
+    turnsRef.current = next;
+    setTurns(next);
+  };
+
+  const setRoleMap = (map: SpeakerRoleMap) => {
+    speakerRoleMapRef.current = map;
+    setSpeakerRoleMap(map);
+  };
+
+  /** Merge values into the customer profile, respecting staff edits and verified records. */
+  const applyCustomerPatch = (patch: Partial<CustomerData>, source: FieldSource) => {
+    const data = { ...customerDataRef.current };
+    const sources = { ...fieldSourcesRef.current };
+    let changed = false;
+    (Object.keys(patch) as CustomerDataField[]).forEach((field) => {
+      const value = (patch[field] || "").trim();
+      if (!value) return;
+      const current = sources[field];
+      if (current === "manual") return;
+      if (current === "records" && source !== "records") return;
+      // The instant regex hears the ID exactly; don't let LLM reformatting replace it.
+      if (source === "ai" && field === "nric_worker_permit_id" && current === "heard") return;
+      if (data[field] === value && current === source) return;
+      data[field] = value;
+      sources[field] = source;
+      changed = true;
     });
-    setTurns((prev) =>
-      prev.map((t) => ({
+    if (!changed) return;
+    customerDataRef.current = data;
+    fieldSourcesRef.current = sources;
+    setCustomerData(data);
+    setFieldSources(sources);
+  };
+
+  const resetHistory = () => {
+    lookupReqIdRef.current += 1;
+    historyCasesRef.current = [];
+    historyMatchRef.current = null;
+    setCustomerHistoryStatus("idle");
+    setCustomerHistory("");
+    setCustomerHistoryCases([]);
+    setHistoryMeta(null);
+    setIsLoadingCustomerHistory(false);
+  };
+
+  const profilePayload = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(customerDataRef.current)) {
+      if (value.trim()) out[key] = value.trim();
+    }
+    if (historyMatchRef.current) out.record_match = historyMatchRef.current;
+    return out;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Suggestions (live call raced against the prepared demo cache)
+  // ---------------------------------------------------------------------------
+
+  const cachedStepFor = (turn: Turn): CachedStep | null => {
+    if (!scenarioRef.current || turn.roleSource !== "script" || turn.alignConfidence !== "high") return null;
+    if (!turn.scriptLineId) return null;
+    return cacheStepsRef.current[turn.scriptLineId] ?? null;
+  };
+
+  const fetchSuggestions = async (turn: Turn) => {
+    const context = formatTranscriptWindow(turnsRef.current);
+    if (context.trim().length < 10) return;
+
+    const reqId = ++suggestReqIdRef.current;
+    suggestAbortRef.current?.abort();
+    const controller = new AbortController();
+    suggestAbortRef.current = controller;
+
+    const cases = historyCasesRef.current;
+    const profile = profilePayload();
+    lastSuggestionCasesKeyRef.current = casesKey(historyMatchRef.current, cases);
+
+    const cached = cachedStepFor(turn);
+    let shown: "none" | "instant" | "live" = "none";
+    const showCached = () => {
+      if (!cached || shown !== "none" || reqId !== suggestReqIdRef.current) return;
+      shown = "instant";
+      setSuggestions(cached.suggestions);
+      setSuggestionMeta({
+        origin: "instant",
+        latencyMs: performance.now() - turn.committedAt,
+        lineId: turn.scriptLineId,
+      });
+    };
+    const raceTimer = cached
+      ? setTimeout(showCached, Math.max(0, CACHE_RACE_MS - (performance.now() - turn.committedAt)))
+      : null;
+
+    setIsFetchingSuggestions(true);
+    try {
+      const payload = {
+        context,
+        max_suggestions: 2,
+        session_id: sessionIdRef.current || undefined,
+        customer_profile: Object.keys(profile).length ? profile : undefined,
+        customer_history: cases.length ? cases : undefined,
+        scenario_id: scenarioRef.current?.id,
+        script_step: turn.scriptLineId,
+      };
+
+      let data: Record<string, unknown>;
+      if (useAsyncInferenceJobs) {
+        const er = await fetch(`${backendUrl}/queue/suggestions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        const ej = await er.json();
+        if (!er.ok || typeof ej.job_id !== "string") {
+          throw new Error(`Suggestion enqueue failed: ${er.status}`);
+        }
+        data = await pollInferenceJob(ej.job_id as string);
+      } else {
+        const res = await fetch(`${backendUrl}/suggest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`Suggestion request failed: ${res.status}`);
+        data = await res.json();
+      }
+      if (reqId !== suggestReqIdRef.current) return;
+
+      const list = Array.isArray(data.suggestions) ? (data.suggestions as Suggestion[]) : [];
+      const timings = (data.timings || {}) as { llm_ms?: number; model?: string };
+      if (data.fallback) {
+        // Prefer a prepared, scenario-specific card over generic fallback text.
+        if (cached) showCached();
+        else if (shown === "none" && list.length) {
+          setSuggestions(list);
+          setSuggestionMeta({ origin: "fallback", latencyMs: performance.now() - turn.committedAt });
+        }
+        return;
+      }
+      if (list.length === 0) {
+        // Router chose not to suggest: keep whatever is on screen.
+        showCached();
+        return;
+      }
+      shown = "live";
+      setSuggestions(list);
+      setSuggestionMeta({
+        origin: "live",
+        latencyMs: performance.now() - turn.committedAt,
+        llmMs: timings.llm_ms,
+        model: timings.model,
+        lineId: turn.scriptLineId,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      console.error("[Frontend] Failed to fetch suggestions:", err);
+      showCached();
+    } finally {
+      if (raceTimer) clearTimeout(raceTimer);
+      if (reqId === suggestReqIdRef.current) setIsFetchingSuggestions(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Customer data: LLM extraction + history lookup
+  // ---------------------------------------------------------------------------
+
+  const runHistoryLookup = async (args: { name?: string; nric_worker_permit_id?: string }) => {
+    const reqId = ++lookupReqIdRef.current;
+    setIsLoadingCustomerHistory(true);
+    setCustomerHistoryStatus("loading");
+
+    try {
+      const res = await fetch(`${backendUrl}/customer-history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          name: args.name || undefined,
+          nric_worker_permit_id: args.nric_worker_permit_id || undefined,
+          session_id: sessionIdRef.current || undefined,
+        }),
+      });
+      const body = await res.json();
+      if (reqId !== lookupReqIdRef.current) return;
+      if (!res.ok || !body || typeof body !== "object") {
+        setCustomerHistoryStatus("error");
+        setCustomerHistory("Unable to obtain customer history at the moment.");
+        return;
+      }
+
+      const status = typeof body.status === "string" ? body.status : "error";
+      const summary = typeof body.history_summary === "string" ? body.history_summary : "";
+      const message = typeof body.message === "string" ? body.message : "";
+      const normalizedStatus: CustomerHistoryStatus =
+        status === "invalid_input" ||
+        status === "not_configured" ||
+        status === "not_found" ||
+        status === "ok" ||
+        status === "error"
+          ? status
+          : "error";
+      const cases: CustomerHistoryCase[] =
+        normalizedStatus === "ok" && Array.isArray(body.cases)
+          ? body.cases.map((row: any) => ({
+              case_id: String(row.case_id || ""),
+              company: String(row.company || ""),
+              type: String(row.type || ""),
+              status: String(row.status || ""),
+              summary: String(row.summary || ""),
+            }))
+          : [];
+      const matchedOn =
+        normalizedStatus === "ok" && typeof body.match_strategy === "string" ? body.match_strategy : null;
+
+      historyCasesRef.current = cases;
+      historyMatchRef.current = matchedOn;
+      setCustomerHistoryStatus(normalizedStatus);
+      setCustomerHistory(summary || message || "No customer history found.");
+      setCustomerHistoryCases(cases);
+      setHistoryMeta(
+        normalizedStatus === "ok"
+          ? {
+              openCount:
+                typeof body.open_count === "number"
+                  ? body.open_count
+                  : cases.filter((c) => isOpenCaseStatus(c.status)).length,
+              companies: Array.isArray(body.companies)
+                ? body.companies.map(String)
+                : Array.from(new Set(cases.map((c) => c.company).filter(Boolean))),
+              matchedOn,
+            }
+          : null
+      );
+
+      // Only an NRIC match is a verified identity, so only then prefill from records.
+      if (matchedOn === "nric_worker_permit_id" && body.customer && typeof body.customer === "object") {
+        const c = body.customer as Record<string, unknown>;
+        applyCustomerPatch(
+          {
+            name: typeof c.name === "string" ? c.name : "",
+            nric_worker_permit_id: typeof c.nric_worker_permit_id === "string" ? c.nric_worker_permit_id : "",
+            address: typeof c.address === "string" ? c.address : "",
+          },
+          "records"
+        );
+      }
+
+      // Records arrived after the last suggestion was requested: refresh it with the new context.
+      const lastTurn = lastCustomerTurnRef.current;
+      if (
+        lastTurn &&
+        !suggestTimerRef.current &&
+        casesKey(matchedOn, cases) !== lastSuggestionCasesKeyRef.current
+      ) {
+        void fetchSuggestions(lastTurn);
+      }
+    } catch (err) {
+      if (reqId !== lookupReqIdRef.current) return;
+      console.error("[Frontend] Failed to obtain customer history:", err);
+      setCustomerHistoryStatus("error");
+      setCustomerHistory("Unable to obtain customer history at the moment.");
+    } finally {
+      if (reqId === lookupReqIdRef.current) setIsLoadingCustomerHistory(false);
+    }
+  };
+
+  const maybeAutoLookup = () => {
+    const req = nextLookup(lookupKeyRef.current, customerDataRef.current);
+    if (!req) return;
+    lookupKeyRef.current = req.key;
+    const promise = runHistoryLookup({ name: req.name, nric_worker_permit_id: req.nric_worker_permit_id });
+    lookupPromiseRef.current = promise;
+    void promise.finally(() => {
+      if (lookupPromiseRef.current === promise) lookupPromiseRef.current = null;
+    });
+  };
+
+  const extractCustomerData = async () => {
+    const context = formatLabeledTranscript(turnsRef.current);
+    if (context.trim().length < 10) return;
+    if (context.trim().toLowerCase() === lastCustomerDataExtractRef.current.trim().toLowerCase()) return;
+    lastCustomerDataExtractRef.current = context;
+    const reqId = ++extractReqIdRef.current;
+
+    try {
+      let data: Record<string, unknown>;
+      const body = JSON.stringify({
+        conversation_transcript: context,
+        session_id: sessionIdRef.current || undefined,
+      });
+      if (useAsyncInferenceJobs) {
+        const er = await fetch(`${backendUrl}/queue/extract-customer-data`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body,
+        });
+        const ej = await er.json();
+        if (!er.ok || typeof ej.job_id !== "string") {
+          console.error("[Frontend] extract enqueue failed:", er.status);
+          return;
+        }
+        data = await pollInferenceJob(ej.job_id as string);
+      } else {
+        const res = await fetch(`${backendUrl}/extract-customer-data`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body,
+        });
+        if (!res.ok) return;
+        data = await res.json();
+      }
+      if (reqId !== extractReqIdRef.current) return;
+
+      const rawData =
+        data.data && typeof data.data === "object" ? (data.data as Record<string, unknown>) : null;
+      if (Boolean(data.success) && rawData) {
+        const patch: Partial<CustomerData> = {};
+        (Object.keys(EMPTY_CUSTOMER) as CustomerDataField[]).forEach((field) => {
+          const v = rawData[field];
+          if (typeof v === "string" && v.trim()) patch[field] = v;
+        });
+        applyCustomerPatch(patch, "ai");
+        maybeAutoLookup();
+      }
+    } catch (err) {
+      console.error("[Frontend] Failed to extract customer data:", err);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Turn ingestion (shared by microphone and autopilot)
+  // ---------------------------------------------------------------------------
+
+  /** Everything that should happen when the customer finishes speaking. */
+  const handleCustomerTurn = (turn: Turn) => {
+    lastCustomerTurnRef.current = turn;
+
+    // Instant identity capture: fills fields and starts the DB lookup before any LLM returns.
+    const patch: Partial<CustomerData> = {};
+    const nric = extractNric(turn.text);
+    const name = extractIntroName(turn.text);
+    if (nric) patch.nric_worker_permit_id = nric;
+    if (name) patch.name = name;
+    if (nric || name) applyCustomerPatch(patch, "heard");
+    maybeAutoLookup();
+
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
+    suggestTimerRef.current = setTimeout(async () => {
+      suggestTimerRef.current = null;
+      const data = customerDataRef.current;
+      if (!data.name || !data.nric_worker_permit_id || !data.address || !data.purpose_of_call) {
+        void extractCustomerData();
+      }
+      const pendingLookup = lookupPromiseRef.current;
+      if (pendingLookup) {
+        await Promise.race([pendingLookup, new Promise((r) => setTimeout(r, LOOKUP_WAIT_MS))]);
+      }
+      const latest = lastCustomerTurnRef.current;
+      if (latest) void fetchSuggestions(latest);
+    }, SUGGESTION_DEBOUNCE_MS);
+  };
+
+  const labelRoleFor = (label: string | null): ScriptRole | null => {
+    if (!label) return null;
+    const mapped = speakerRoleMapRef.current[label];
+    if (mapped) return mapped;
+    // With a script, unseen labels are mapped by alignment votes instead of the toggle.
+    if (scenarioRef.current) return null;
+    const resolved = resolveSpeakerRole(label, speakerRoleMapRef.current, nextVoiceIsStaffRef.current);
+    if (resolved.map !== speakerRoleMapRef.current) setRoleMap(resolved.map);
+    return resolved.role === "unknown" ? null : resolved.role;
+  };
+
+  const ingestPartial = (text: string, speakerLabel: string | null) => {
+    const trimmed = text.trim();
+    setLive(trimmed);
+    liveRef.current = trimmed;
+    const expected = scenarioRef.current?.lines[alignStateRef.current.cursor]?.role;
+    setLiveRole(expected ?? labelRoleFor(speakerLabel) ?? "unknown");
+  };
+
+  const ingestFinalTurn = (input: FinalTurnInput) => {
+    const text = input.text.trim();
+    setLive("");
+    liveRef.current = "";
+    setLiveRole("unknown");
+    if (!text) return;
+
+    // A re-sent version of the latest turn (formatted text, same turn_order) replaces it.
+    let baseTurns = turnsRef.current;
+    let baseAlign = alignStateRef.current;
+    const last = baseTurns[baseTurns.length - 1];
+    const snapshot = lastFinalSnapshotRef.current;
+    const isResend =
+      !!snapshot &&
+      !!last &&
+      (input.turnOrder !== undefined
+        ? snapshot.key === `order:${input.turnOrder}`
+        : input.source === "mic" && last.roleSource !== "manual" && areSimilar(text, last.text));
+    if (isResend && snapshot) {
+      baseTurns = snapshot.turns;
+      baseAlign = snapshot.align;
+    } else {
+      lastFinalSnapshotRef.current = {
+        key: input.turnOrder !== undefined ? `order:${input.turnOrder}` : `turn:${baseTurns.length}`,
+        turns: baseTurns,
+        align: baseAlign,
+      };
+    }
+
+    const prevTurn = [...baseTurns].reverse().find((t) => t.role !== "unknown");
+    const prevRole = prevTurn ? (prevTurn.role as ScriptRole) : null;
+    const script = scenarioRef.current;
+
+    let segments: AlignSegment[];
+    let nextAlign = baseAlign;
+    if (script) {
+      const res = alignTurn(script.lines, baseAlign, {
+        text,
+        speakerLabel: input.speakerLabel,
+        wordLabels: input.wordLabels,
+        labelRole: labelRoleFor,
+        prevRole,
+      });
+      segments = res.segments;
+      nextAlign = res.state;
+    } else {
+      segments = [
+        {
+          text,
+          role: labelRoleFor(input.speakerLabel),
+          source: "diarization",
+          lineId: null,
+          score: 0,
+          confidence: "none",
+          speakerLabel: input.speakerLabel,
+        },
+      ];
+    }
+
+    const committedAt = performance.now();
+    const newTurns: Turn[] = segments.map((seg) => ({
+      id: newTurnId(),
+      text: seg.text,
+      speakerLabel: seg.speakerLabel,
+      role: seg.role ?? "unknown",
+      roleSource: seg.source,
+      scriptLineId: seg.lineId ?? undefined,
+      alignScore: seg.lineId ? seg.score : undefined,
+      alignConfidence: seg.confidence,
+      turnOrder: input.turnOrder,
+      committedAt,
+    }));
+
+    let allTurns = [...baseTurns, ...newTurns];
+    if (script) {
+      const corrected = deriveLabelMap(nextAlign.labelVotes, speakerRoleMapRef.current);
+      if (corrected) {
+        setRoleMap(corrected);
+        allTurns = relabelDiarizedTurns(allTurns, corrected);
+      }
+      alignStateRef.current = nextAlign;
+      setCursor(nextAlign.cursor);
+      setSkippedLines(skippedLineIds(script.lines, nextAlign));
+    }
+    commitTurns(allTurns);
+
+    if (debugRef.current) {
+      console.table(
+        segments.map((s) => ({
+          text: s.text.slice(0, 60),
+          role: s.role,
+          source: s.source,
+          line: s.lineId,
+          score: s.score.toFixed(2),
+          confidence: s.confidence,
+          label: s.speakerLabel,
+          cursor: nextAlign.cursor,
+        }))
+      );
+    }
+
+    // Without a script, unlabelled turns may be the customer too, so they also trigger guidance.
+    const lastCustomer = [...newTurns]
+      .reverse()
+      .find((t) => t.role === "customer" || (!script && t.role === "unknown"));
+    if (lastCustomer) handleCustomerTurn(lastCustomer);
+  };
+
+  // Long-lived callbacks (WebSocket, autopilot timers) call through this ref to the latest closures.
+  const handlersRef = useRef({ ingestFinalTurn, ingestPartial });
+  handlersRef.current = { ingestFinalTurn, ingestPartial };
+
+  // ---------------------------------------------------------------------------
+  // Speaker controls
+  // ---------------------------------------------------------------------------
+
+  const swapSpeakerRoles = useCallback(() => {
+    const next: SpeakerRoleMap = {};
+    for (const [label, role] of Object.entries(speakerRoleMapRef.current)) {
+      next[label] = opposite(role);
+    }
+    setRoleMap(next);
+    commitTurns(
+      turnsRef.current.map((t) => ({
         ...t,
         role: t.role === "staff" ? "customer" : t.role === "customer" ? "staff" : t.role,
       }))
@@ -372,6 +942,36 @@ export default function Page() {
     nextVoiceIsStaffRef.current = staff;
     setNextVoiceIsStaff(staff);
   }, []);
+
+  /** Staff correction of one turn; also counts as strong evidence for its diarization label. */
+  const flipTurn = (turnId: string) => {
+    const target = turnsRef.current.find((t) => t.id === turnId);
+    if (!target) return;
+    const role: ScriptRole = target.role === "staff" ? "customer" : "staff";
+    const updated: Turn = { ...target, role, roleSource: "manual" };
+    let next = turnsRef.current.map((t) => (t.id === turnId ? updated : t));
+
+    if (target.speakerLabel) {
+      const align = alignStateRef.current;
+      const votes = { ...align.labelVotes };
+      const prev = votes[target.speakerLabel] ?? { staff: 0, customer: 0 };
+      votes[target.speakerLabel] = { ...prev, [role]: prev[role] + 2 };
+      alignStateRef.current = { ...align, labelVotes: votes };
+      const corrected = deriveLabelMap(votes, speakerRoleMapRef.current);
+      if (corrected) {
+        setRoleMap(corrected);
+        next = relabelDiarizedTurns(next, corrected);
+      }
+    }
+    commitTurns(next);
+    if (role === "customer" && turnsRef.current[turnsRef.current.length - 1]?.id === turnId) {
+      handleCustomerTurn(updated);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Microphone streaming (AssemblyAI v3)
+  // ---------------------------------------------------------------------------
 
   function closeWs() {
     streamAttemptRef.current += 1;
@@ -424,13 +1024,17 @@ export default function Page() {
 
   async function openWs() {
     closeWs();
+    stopAutopilot();
     const myAttempt = streamAttemptRef.current;
 
-    speakerRoleMapRef.current = {};
+    // A new stream may assign A/B differently: forget the old label map and votes.
+    setRoleMap({});
+    alignStateRef.current = { ...alignStateRef.current, labelVotes: {} };
     nextVoiceIsStaffRef.current = true;
-    setSpeakerRoleMap({});
     setNextVoiceIsStaff(true);
     setLiveRole("unknown");
+    lastFinalSnapshotRef.current = null;
+    if (demoEnabled) void prewarm();
 
     const media = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (myAttempt !== streamAttemptRef.current) {
@@ -460,8 +1064,11 @@ export default function Page() {
 
     let streamingToken = "";
     let keytermsPrompt: string[] = [];
+    let sttPrompt = "";
+    let speechModel = "";
     try {
-      const res = await fetch(`${backendUrl}/assemblyai-token`, {
+      const scenarioParam = scenarioRef.current ? `?scenario=${encodeURIComponent(scenarioRef.current.id)}` : "";
+      const res = await fetch(`${backendUrl}/assemblyai-token${scenarioParam}`, {
         headers: getAuthHeaders(),
       });
       if (!res.ok) {
@@ -474,6 +1081,8 @@ export default function Page() {
       keytermsPrompt = Array.isArray(payload.keyterms_prompt)
         ? payload.keyterms_prompt.map((t: unknown) => String(t))
         : [];
+      sttPrompt = typeof payload.prompt === "string" ? payload.prompt : "";
+      speechModel = typeof payload.speech_model === "string" ? payload.speech_model : "";
       if (!streamingToken) {
         alert("Backend returned empty streaming token.");
         closeWs();
@@ -496,6 +1105,8 @@ export default function Page() {
     if (keytermsPrompt.length > 0) {
       params.set("keyterms_prompt", JSON.stringify(keytermsPrompt));
     }
+    if (sttPrompt) params.set("prompt", sttPrompt);
+    if (speechModel) params.set("speech_model", speechModel);
 
     const ws = new WebSocket(`wss://streaming.assemblyai.com/v3/ws?${params}`);
     if (myAttempt !== streamAttemptRef.current) {
@@ -507,7 +1118,10 @@ export default function Page() {
     wsRef.current = ws;
 
     ws.onopen = () => setIsListening(true);
-    ws.onclose = () => setIsListening(false);
+    ws.onclose = (evt) => {
+      if (evt.code !== 1000 && evt.code !== 1005) console.warn("[STT] Closed", evt.code, evt.reason);
+      setIsListening(false);
+    };
     ws.onerror = () => setIsListening(false);
 
     proc.onaudioprocess = (e: AudioProcessingEvent) => {
@@ -522,142 +1136,42 @@ export default function Page() {
     ws.onmessage = (evt) => {
       try {
         const d = JSON.parse(evt.data as string) as Record<string, unknown>;
+        if (d.type === "Begin") {
+          console.info("[STT] Session started", d);
+          return;
+        }
+        if (d.type === "Error" || d.error) {
+          // Fail loudly: a silent STT failure looks like a frozen demo.
+          console.error("[STT] Error", d);
+          alert(`Transcription error: ${String(d.error || "unknown")}\nSwitch to Autopilot to continue.`);
+          closeWs();
+          return;
+        }
         const text = String(d.transcript || d.text || "");
         if (!text) return;
 
         const speakerLabel = extractSpeakerLabel(d);
         const mt = String(d.message_type || "").toLowerCase();
         const tt = String(d.type || "").toLowerCase();
-        const isFinal =
+        const endOfTurn =
           d.end_of_turn === true ||
           String(d.end_of_turn).toLowerCase() === "true" ||
           tt.includes("final") ||
           mt.includes("final") ||
           mt === "transcript_complete";
-
-        const normalizeForCompare = (s: string): string =>
-          s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
-
-        const normalizeWord = (word: string): string => {
-          const numberWords: { [key: string]: string } = {
-            zero: "0",
-            one: "1",
-            two: "2",
-            three: "3",
-            four: "4",
-            five: "5",
-            six: "6",
-            seven: "7",
-            eight: "8",
-            nine: "9",
-            ten: "10",
-            eleven: "11",
-            twelve: "12",
-            thirteen: "13",
-            fourteen: "14",
-            fifteen: "15",
-            sixteen: "16",
-            seventeen: "17",
-            eighteen: "18",
-            nineteen: "19",
-            twenty: "20",
-          };
-          const lower = word.toLowerCase();
-          if (numberWords[lower]) return numberWords[lower];
-          if (/^\d+$/.test(word)) return word;
-          return lower;
-        };
-
-        const areSimilar = (text1: string, text2: string): boolean => {
-          if (!text1 || !text2) return false;
-          const norm1 = normalizeForCompare(text1);
-          const norm2 = normalizeForCompare(text2);
-          if (norm1 === norm2) return true;
-
-          const words1 = norm1
-            .split(/\s+/)
-            .filter((w) => w.length > 0)
-            .map(normalizeWord);
-          const words2 = norm2
-            .split(/\s+/)
-            .filter((w) => w.length > 0)
-            .map(normalizeWord);
-
-          if (Math.abs(words1.length - words2.length) > 2) return false;
-
-          const set1 = new Set(words1);
-          const set2 = new Set(words2);
-          let matches = 0;
-          for (const word of set1) {
-            if (set2.has(word)) matches += 1;
-          }
-          const minWords = Math.min(set1.size, set2.size);
-          if (minWords === 0) return false;
-          return matches / minWords >= 0.8;
-        };
-
-        const assignRole = (label: string | null): SpeakerRole => {
-          const resolved = resolveSpeakerRole(
-            label,
-            speakerRoleMapRef.current,
-            nextVoiceIsStaffRef.current
-          );
-          if (resolved.map !== speakerRoleMapRef.current) {
-            speakerRoleMapRef.current = resolved.map;
-            setSpeakerRoleMap(resolved.map);
-          }
-          return resolved.role;
-        };
+        // With format_turns, the unformatted end-of-turn is followed by a formatted one: wait for it.
+        const isFinal = endOfTurn && d.turn_is_formatted !== false;
 
         if (isFinal) {
-          const trimmed = text.trim();
-          if (!trimmed) return;
-          const normalizedNew = normalizeForCompare(trimmed);
-          const normalizedLive = normalizeForCompare(liveRef.current || "");
-          const role = assignRole(speakerLabel);
-
-          setTurns((prev) => {
-            if (prev.length === 0) {
-              return [{ id: newTurnId(), text: trimmed, speakerLabel, role }];
-            }
-            const last = prev[prev.length - 1];
-            const normalizedLast = normalizeForCompare(last.text);
-
-            if (
-              normalizedNew === normalizedLive ||
-              normalizedNew === normalizedLast ||
-              areSimilar(trimmed, liveRef.current || "") ||
-              areSimilar(trimmed, last.text)
-            ) {
-              const mergedLabel = speakerLabel || last.speakerLabel;
-              let mergedRole = role;
-              if (mergedRole === "unknown" && mergedLabel) {
-                mergedRole = speakerRoleMapRef.current[mergedLabel] || last.role || "unknown";
-              } else if (mergedRole === "unknown") {
-                mergedRole = last.role;
-              }
-              return [
-                ...prev.slice(0, -1),
-                {
-                  ...last,
-                  text: trimmed,
-                  speakerLabel: mergedLabel,
-                  role: mergedRole,
-                },
-              ];
-            }
-
-            return [...prev, { id: newTurnId(), text: trimmed, speakerLabel, role }];
+          handlersRef.current.ingestFinalTurn({
+            text,
+            speakerLabel,
+            wordLabels: extractWordLabels(d, text),
+            turnOrder: typeof d.turn_order === "number" ? d.turn_order : undefined,
+            source: "mic",
           });
-
-          setLive("");
-          liveRef.current = "";
-          setLiveRole("unknown");
         } else {
-          const trimmed = text.trim();
-          setLive(trimmed);
-          liveRef.current = trimmed;
-          setLiveRole(assignRole(speakerLabel));
+          handlersRef.current.ingestPartial(text, speakerLabel);
         }
       } catch (err) {
         console.error("[Frontend] WebSocket message error:", err);
@@ -665,244 +1179,259 @@ export default function Page() {
     };
   }
 
-  const handleCustomerDataChange = (field: CustomerDataFields, value: string) => {
-    setCustomerData((prev) => ({ ...prev, [field]: value }));
-    setManuallyEditedFields((prev) => new Set(prev).add(field));
+  // ---------------------------------------------------------------------------
+  // Demo controls
+  // ---------------------------------------------------------------------------
+
+  async function prewarm() {
+    try {
+      await fetch(`${backendUrl}/demo/prewarm`, { method: "POST", headers: getAuthHeaders() });
+    } catch {}
+  }
+
+  function stopAutopilot() {
+    autopilotRef.current?.stop();
+    autopilotRef.current = null;
+    setAutopilotState("idle");
+  }
+
+  function startAutopilot() {
+    const script = scenarioRef.current;
+    if (!script) return;
+    closeWs();
+    autopilotRef.current?.stop();
+    lastFinalSnapshotRef.current = null;
+    const ap = createAutopilot(
+      script.lines,
+      alignStateRef.current.cursor,
+      {
+        onPartial: (_i, text) => handlersRef.current.ingestPartial(text, null),
+        onFinal: (i) =>
+          handlersRef.current.ingestFinalTurn({ text: script.lines[i].text, speakerLabel: null, source: "autopilot" }),
+        onWaiting: () => setAutopilotState("waiting"),
+        onDone: () => setAutopilotState("done"),
+      },
+      {
+        wpm: script.autopilot?.wpm ?? 185,
+        gapMs: script.autopilot?.gap_ms ?? [450, 850],
+        speed: speedRef.current,
+        stepMode: stepModeRef.current,
+      }
+    );
+    autopilotRef.current = ap;
+    ap.start();
+    setAutopilotState("running");
+    void prewarm();
+  }
+
+  const resetConversation = () => {
+    stopAutopilot();
+    closeWs();
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
+    suggestTimerRef.current = null;
+    suggestReqIdRef.current += 1;
+    suggestAbortRef.current?.abort();
+    extractReqIdRef.current += 1;
+
+    commitTurns([]);
+    alignStateRef.current = initialAlignState();
+    lastFinalSnapshotRef.current = null;
+    setCursor(0);
+    setSkippedLines([]);
+    setRoleMap({});
+    nextVoiceIsStaffRef.current = true;
+    setNextVoiceIsStaff(true);
+
+    setSuggestions([]);
+    setSuggestionMeta(null);
+    setIsFetchingSuggestions(false);
+
+    customerDataRef.current = EMPTY_CUSTOMER;
+    fieldSourcesRef.current = {};
+    setCustomerData(EMPTY_CUSTOMER);
+    setFieldSources({});
+    resetHistory();
+    lookupKeyRef.current = null;
+    lookupPromiseRef.current = null;
+    lastCustomerTurnRef.current = null;
+    lastSuggestionCasesKeyRef.current = "";
+    lastCustomerDataExtractRef.current = "";
+
+    setResetNonce((n) => n + 1);
   };
 
-  const extractCustomerData = useCallback(
-    async (context: string) => {
-      if (!context || context.trim().length < 10) return;
-
-      const normalizedCurrent = context.trim().toLowerCase();
-      const normalizedLast = lastCustomerDataExtractRef.current.trim().toLowerCase();
-      if (normalizedCurrent === normalizedLast) return;
-
+  const loadCache = useCallback(
+    async (id: string) => {
       try {
-        lastCustomerDataExtractRef.current = context;
-
-        let data: Record<string, unknown>;
-        if (useAsyncInferenceJobs) {
-          const er = await fetch(`${backendUrl}/queue/extract-customer-data`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({
-              conversation_transcript: context,
-              session_id: sessionIdRef.current || undefined,
-            }),
-          });
-          const ej = await er.json();
-          if (!er.ok || typeof ej.job_id !== "string") {
-            console.error("[Frontend] extract enqueue failed:", er.status);
-            return;
-          }
-          data = await pollInferenceJob(ej.job_id as string);
-        } else {
-          const res = await fetch(`${backendUrl}/extract-customer-data`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({
-              conversation_transcript: context,
-              session_id: sessionIdRef.current || undefined,
-            }),
-          });
-          if (!res.ok) return;
-          data = await res.json();
-        }
-
-        const successVal = Boolean(data.success);
-        const rawData =
-          data.data && typeof data.data === "object" ? (data.data as Record<string, unknown>) : null;
-        if (successVal && rawData) {
-          setCustomerData((prev) => {
-            const updated = { ...prev };
-            const currentEditedFields = manuallyEditedFieldsRef.current;
-            Object.keys(rawData).forEach((key) => {
-              const field = key as CustomerDataFields;
-              const extractedValue = rawData[field];
-              if (extractedValue == null || extractedValue === "") return;
-              if (!currentEditedFields.has(field)) {
-                updated[field] = String(extractedValue as string);
-              }
-            });
-            return updated;
-          });
-        }
-      } catch (err) {
-        console.error("[Frontend] Failed to extract customer data:", err);
-      }
+        const res = await fetch(`${backendUrl}/demo/cache/${encodeURIComponent(id)}`, {
+          headers: getAuthHeaders(),
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        cacheStepsRef.current = body.steps && typeof body.steps === "object" ? body.steps : {};
+        setCacheStatus({
+          built: Boolean(body.built),
+          fresh: Boolean(body.fresh),
+          steps: Number(body.steps ? Object.keys(body.steps).length : 0),
+          total: Number(body.total || 0),
+          built_at: body.built_at,
+          model: body.model,
+        });
+      } catch {}
     },
-    [backendUrl, useAsyncInferenceJobs]
+    [backendUrl]
   );
 
-  const fetchSuggestions = useCallback(
-    async (context: string) => {
-      if (!context || context.trim().length < 10) {
-        setSuggestions([]);
-        return;
-      }
-
-      const normalizedCurrent = context.trim().toLowerCase();
-      const normalizedLast = lastTranscriptRef.current.trim().toLowerCase();
-      if (normalizedCurrent === normalizedLast) {
-        console.log("[Frontend] Transcript unchanged, skipping suggestion fetch");
-        return;
-      }
-
-      setIsFetchingSuggestions(true);
+  const runPreflight = useCallback(
+    async (id: string) => {
+      setIsCheckingPreflight(true);
       try {
-        console.log(
-          `[Frontend] Fetching suggestions for transcript (${context.length} chars): "${context.substring(0, 100)}..."`
-        );
-        lastTranscriptRef.current = context;
-
-        if (useAsyncInferenceJobs) {
-          const er = await fetch(`${backendUrl}/queue/suggestions`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({
-              context,
-              max_suggestions: 2,
-              session_id: sessionIdRef.current || undefined,
-            }),
-          });
-          const ej = await er.json();
-          if (!er.ok || typeof ej.job_id !== "string") {
-            console.error("[Frontend] Suggestion enqueue failed:", er.status);
-            return;
-          }
-          const result = await pollInferenceJob(ej.job_id as string);
-          const sug = Array.isArray((result as Record<string, unknown>).suggestions)
-            ? (result as Record<string, unknown>).suggestions
-            : [];
-          setSuggestions(sug as Suggestion[]);
-        } else {
-          const res = await fetch(`${backendUrl}/suggest`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({
-              context,
-              max_suggestions: 2,
-              session_id: sessionIdRef.current || undefined,
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setSuggestions(data.suggestions || []);
-          } else {
-            console.error(`[Frontend] Suggestion request failed: ${res.status}`);
-          }
-        }
-      } catch (err) {
-        console.error("[Frontend] Failed to fetch suggestions:", err);
+        const q = id ? `?scenario_id=${encodeURIComponent(id)}` : "";
+        const res = await fetch(`${backendUrl}/demo/preflight${q}`, { headers: getAuthHeaders() });
+        if (res.ok) setPreflight(await res.json());
+      } catch {
+        setPreflight(null);
       } finally {
-        setIsFetchingSuggestions(false);
+        setIsCheckingPreflight(false);
       }
     },
-    [backendUrl, useAsyncInferenceJobs]
+    [backendUrl]
   );
 
-  const obtainCustomerInfo = useCallback(async () => {
-    if (isLoadingCustomerHistory) return;
-
-    setIsLoadingCustomerHistory(true);
-    setCustomerHistoryStatus("loading");
-    setCustomerHistory("");
-    setCustomerHistoryCases([]);
-
+  const buildCache = async () => {
+    if (!scenarioId) return;
+    setIsBuildingCache(true);
     try {
-      const res = await fetch(`${backendUrl}/customer-history`, {
+      await fetch(`${backendUrl}/demo/cache/${encodeURIComponent(scenarioId)}/build`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          name: customerData.name || undefined,
-          nric_worker_permit_id: customerData.nric_worker_permit_id || undefined,
-          session_id: sessionIdRef.current || undefined,
-        }),
+        headers: getAuthHeaders(),
       });
-      const body = await res.json();
-      if (!res.ok || !body || typeof body !== "object") {
-        setCustomerHistoryStatus("error");
-        setCustomerHistory("Unable to obtain customer history at the moment.");
-        return;
-      }
-
-      const status = typeof body.status === "string" ? body.status : "error";
-      const summary = typeof body.history_summary === "string" ? body.history_summary : "";
-      const message = typeof body.message === "string" ? body.message : "";
-      const cases = Array.isArray(body.cases) ? body.cases : [];
-      const normalizedStatus: CustomerHistoryStatus =
-        status === "invalid_input" ||
-        status === "not_configured" ||
-        status === "not_found" ||
-        status === "ok" ||
-        status === "error"
-          ? status
-          : "error";
-
-      setCustomerHistoryStatus(normalizedStatus);
-      setCustomerHistory(summary || message || "No customer history found.");
-      setCustomerHistoryCases(
-        normalizedStatus === "ok"
-          ? cases.map((row: any) => ({
-              case_id: String(row.case_id || ""),
-              company: String(row.company || ""),
-              type: String(row.type || ""),
-              status: String(row.status || ""),
-              summary: String(row.summary || ""),
-            }))
-          : []
-      );
-    } catch (err) {
-      console.error("[Frontend] Failed to obtain customer history:", err);
-      setCustomerHistoryStatus("error");
-      setCustomerHistory("Unable to obtain customer history at the moment.");
-      setCustomerHistoryCases([]);
+      await loadCache(scenarioId);
+      await runPreflight(scenarioId);
     } finally {
-      setIsLoadingCustomerHistory(false);
+      setIsBuildingCache(false);
     }
-  }, [backendUrl, customerData.name, customerData.nric_worker_permit_id, isLoadingCustomerHistory]);
+  };
 
+  // Load the scenario list once demo mode is on.
   useEffect(() => {
-    setCustomerHistoryStatus("idle");
-    setCustomerHistory("");
-    setCustomerHistoryCases([]);
-  }, [customerData.name, customerData.nric_worker_permit_id]);
-
-  useEffect(() => {
-    if (!transcriptText || transcriptText.trim().length < 10) {
-      setSuggestions([]);
-      setIsFetchingSuggestions(false);
-      lastTranscriptRef.current = "";
-      lastCustomerDataExtractRef.current = "";
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
-        debounceTimeoutRef.current = null;
+    if (!demoEnabled) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${backendUrl}/demo/scenarios`, { headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const list = (await res.json()) as DemoScenarioSummary[];
+        if (cancelled) return;
+        setScenarios(list);
+        let remembered = "";
+        try {
+          remembered = localStorage.getItem("DEMO_SCENARIO") || "";
+        } catch {}
+        const initial = list.find((s) => s.id === remembered)?.id ?? list[0]?.id ?? "";
+        setScenarioId(initial);
+      } catch {
+        console.warn("[Demo] Backend demo endpoints unavailable (is DEMO_MODE=true?)");
       }
+    })();
+    void prewarm();
+    return () => {
+      cancelled = true;
+    };
+  }, [demoEnabled, backendUrl]);
+
+  // Selecting a scenario loads its script + cache and starts a clean conversation.
+  useEffect(() => {
+    if (!demoEnabled) return;
+    let cancelled = false;
+    try {
+      localStorage.setItem("DEMO_SCENARIO", scenarioId);
+    } catch {}
+    resetConversation();
+    if (!scenarioId) {
+      scenarioRef.current = null;
+      setScenario(null);
+      cacheStepsRef.current = {};
+      setCacheStatus(null);
+      setInputMode("live");
+      void runPreflight("");
       return;
     }
-
-    if (debounceTimeoutRef.current) {
-      clearTimeout(debounceTimeoutRef.current);
-    }
-
-    debounceTimeoutRef.current = setTimeout(() => {
-      const normalizedCurrent = transcriptText.trim().toLowerCase();
-      const normalizedLast = lastTranscriptRef.current.trim().toLowerCase();
-      if (normalizedCurrent !== normalizedLast) {
-        fetchSuggestions(transcriptText);
-        extractCustomerData(transcriptText);
-      }
-      debounceTimeoutRef.current = null;
-    }, 1500);
-
+    (async () => {
+      try {
+        const res = await fetch(`${backendUrl}/demo/scenarios/${encodeURIComponent(scenarioId)}`, {
+          headers: getAuthHeaders(),
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as DemoScenario;
+        scenarioRef.current = data;
+        setScenario(data);
+      } catch {}
+      if (cancelled) return;
+      await loadCache(scenarioId);
+      await runPreflight(scenarioId);
+    })();
     return () => {
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
-        debounceTimeoutRef.current = null;
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoEnabled, scenarioId, backendUrl, loadCache, runPreflight]);
+
+  // Keep LLM connections warm while a demo conversation is running.
+  const demoActive = isListening || autopilotState === "running" || autopilotState === "waiting";
+  useEffect(() => {
+    if (!demoEnabled || !demoActive) return;
+    const timer = setInterval(() => void prewarm(), PREWARM_INTERVAL_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoEnabled, demoActive]);
+
+  // Presenter shortcut: → plays the next autopilot line.
+  useEffect(() => {
+    if (!demoEnabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "ArrowRight" && autopilotRef.current) {
+        e.preventDefault();
+        autopilotRef.current.next();
+        setAutopilotState("running");
       }
     };
-  }, [transcriptText, fetchSuggestions, extractCustomerData]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [demoEnabled]);
+
+  useEffect(() => {
+    return () => {
+      autopilotRef.current?.stop();
+      if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
+    };
+  }, []);
+
+  const handleCustomerDataChange = (field: CustomerDataField, value: string) => {
+    const data = { ...customerDataRef.current, [field]: value };
+    const sources = { ...fieldSourcesRef.current, [field]: "manual" as FieldSource };
+    customerDataRef.current = data;
+    fieldSourcesRef.current = sources;
+    setCustomerData(data);
+    setFieldSources(sources);
+    if (field === "name" || field === "nric_worker_permit_id") {
+      // Identity edited by staff: previous results no longer apply.
+      resetHistory();
+      lookupKeyRef.current = null;
+    }
+  };
+
+  const obtainCustomerInfo = () => {
+    const data = customerDataRef.current;
+    const req = nextLookup(null, data);
+    if (req) lookupKeyRef.current = req.key;
+    void runHistoryLookup({
+      name: data.name || undefined,
+      nric_worker_permit_id: data.nric_worker_permit_id || undefined,
+    });
+  };
 
   const mappedStaffLabel = Object.entries(speakerRoleMap).find(([, r]) => r === "staff")?.[0];
   const mappedCustomerLabel = Object.entries(speakerRoleMap).find(([, r]) => r === "customer")?.[0];
@@ -922,36 +1451,97 @@ export default function Page() {
         onStop={closeWs}
       />
 
+      {demoEnabled ? (
+        <DemoBar
+          scenarios={scenarios}
+          scenarioId={scenarioId}
+          onScenarioChange={setScenarioId}
+          scenario={scenario}
+          inputMode={inputMode}
+          onInputModeChange={(mode) => {
+            if (mode === "live") stopAutopilot();
+            else closeWs();
+            setInputMode(mode);
+          }}
+          isListening={isListening}
+          autopilotState={autopilotState}
+          onStart={() => {
+            if (inputMode === "autopilot") startAutopilot();
+            else void openWs();
+          }}
+          onStop={() => {
+            if (inputMode === "autopilot") {
+              autopilotRef.current?.pause();
+              setAutopilotState("paused");
+            } else closeWs();
+          }}
+          onNextLine={() => {
+            if (!autopilotRef.current) startAutopilot();
+            else {
+              autopilotRef.current.next();
+              setAutopilotState("running");
+            }
+          }}
+          onReset={resetConversation}
+          speed={speed}
+          onSpeedChange={(s) => {
+            speedRef.current = s;
+            setSpeed(s);
+            autopilotRef.current?.setSpeed(s);
+          }}
+          stepMode={stepMode}
+          onStepModeChange={(v) => {
+            stepModeRef.current = v;
+            setStepMode(v);
+            autopilotRef.current?.setStepMode(v);
+          }}
+          cursor={cursor}
+          skippedLines={skippedLines}
+          cacheStatus={cacheStatus}
+          isBuildingCache={isBuildingCache}
+          onBuildCache={() => void buildCache()}
+          preflight={preflight}
+          isCheckingPreflight={isCheckingPreflight}
+          onRunPreflight={() => void runPreflight(scenarioId)}
+        />
+      ) : null}
+
       <main className="workspace-grid">
         <TranscriptPanel
           turns={turns}
           live={live}
           liveRole={liveRole}
           isListening={isListening}
+          scriptGuided={Boolean(scenario)}
           nextVoiceIsStaff={nextVoiceIsStaff}
           hasRoleMapping={hasRoleMapping}
           mappedStaffLabel={mappedStaffLabel}
           mappedCustomerLabel={mappedCustomerLabel}
           onSetNextVoiceRole={setNextVoiceRole}
           onSwapSpeakerRoles={swapSpeakerRoles}
+          onFlipTurn={flipTurn}
           transcriptListRef={transcriptListRef}
         />
 
         <aside className="panel assistance-rail" aria-label="Operator assistance workspace">
           <SuggestionsPanel
             suggestions={suggestions}
+            meta={suggestionMeta}
+            cases={customerHistoryCases}
             hasTranscript={hasTranscript}
-            isListening={isListening}
+            isListening={isListening || autopilotState === "running"}
             isFetchingSuggestions={isFetchingSuggestions}
           />
 
           <CustomerPanel
             customerData={customerData}
+            fieldSources={fieldSources}
             onCustomerDataChange={handleCustomerDataChange}
             onLookup={obtainCustomerInfo}
             customerHistoryStatus={customerHistoryStatus}
             customerHistoryMessage={customerHistory}
             customerHistoryCases={customerHistoryCases}
+            historyMeta={historyMeta}
             isLoadingCustomerHistory={isLoadingCustomerHistory}
           />
         </aside>

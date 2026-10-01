@@ -154,6 +154,7 @@ async def assemblyai_token(
 ):
     keyterms = list(cfg.ASSEMBLYAI_KEYTERMS)
     prompt = ""
+    speech_model = cfg.ASSEMBLYAI_SPEECH_MODEL
     if DEMO_MODE and scenario:
         from .demo_cache import ScenarioNotFound, scenario_stt_config
 
@@ -161,6 +162,10 @@ async def assemblyai_token(
             keyterms, prompt = scenario_stt_config(scenario)
         except ScenarioNotFound:
             raise HTTPException(status_code=404, detail="Unknown scenario")
+        speech_model = speech_model or cfg.DEMO_SPEECH_MODEL
+    # AssemblyAI rejects the whole session if `prompt` is sent to a non-u3 model.
+    if not speech_model.startswith("u3"):
+        prompt = ""
 
     try:
         token = await create_streaming_token()
@@ -180,8 +185,8 @@ async def assemblyai_token(
         out["keyterms_prompt"] = keyterms
     if prompt:
         out["prompt"] = prompt
-    if cfg.ASSEMBLYAI_SPEECH_MODEL:
-        out["speech_model"] = cfg.ASSEMBLYAI_SPEECH_MODEL
+    if speech_model:
+        out["speech_model"] = speech_model
     return out
 
 

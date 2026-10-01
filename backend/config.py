@@ -172,3 +172,5 @@ CUSTOMER_HISTORY_EXTRA_COLUMNS = [
 
 # Optional AssemblyAI streaming speech model (sent as `speech_model`); empty = server default.
 ASSEMBLYAI_SPEECH_MODEL = str(CONFIG.get("assemblyai_speech_model") or "").strip()
+# Speech model used for scripted demo sessions; `prompt` (STT context) requires a u3 Pro model.
+DEMO_SPEECH_MODEL = (os.getenv("DEMO_SPEECH_MODEL") or "u3-rt-pro").strip()
