@@ -19,6 +19,8 @@ App Screenshot
 
 **[Data science, operations, and production readiness](docs/DATA_SCIENCE_AND_OPS.md)** — full runbook: architecture, env options, sync vs async, persistence, telemetry, and how to avoid “surprise drift” (versioning, eval, vendor drift). Shorter go-live list: [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md).
 
+**[Live demo runbook](docs/DEMO_RUNBOOK.md)**: scripted two-person call (Sarah Lim / Brightpath) with script-guided diarisation, Autopilot fallback, warm suggestion cache, and DB-linked suggestions. Enable with `DEMO_MODE=true` and open `/?demo=1`.
+
 ## 🚀 Quick Start
 
 ### Prerequisites
