@@ -735,52 +735,11 @@ export default function Page() {
     [backendUrl, useAsyncInferenceJobs]
   );
 
-<<<<<<< Updated upstream
   const fetchSuggestions = useCallback(
     async (context: string) => {
       if (!context || context.trim().length < 10) {
         setSuggestions([]);
         return;
-=======
-  // Ref to track the last transcript we sent to avoid redundant requests
-  const lastTranscriptRef = useRef<string>('');
-  // Ref to track the last time we fetched suggestions
-  const lastFetchTimeRef = useRef<number>(0);
-  // Ref to store the debounce timeout
-  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  const fetchSuggestions = async (context: string) => {
-    if (!context || context.trim().length < 10) {
-      setSuggestions([]);
-      return;
-    }
-    
-    // Prevent redundant fetches if transcript hasn't changed
-    const normalizedCurrent = context.trim().toLowerCase();
-    const normalizedLast = lastTranscriptRef.current.trim().toLowerCase();
-    
-    if (normalizedCurrent === normalizedLast) {
-      console.log('[Frontend] Transcript unchanged, skipping suggestion fetch');
-      return;
-    }
-    
-    try {
-      console.log(`[Frontend] Fetching suggestions for transcript (${context.length} chars): "${context.substring(0, 100)}..."`);
-      lastTranscriptRef.current = context;
-      lastFetchTimeRef.current = Date.now();
-      
-      const res = await fetch(`${backendUrl}/suggest`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ context: context }) 
-      });
-      if (res.ok) {
-        const data = await res.json();
-        console.log(`[Frontend] Received ${data.suggestions?.length || 0} suggestions`);
-        setSuggestions(data.suggestions || []);
-      } else {
-        console.error(`[Frontend] Suggestion request failed: ${res.status}`);
->>>>>>> Stashed changes
       }
 
       const normalizedCurrent = context.trim().toLowerCase();

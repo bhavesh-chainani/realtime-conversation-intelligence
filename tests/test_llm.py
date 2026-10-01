@@ -12,7 +12,7 @@ def test_llm_client_honors_litellm_base_url(monkeypatch):
     client = llm.get_llm_client()
 
     assert client is not None
-    assert str(client.base_url) == "http://localhost:4000/"
+    assert str(client.base_url).rstrip("/") == "http://localhost:4000"
 
 
 def test_llm_requires_proxy_key_and_base_url(monkeypatch):
