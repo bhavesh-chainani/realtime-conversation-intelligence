@@ -132,10 +132,6 @@ export function TranscriptPanel({
           </div>
         </div>
 
-        <div className="role-map" aria-live="polite">
-          <span>{mappedStaffLabel ? `Staff ← ${mappedStaffLabel}` : "Staff ← —"}</span>
-          <span>{mappedCustomerLabel ? `Customer ← ${mappedCustomerLabel}` : "Customer ← —"}</span>
-        </div>
       </div>
 
       <div className="transcript-canvas">

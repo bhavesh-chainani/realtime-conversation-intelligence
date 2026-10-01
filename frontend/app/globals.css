@@ -111,7 +111,6 @@ select {
 .panel-kicker,
 .control-bar__label,
 .suggestion-card__label,
-.summary-card__label,
 .lookup-bar__title,
 .history-card__title,
 .field-label {
@@ -415,8 +414,7 @@ select {
 }
 
 .role-toggle-row,
-.role-toggle-group,
-.role-map {
+.role-toggle-group {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -425,11 +423,6 @@ select {
 .role-toggle-row {
   align-items: center;
   justify-content: flex-end;
-}
-
-.role-map {
-  color: var(--text-secondary);
-  font-size: 0.86rem;
 }
 
 .transcript-canvas {
@@ -596,33 +589,6 @@ select {
 .status-badge--warning,
 .status-badge--error {
   background: var(--surface-muted);
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.summary-card {
-  padding: 18px;
-  border-radius: 18px;
-  border: 1px solid var(--border);
-  background: var(--surface-strong);
-}
-
-.summary-card__value {
-  display: block;
-  margin-top: 8px;
-  font-size: 1.35rem;
-  color: var(--title);
-}
-
-.summary-card__hint {
-  margin: 10px 0 0;
-  font-size: 0.88rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
 }
 
 .field-grid {
@@ -845,7 +811,6 @@ select {
     min-height: 0;
   }
 
-  .summary-grid,
   .field-grid {
     grid-template-columns: 1fr;
   }

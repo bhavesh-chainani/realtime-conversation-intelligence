@@ -87,13 +87,6 @@ export function CustomerPanel({
   historyMeta,
   isLoadingCustomerHistory,
 }: CustomerPanelProps) {
-  const filledFieldCount = [
-    customerData.name,
-    customerData.nric_worker_permit_id,
-    customerData.address,
-    customerData.purpose_of_call,
-  ].filter((value) => value.trim().length > 0).length;
-
   const canLookup =
     customerData.name.trim().length > 0 || customerData.nric_worker_permit_id.trim().length > 0;
 
@@ -138,19 +131,6 @@ export function CustomerPanel({
           </span>
         </div>
       ) : null}
-
-      <div className="summary-grid" aria-label="Customer profile summary">
-        <article className="summary-card">
-          <span className="summary-card__label">Captured fields</span>
-          <strong className="summary-card__value">{filledFieldCount}/4</strong>
-          <p className="summary-card__hint">Name, NRIC, address, and purpose are kept ready for staff review.</p>
-        </article>
-        <article className="summary-card">
-          <span className="summary-card__label">History lookup</span>
-          <strong className="summary-card__value">{historyBadge}</strong>
-          <p className="summary-card__hint">Searches prefer NRIC / Work Permit ID, then fall back to customer name.</p>
-        </article>
-      </div>
 
       <div className="field-grid">
         <div className="field-group">
