@@ -62,6 +62,8 @@ const CACHE_RACE_MS = 1300;
 const LOOKUP_WAIT_MS = 700;
 const PREWARM_INTERVAL_MS = 45_000;
 const TRANSCRIPT_WINDOW_TURNS = 16;
+/** Operators get one focused suggestion at a time. */
+const MAX_SUGGESTIONS = 1;
 
 const EMPTY_CUSTOMER: CustomerData = {
   name: "",
@@ -500,7 +502,7 @@ export default function Page() {
     const showCached = () => {
       if (!cached || shown !== "none" || reqId !== suggestReqIdRef.current) return;
       shown = "instant";
-      setSuggestions(cached.suggestions);
+      setSuggestions(cached.suggestions.slice(0, MAX_SUGGESTIONS));
       setSuggestionMeta({
         origin: "instant",
         latencyMs: performance.now() - turn.committedAt,
@@ -515,7 +517,7 @@ export default function Page() {
     try {
       const payload = {
         context,
-        max_suggestions: 2,
+        max_suggestions: MAX_SUGGESTIONS,
         session_id: sessionIdRef.current || undefined,
         customer_profile: Object.keys(profile).length ? profile : undefined,
         customer_history: cases.length ? cases : undefined,
@@ -548,7 +550,9 @@ export default function Page() {
       }
       if (reqId !== suggestReqIdRef.current) return;
 
-      const list = Array.isArray(data.suggestions) ? (data.suggestions as Suggestion[]) : [];
+      const list = Array.isArray(data.suggestions)
+        ? (data.suggestions as Suggestion[]).slice(0, MAX_SUGGESTIONS)
+        : [];
       const timings = (data.timings || {}) as { llm_ms?: number; model?: string };
       if (data.fallback) {
         // Prefer a prepared, scenario-specific card over generic fallback text.

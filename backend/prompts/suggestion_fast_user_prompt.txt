@@ -3,4 +3,4 @@
 LIVE CALL TRANSCRIPT (most recent line last):
 {conversation_transcript}
 
-Give up to {max_suggestions} suggestions for what Staff should say next. Return the JSON object only.
+Give the {max_suggestions} most useful suggestion(s) for what Staff should say next. Return the JSON object only.

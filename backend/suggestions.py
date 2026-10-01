@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from .suggestions_core import compute_suggestions
 from .persistence import persist_suggestion_event
 from .auth import enforce_usage_limits
+from . import config as cfg
 
 router = APIRouter()
 
@@ -18,7 +19,9 @@ class CustomerCase(BaseModel):
 
 class SuggestRequest(BaseModel):
     context: str
-    max_suggestions: int = 2
+    max_suggestions: int | None = Field(
+        None, description="Defaults to MAX_SUGGESTIONS from config"
+    )
     session_id: str | None = Field(
         None, description="Persist to this session when valid and owned"
     )
@@ -40,7 +43,7 @@ async def suggest(
 ) -> Dict[str, Any]:
     body = await compute_suggestions(
         req.context,
-        req.max_suggestions,
+        req.max_suggestions or cfg.SUGGESTION_MAX,
         customer_profile=req.customer_profile,
         customer_cases=[c.model_dump() for c in req.customer_history or []],
     )

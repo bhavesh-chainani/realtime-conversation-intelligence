@@ -68,7 +68,7 @@ async def main() -> None:
             started = time.perf_counter()
             body = await compute_suggestions(
                 transcript_upto(lines, index),
-                max_suggestions=2,
+                max_suggestions=cfg.SUGGESTION_MAX,
                 customer_profile=profile,
                 customer_cases=cases,
                 pipeline=args.pipeline,

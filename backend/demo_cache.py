@@ -132,7 +132,7 @@ def prompt_hash(scenario_id: str) -> str:
     for name in ("suggestion_fast_system_prompt.txt", "suggestion_fast_user_prompt.txt"):
         digest.update((PROMPTS_DIR / name).read_bytes())
     digest.update(
-        f"{get_suggestion_model()}|{cfg.LLM_REASONING_EFFORT}|{cfg.SUGGESTION_PIPELINE}".encode()
+        f"{get_suggestion_model()}|{cfg.LLM_REASONING_EFFORT}|{cfg.SUGGESTION_PIPELINE}|{cfg.SUGGESTION_MAX}".encode()
     )
     return digest.hexdigest()[:16]
 
@@ -187,7 +187,7 @@ async def build_cache(scenario_id: str, concurrency: int = 3) -> dict[str, Any]:
             async with semaphore:
                 body = await compute_suggestions(
                     transcript_upto(lines, index),
-                    max_suggestions=2,
+                    max_suggestions=cfg.SUGGESTION_MAX,
                     customer_profile=profile,
                     customer_cases=cases,
                     pipeline="single",
