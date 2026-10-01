@@ -94,14 +94,23 @@ def test_cache_build_covers_every_customer_line_and_detects_staleness(demo_env, 
         calls.append({"context": context, "cases": customer_cases, "pipeline": pipeline})
         return {"suggestions": [{"topic": context.splitlines()[-1]}], "timings": {"total_ms": 1}}
 
+    async def fake_summary(context, profile=None, cases=None):
+        calls.append({"context": context, "cases": cases, "pipeline": "wrapup"})
+        return {"summary": "Sarah called about leave.", "linked_records": ["CASE-1"], "timings": {}}
+
     monkeypatch.setattr(demo_cache, "compute_suggestions", fake_compute)
+    monkeypatch.setattr(demo_cache, "compute_call_summary", fake_summary)
 
     status = asyncio.run(demo_cache.build_cache("unit_scenario"))
 
     assert status["built"] and status["fresh"]
-    assert status["steps"] == status["total"] == 2
-    assert {c["pipeline"] for c in calls} == {"single"}
+    # Two customer lines + the end-of-call wrap-up.
+    assert status["steps"] == status["total"] == 3
+    assert {c["pipeline"] for c in calls} == {"single", "wrapup"}
     cache = demo_cache.get_cache("unit_scenario")
+    assert cache["steps"]["_wrapup"]["summary"] == "Sarah called about leave."
+    wrapup_call = next(c for c in calls if c["pipeline"] == "wrapup")
+    assert wrapup_call["context"].endswith("Customer: It's S8823451D.") and wrapup_call["cases"] == CASES
     assert cache["steps"]["L04"]["suggestions"][0]["topic"] == "Customer: It's S8823451D."
     assert (cfg.DEMO_CACHE_DIR / "unit_scenario.json").is_file()
 
@@ -114,9 +123,10 @@ def test_failed_cache_steps_are_skipped(demo_env, monkeypatch):
         return {"suggestions": [], "fallback": True, "error": "boom"}
 
     monkeypatch.setattr(demo_cache, "compute_suggestions", failing_compute)
+    monkeypatch.setattr(demo_cache, "compute_call_summary", failing_compute)
 
     status = asyncio.run(demo_cache.build_cache("unit_scenario"))
-    assert status["steps"] == 0 and status["total"] == 2
+    assert status["steps"] == 0 and status["total"] == 3
 
 
 def test_token_endpoint_uses_u3_model_and_prompt_for_scenarios(demo_env, monkeypatch, client):

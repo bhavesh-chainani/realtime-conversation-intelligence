@@ -18,6 +18,7 @@ from .assemblyai import StreamingTokenError, create_streaming_token
 from .async_jobs_router import router as async_jobs_router
 from .auth import enforce_usage_limits, require_api_auth
 from .config import ASYNC_JOBS_ENABLED, BACKEND_CORS_ORIGINS, DEMO_MODE
+from .call_summary import router as call_summary_router
 from .customer_data_extractor import router as customer_data_router
 from .customer_history import router as customer_history_router
 from .http_middleware import RequestContextMiddleware
@@ -52,6 +53,7 @@ app.add_middleware(
 )
 
 app.include_router(suggest_router)
+app.include_router(call_summary_router)
 app.include_router(customer_data_router)
 app.include_router(customer_history_router)
 app.include_router(sessions_router)

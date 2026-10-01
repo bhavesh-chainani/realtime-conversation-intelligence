@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from . import config as cfg
+from .call_summary import compute_call_summary
 from .customer_history import customer_history_service
 from .llm import get_suggestion_model
 from .prompt_loader import PROMPTS_DIR
@@ -25,6 +26,7 @@ from .suggestions_core import compute_suggestions
 
 logger = logging.getLogger(__name__)
 
+WRAPUP_STEP = "_wrapup"
 _SCENARIO_ID = re.compile(r"^[a-z0-9_\-]{1,80}$")
 _memory_cache: dict[str, dict[str, Any]] = {}
 _build_locks: dict[str, asyncio.Lock] = {}
@@ -129,7 +131,11 @@ def prompt_hash(scenario_id: str) -> str:
     """Changes whenever anything that affects cached output changes."""
     digest = hashlib.sha1()
     digest.update(_scenario_path(scenario_id).read_bytes())
-    for name in ("suggestion_fast_system_prompt.txt", "suggestion_fast_user_prompt.txt"):
+    for name in (
+        "suggestion_fast_system_prompt.txt",
+        "suggestion_fast_user_prompt.txt",
+        "call_summary_system_prompt.txt",
+    ):
         digest.update((PROMPTS_DIR / name).read_bytes())
     digest.update(
         f"{get_suggestion_model()}|{cfg.LLM_REASONING_EFFORT}|{cfg.SUGGESTION_PIPELINE}|{cfg.SUGGESTION_MAX}".encode()
@@ -156,7 +162,8 @@ def get_cache(scenario_id: str) -> dict[str, Any] | None:
 
 def cache_status(scenario_id: str) -> dict[str, Any]:
     scenario = load_scenario(scenario_id)
-    total = sum(1 for line in scenario["lines"] if line["role"] == "customer")
+    # One step per customer line, plus the end-of-call wrap-up.
+    total = sum(1 for line in scenario["lines"] if line["role"] == "customer") + 1
     cache = get_cache(scenario_id)
     if not cache:
         return {"scenario_id": scenario_id, "built": False, "fresh": False, "steps": 0, "total": total}
@@ -197,8 +204,20 @@ async def build_cache(scenario_id: str, concurrency: int = 3) -> dict[str, Any]:
                 return line["id"], None
             return line["id"], {**body, "customer_cases": [c.get("case_id") for c in cases]}
 
+        async def build_wrapup() -> tuple[str, dict[str, Any] | None]:
+            profile, cases = context_by_line[lines[-1]["id"]]
+            async with semaphore:
+                body = await compute_call_summary(
+                    transcript_upto(lines, len(lines) - 1), profile, cases
+                )
+            if body.get("fallback"):
+                logger.warning("[demo] wrap-up cache step failed: %s", body.get("error"))
+                return WRAPUP_STEP, None
+            return WRAPUP_STEP, body
+
         results = await asyncio.gather(
-            *(build_step(i) for i, line in enumerate(lines) if line["role"] == "customer")
+            *(build_step(i) for i, line in enumerate(lines) if line["role"] == "customer"),
+            build_wrapup(),
         )
         cache = {
             "scenario_id": scenario_id,
