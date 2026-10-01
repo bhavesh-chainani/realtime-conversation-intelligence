@@ -46,16 +46,6 @@ function FieldLabel({
   );
 }
 
-const HISTORY_TITLES: Record<CustomerHistoryStatus, string> = {
-  idle: "Customer history",
-  loading: "Customer history",
-  invalid_input: "More details needed",
-  not_configured: "Lookup unavailable",
-  not_found: "No history found",
-  ok: "Customer history",
-  error: "Lookup failed",
-};
-
 const HISTORY_BADGES: Record<CustomerHistoryStatus, string> = {
   idle: "Ready",
   loading: "Searching",
@@ -90,7 +80,6 @@ export function CustomerPanel({
   const canLookup =
     customerData.name.trim().length > 0 || customerData.nric_worker_permit_id.trim().length > 0;
 
-  const historyTitle = HISTORY_TITLES[customerHistoryStatus];
   const historyBadge = HISTORY_BADGES[customerHistoryStatus];
   const historyTone = HISTORY_TONES[customerHistoryStatus];
   const historyMessage =
@@ -105,13 +94,7 @@ export function CustomerPanel({
   return (
     <section className="rail-section" aria-label="Customer profile and history">
       <div className="panel-heading">
-        <div>
-          <div className="panel-kicker">Customer workspace</div>
-          <h2 className="panel-title">Customer profile</h2>
-          <p className="panel-subtitle">
-            Auto-filled details from the call. Staff edits are preserved and can be refined before lookup.
-          </p>
-        </div>
+        <h2 className="panel-title">Customer profile</h2>
       </div>
 
       {historyMeta && customerHistoryCases.length > 0 ? (
@@ -192,62 +175,44 @@ export function CustomerPanel({
         />
       </div>
 
-      <div className="lookup-bar">
-        <div>
-          <div className="lookup-bar__title">Customer history lookup</div>
-          <p className="lookup-bar__hint">Use the reviewed identity details to retrieve prior customer cases for staff context.</p>
-        </div>
-
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={onLookup}
-          disabled={isLoadingCustomerHistory || !canLookup}
-          title={!canLookup ? "Enter a customer name or NRIC / Work Permit ID first." : undefined}
-        >
-          {isLoadingCustomerHistory ? "Obtaining…" : "Obtain customer info"}
-        </button>
-      </div>
-
       <section className={`history-card history-card--${historyTone}`} aria-live="polite">
         <div className="history-card__header">
-          <div>
-            <div className="history-card__title">{historyTitle}</div>
-            <p className="history-card__message">{historyMessage}</p>
+          <div className="history-card__title">Case history</div>
+          <div className="history-card__actions">
+            <span className={`status-badge status-badge--${historyTone}`}>{historyBadge}</span>
+            <button
+              type="button"
+              className="btn btn--secondary btn--sm"
+              onClick={onLookup}
+              disabled={isLoadingCustomerHistory || !canLookup}
+              title={!canLookup ? "Enter a customer name or NRIC / Work Permit ID first." : "Search prior cases again"}
+            >
+              {isLoadingCustomerHistory ? "Looking up…" : "Look up"}
+            </button>
           </div>
-          <span className={`status-badge status-badge--${historyTone}`}>{historyBadge}</span>
         </div>
 
         {showHistoryTable ? (
-          <div className="history-table-wrap">
-            <table className="history-table" aria-label="Customer case history table">
-              <thead>
-                <tr>
-                  <th>Case ID</th>
-                  <th>Company</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Summary</th>
-                </tr>
-              </thead>
-              <tbody>
-                {customerHistoryCases.map((row, index) => (
-                  <tr key={`${row.case_id || "case"}-${index}`}>
-                    <td>{row.case_id || "—"}</td>
-                    <td>{row.company || "—"}</td>
-                    <td>{row.type || "—"}</td>
-                    <td>
-                      <span className={`case-status${isOpenCaseStatus(row.status) ? " case-status--open" : ""}`}>
-                        {row.status || "—"}
-                      </span>
-                    </td>
-                    <td>{row.summary || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
+          <ul className="case-list" aria-label="Prior cases">
+            {customerHistoryCases.map((row, index) => {
+              const open = isOpenCaseStatus(row.status);
+              return (
+                <li key={`${row.case_id || "case"}-${index}`} className={`case-item${open ? " case-item--open" : ""}`}>
+                  <div className="case-item__head">
+                    <span className="case-item__id">{row.case_id || "—"}</span>
+                    <span className={`case-status${open ? " case-status--open" : ""}`}>{row.status || "—"}</span>
+                  </div>
+                  <div className="case-item__meta">
+                    {[row.type, row.company].filter(Boolean).join(" · ")}
+                  </div>
+                  {row.summary ? <p className="case-item__summary">{row.summary}</p> : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="history-card__message">{historyMessage}</p>
+        )}
       </section>
     </section>
   );

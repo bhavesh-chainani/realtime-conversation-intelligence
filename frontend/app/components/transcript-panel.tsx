@@ -6,7 +6,7 @@ type TranscriptPanelProps = {
   turns: Turn[];
   live: string;
   liveRole: SpeakerRole;
-  isListening: boolean;
+  status: string;
   scriptGuided: boolean;
   nextVoiceIsStaff: boolean;
   hasRoleMapping: boolean;
@@ -44,7 +44,7 @@ export function TranscriptPanel({
   turns,
   live,
   liveRole,
-  isListening,
+  status,
   scriptGuided,
   nextVoiceIsStaff,
   hasRoleMapping,
@@ -60,38 +60,30 @@ export function TranscriptPanel({
   return (
     <section className="panel transcript-panel" aria-label="Live transcript workspace">
       <div className="panel-heading panel-heading--wide">
-        <div>
-          <div className="panel-kicker">Live workspace</div>
-          <h2 className="panel-title">Live conversation</h2>
-          <p className="panel-subtitle">
-            Speaker-labeled transcript from the laptop microphone for staff and customer turns.
-          </p>
-        </div>
+        <h2 className="panel-title">Live conversation</h2>
 
         <div className="metric-strip" aria-label="Session metrics">
-          <span className="metric-chip">{isListening ? "Listening live" : "Ready"}</span>
-          <span className="metric-chip">{turns.length} finalized turns</span>
-          <span className="metric-chip">{mappedSpeakerCount}/2 speakers mapped</span>
+          <span className="metric-chip">{status}</span>
+          <span className="metric-chip">{turns.length} turns</span>
+          {!scriptGuided ? (
+            <span className="metric-chip">{mappedSpeakerCount}/2 voices mapped</span>
+          ) : null}
         </div>
       </div>
 
-      <div className="control-bar" role="group" aria-label="Speaker role controls">
+      <div className="control-bar control-bar--compact" role="group" aria-label="Speaker role controls">
         <div className="control-bar__content">
-          <div>
-            <div className="control-bar__label">Speaker assignment</div>
-            <p className="control-bar__hint">
-              {scriptGuided
-                ? "Script-guided: each turn is matched to the expected script line, and voices are mapped automatically. Click a turn to correct it."
-                : "Choose how the next unseen voice should be labeled, then swap roles only if diarization starts inverted. Click a turn to correct it."}
-            </p>
-          </div>
+          <p className="control-bar__hint">
+            {scriptGuided ? "Speakers matched to the script." : "Speakers from voice diarization."} Click a turn
+            to correct it.
+          </p>
 
           <div className="role-toggle-row">
             {!scriptGuided ? (
               <div className="role-toggle-group">
                 <button
                   type="button"
-                  className={`btn btn--toggle${nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
+                  className={`btn btn--toggle btn--sm${nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
                   onClick={() => onSetNextVoiceRole(true)}
                   aria-pressed={nextVoiceIsStaff}
                   disabled={hasRoleMapping && Boolean(mappedStaffLabel)}
@@ -105,7 +97,7 @@ export function TranscriptPanel({
                 </button>
                 <button
                   type="button"
-                  className={`btn btn--toggle${!nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
+                  className={`btn btn--toggle btn--sm${!nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
                   onClick={() => onSetNextVoiceRole(false)}
                   aria-pressed={!nextVoiceIsStaff}
                   disabled={hasRoleMapping && Boolean(mappedCustomerLabel)}
@@ -122,7 +114,7 @@ export function TranscriptPanel({
 
             <button
               type="button"
-              className="btn btn--ghost"
+              className="btn btn--ghost btn--sm"
               onClick={onSwapSpeakerRoles}
               disabled={!hasRoleMapping && turns.length === 0}
               title="Swap Staff and Customer labels if diarization inverted them"

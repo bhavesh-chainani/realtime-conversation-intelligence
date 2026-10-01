@@ -86,7 +86,7 @@ Talking points:
 | Transcription stalls or an error alert appears | Click **Stop mic**, switch to **Autopilot**, then **Continue from here**. Autopilot resumes at the current script line. |
 | The live suggestion is slow | Nothing to do. The prepared card appears at 1.3 s automatically. |
 | The LLM gateway is down | Prepared cards still appear for every scripted customer line. |
-| Lookup shows *Lookup failed* | Re-run `scripts/demo_db.py`, then click **Obtain customer info**. |
+| Lookup shows *Lookup failed* | Re-run `scripts/demo_db.py`, then click **Look up** in Case history. |
 | You have to start over | Click **Reset**. |
 
 Autopilot controls: pace **1× / 1.5× / 2×**. **Step** pauses after every line; press **Next line** or the → key to continue, which lets you narrate between lines.

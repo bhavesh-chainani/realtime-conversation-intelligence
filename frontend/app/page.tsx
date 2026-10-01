@@ -218,7 +218,7 @@ export default function Page() {
 
   // Demo mode
   const [demoEnabled, setDemoEnabled] = useState(false);
-  const [scenarios, setScenarios] = useState<DemoScenarioSummary[]>([]);
+  const [scenarios, setScenarios] = useState<DemoScenarioSummary[] | null>(null);
   const [scenarioId, setScenarioId] = useState<string>("");
   const [scenario, setScenario] = useState<DemoScenario | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>("live");
@@ -269,6 +269,7 @@ export default function Page() {
   const cacheStepsRef = useRef<Record<string, CachedStep>>({});
   const autopilotRef = useRef<Autopilot | null>(null);
   const speedRef = useRef(1);
+  const preflightReqIdRef = useRef(0);
   const stepModeRef = useRef(false);
 
   useEffect(() => {
@@ -1284,15 +1285,18 @@ export default function Page() {
 
   const runPreflight = useCallback(
     async (id: string) => {
+      // A slow earlier check (e.g. a cold LLM) must not overwrite a newer result.
+      const reqId = ++preflightReqIdRef.current;
       setIsCheckingPreflight(true);
       try {
         const q = id ? `?scenario_id=${encodeURIComponent(id)}` : "";
         const res = await fetch(`${backendUrl}/demo/preflight${q}`, { headers: getAuthHeaders() });
-        if (res.ok) setPreflight(await res.json());
+        const body = res.ok ? await res.json() : null;
+        if (reqId === preflightReqIdRef.current) setPreflight(body);
       } catch {
-        setPreflight(null);
+        if (reqId === preflightReqIdRef.current) setPreflight(null);
       } finally {
-        setIsCheckingPreflight(false);
+        if (reqId === preflightReqIdRef.current) setIsCheckingPreflight(false);
       }
     },
     [backendUrl]
@@ -1323,15 +1327,16 @@ export default function Page() {
         if (!res.ok) return;
         const list = (await res.json()) as DemoScenarioSummary[];
         if (cancelled) return;
-        setScenarios(list);
         let remembered = "";
         try {
           remembered = localStorage.getItem("DEMO_SCENARIO") || "";
         } catch {}
         const initial = list.find((s) => s.id === remembered)?.id ?? list[0]?.id ?? "";
         setScenarioId(initial);
+        setScenarios(list);
       } catch {
         console.warn("[Demo] Backend demo endpoints unavailable (is DEMO_MODE=true?)");
+        if (!cancelled) setScenarios([]);
       }
     })();
     void prewarm();
@@ -1342,7 +1347,7 @@ export default function Page() {
 
   // Selecting a scenario loads its script + cache and starts a clean conversation.
   useEffect(() => {
-    if (!demoEnabled) return;
+    if (!demoEnabled || scenarios === null) return;
     let cancelled = false;
     try {
       localStorage.setItem("DEMO_SCENARIO", scenarioId);
@@ -1375,7 +1380,7 @@ export default function Page() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoEnabled, scenarioId, backendUrl, loadCache, runPreflight]);
+  }, [demoEnabled, scenarios, scenarioId, backendUrl, loadCache, runPreflight]);
 
   // Keep LLM connections warm while a demo conversation is running.
   const demoActive = isListening || autopilotState === "running" || autopilotState === "waiting";
@@ -1440,9 +1445,10 @@ export default function Page() {
   return (
     <div className="shell shell--workspace">
       <SessionHeader
-        isListening={isListening}
+        isLive={isListening || autopilotState === "running" || autopilotState === "waiting"}
         isAuthenticated={isAuthenticated}
         showAuthButton={Boolean(cognitoDomain && cognitoClientId)}
+        showSessionControls={!demoEnabled}
         onLogin={loginWithCognito}
         onLogout={logout}
         onStart={() => {
@@ -1453,7 +1459,7 @@ export default function Page() {
 
       {demoEnabled ? (
         <DemoBar
-          scenarios={scenarios}
+          scenarios={scenarios ?? []}
           scenarioId={scenarioId}
           onScenarioChange={setScenarioId}
           scenario={scenario}
@@ -1511,7 +1517,15 @@ export default function Page() {
           turns={turns}
           live={live}
           liveRole={liveRole}
-          isListening={isListening}
+          status={
+            isListening
+              ? "Listening"
+              : autopilotState === "running" || autopilotState === "waiting"
+                ? "Playing script"
+                : autopilotState === "paused"
+                  ? "Paused"
+                  : "Ready"
+          }
           scriptGuided={Boolean(scenario)}
           nextVoiceIsStaff={nextVoiceIsStaff}
           hasRoleMapping={hasRoleMapping}

@@ -49,11 +49,7 @@ export function SuggestionsPanel({
   return (
     <section className="rail-section" aria-label="AI suggestions">
       <div className="panel-heading">
-        <div>
-          <div className="panel-kicker">Operator assistant</div>
-          <h2 className="panel-title">AI suggestions</h2>
-          <p className="panel-subtitle">Focused guidance on what staff may want to ask or say next.</p>
-        </div>
+        <h2 className="panel-title">AI suggestions</h2>
         {meta ? (
           <span
             className={`latency-chip latency-chip--${meta.origin}${isFetchingSuggestions ? " latency-chip--busy" : ""}`}
