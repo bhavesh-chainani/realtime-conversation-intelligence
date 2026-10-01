@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from openai import OpenAI
+import httpx
+from openai import AsyncOpenAI, OpenAI
 
 from . import config as cfg
 
 _client: OpenAI | None = None
-_client_signature: tuple[str, str, float] | None = None
+_client_signature: tuple[str, str, float, int] | None = None
+_async_client: AsyncOpenAI | None = None
+_async_client_signature: tuple[str, str, float, int, int] | None = None
 
 
 def _clean(value: str | None) -> str:
@@ -85,17 +89,66 @@ def get_llm_client() -> OpenAI | None:
         return None
 
     timeout = float(cfg.LLM_TIMEOUT_SECONDS)
-    signature = (api_key, base_url, timeout)
+    max_retries = int(cfg.LLM_MAX_RETRIES)
+    signature = (api_key, base_url, timeout, max_retries)
 
     if _client is None or _client_signature != signature:
-        _client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        _client = OpenAI(
+            api_key=api_key, base_url=base_url, timeout=timeout, max_retries=max_retries
+        )
         _client_signature = signature
 
     return _client
 
 
+def get_async_llm_client() -> AsyncOpenAI | None:
+    """Create/cache a non-blocking client with long-lived keep-alive connections.
+
+    Keyed on the running event loop too, since httpx async pools are loop-bound.
+    """
+    global _async_client, _async_client_signature
+
+    api_key = resolve_llm_api_key()
+    base_url = resolve_llm_base_url()
+    if not api_key or not base_url:
+        return None
+
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = 0
+    timeout = float(cfg.LLM_TIMEOUT_SECONDS)
+    max_retries = int(cfg.LLM_MAX_RETRIES)
+    signature = (api_key, base_url, timeout, max_retries, loop_id)
+
+    if _async_client is None or _async_client_signature != signature:
+        _async_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+            http_client=httpx.AsyncClient(
+                timeout=timeout,
+                limits=httpx.Limits(max_keepalive_connections=10, keepalive_expiry=120),
+            ),
+        )
+        _async_client_signature = signature
+
+    return _async_client
+
+
+def llm_extra_params() -> dict[str, Any]:
+    """Optional provider params shared by latency-sensitive calls."""
+    params: dict[str, Any] = {}
+    if cfg.LLM_REASONING_EFFORT:
+        params["reasoning_effort"] = cfg.LLM_REASONING_EFFORT
+    return params
+
+
 def reset_llm_client_cache() -> None:
-    """Clear the cached client. Useful in tests after monkeypatching config."""
-    global _client, _client_signature
+    """Clear the cached clients. Useful in tests after monkeypatching config."""
+    global _client, _client_signature, _async_client, _async_client_signature
     _client = None
     _client_signature = None
+    _async_client = None
+    _async_client_signature = None

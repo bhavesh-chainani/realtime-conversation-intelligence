@@ -4,6 +4,7 @@ This agent generates actionable suggestions when called by the router agent.
 Optimized for low latency and real-time interaction.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -19,6 +20,59 @@ from .prompt_loader import (
 logger = logging.getLogger(__name__)
 
 
+def validate_suggestion(suggestion: Any) -> Optional[Dict[str, Any]]:
+    """Normalise one model-produced suggestion into the shape the UI expects."""
+    if not isinstance(suggestion, dict):
+        return None
+
+    try:
+        confidence = float(suggestion.get("confidence", 0.7))
+    except (TypeError, ValueError):
+        confidence = 0.7
+
+    validated: Dict[str, Any] = {
+        "type": suggestion.get("type", "General Suggestion"),
+        "topic": suggestion.get(
+            "topic",
+            suggestion.get(
+                "text", "Follow up with the caller to gather more information."
+            ),
+        ),
+        "confidence": confidence,
+        "details": suggestion.get("details", {}),
+    }
+    if not isinstance(validated["details"], dict):
+        validated["details"] = {}
+    details = validated["details"]
+
+    # Backward compatibility: map older field names onto possibleConversation.
+    if "possibleConversation" not in details:
+        if "operatorResponse" in details:
+            details["possibleConversation"] = details["operatorResponse"]
+        elif "naturalResponse" in details:
+            details["possibleConversation"] = details["naturalResponse"]
+        elif "suggestedConversation" in details:
+            conv = details["suggestedConversation"]
+            if "Operator:" in conv:
+                details["possibleConversation"] = (
+                    conv.split("Operator:")[1].split("\n")[0].strip()
+                )
+            else:
+                details["possibleConversation"] = conv
+    details.setdefault(
+        "possibleConversation", "Could you provide more details about your situation?"
+    )
+    details.setdefault("priority", suggestion.get("priority", "medium"))
+
+    linked = suggestion.get("linked_records")
+    if isinstance(linked, list):
+        validated["linked_records"] = [str(x).strip() for x in linked if str(x).strip()]
+    if isinstance(suggestion.get("source"), str):
+        validated["source"] = suggestion["source"].strip().lower()
+
+    return validated
+
+
 class SuggestionAgent:
     """Agent that generates real-time suggestions for operators."""
 
@@ -32,6 +86,7 @@ class SuggestionAgent:
         max_suggestions: Optional[int] = None,
         known_info: Optional[List[str]] = None,
         missing_info: Optional[List[str]] = None,
+        customer_record: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Generate real-time suggestions for the operator.
@@ -55,6 +110,7 @@ class SuggestionAgent:
             max_suggestions,
             known_info=known_info or [],
             missing_info=missing_info or [],
+            customer_record=customer_record,
         )
 
         try:
@@ -62,7 +118,8 @@ class SuggestionAgent:
             if not client:
                 raise ValueError("LLM API key not configured")
 
-            response = client.chat.completions.create(
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
                 model=get_suggestion_model(),
                 temperature=self.temperature,
                 messages=[
@@ -84,63 +141,14 @@ class SuggestionAgent:
             if not isinstance(parsed, list):
                 raise ValueError("Model did not return a JSON array")
 
-            # Validate and enhance suggestions
             validated_suggestions = []
             for idx, suggestion in enumerate(parsed[:max_suggestions]):
-                if not isinstance(suggestion, dict):
+                validated = validate_suggestion(suggestion)
+                if validated is None:
                     logger.warning(
                         f"Skipping invalid suggestion at index {idx}: not a dict"
                     )
                     continue
-
-                # Ensure required fields exist
-                validated = {
-                    "type": suggestion.get("type", "General Suggestion"),
-                    "topic": suggestion.get(
-                        "topic",
-                        suggestion.get(
-                            "text",
-                            "Follow up with the caller to gather more information.",
-                        ),
-                    ),
-                    "confidence": float(suggestion.get("confidence", 0.7)),
-                    "details": suggestion.get("details", {}),
-                }
-
-                # Ensure details structure is complete
-                if not isinstance(validated["details"], dict):
-                    validated["details"] = {}
-
-                # Support new format: topic and possibleConversation
-                validated["details"].setdefault(
-                    "possibleConversation",
-                    "Could you provide more details about your situation?",
-                )
-                validated["details"].setdefault(
-                    "priority", suggestion.get("priority", "medium")
-                )
-
-                # Backward compatibility: map old fields to new format if needed
-                if "possibleConversation" not in validated["details"]:
-                    # Try to get from old field names
-                    if "operatorResponse" in validated["details"]:
-                        validated["details"]["possibleConversation"] = validated[
-                            "details"
-                        ]["operatorResponse"]
-                    elif "naturalResponse" in validated["details"]:
-                        validated["details"]["possibleConversation"] = validated[
-                            "details"
-                        ]["naturalResponse"]
-                    elif "suggestedConversation" in validated["details"]:
-                        # Extract operator part from conversation
-                        conv = validated["details"]["suggestedConversation"]
-                        if "Operator:" in conv:
-                            validated["details"]["possibleConversation"] = (
-                                conv.split("Operator:")[1].split("\n")[0].strip()
-                            )
-                        else:
-                            validated["details"]["possibleConversation"] = conv
-
                 validated_suggestions.append(validated)
 
             return validated_suggestions

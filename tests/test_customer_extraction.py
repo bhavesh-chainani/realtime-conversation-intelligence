@@ -99,3 +99,21 @@ def test_extractor_returns_error_for_invalid_json(monkeypatch):
     assert body["status"] == "error"
     assert body["data"]["name"] is None
     assert body["meta"]["captured_count"] == 0
+
+
+def test_extractor_falls_back_to_regex_nric_from_customer_lines(monkeypatch):
+    monkeypatch.setattr(
+        "backend.customer_data_extractor.get_llm_client",
+        lambda: _FakeCompletionClient(
+            '{"name": "Sarah Lim", "nric_worker_permit_id": "S eight eight", "address": null, "purpose_of_call": null}'
+        ),
+    )
+
+    body = asyncio.run(
+        extractor.extract(
+            "Staff: Could I have your NRIC?\nCustomer: Sure, it's S, eight eight two three four five one, D."
+        )
+    )
+
+    assert body["data"]["nric_worker_permit_id"] == "S8823451D"
+    assert "llm_ms" in body["timings"]

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 
 from .auth import enforce_usage_limits
 from .config import SUGGESTION_TEMPERATURE
-from .llm import get_extraction_model, get_llm_client
+from .llm import get_extraction_model, get_llm_client, llm_extra_params
 from .persistence import persist_customer_extract_event
+from .quick_entities import NRIC_PATTERN, extract_nric_from_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +121,9 @@ Return a JSON object with the extracted information. If any field is not mention
             if not client:
                 raise ValueError("LLM client is not configured")
 
-            response = client.chat.completions.create(
+            started = time.perf_counter()
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
                 model=get_extraction_model(),
                 temperature=self.temperature,
                 messages=[
@@ -126,12 +131,17 @@ Return a JSON object with the extracted information. If any field is not mention
                     {"role": "user", "content": user_prompt},
                 ],
                 response_format={"type": "json_object"},
+                **llm_extra_params(),
             )
+            llm_ms = round((time.perf_counter() - started) * 1000, 1)
             content = self._strip_code_fences(
                 (response.choices[0].message.content or "").strip()
             )
             extracted_data = json.loads(content)
             normalized = self._normalize_payload(extracted_data)
+            normalized["nric_worker_permit_id"] = self._reconcile_id(
+                normalized.get("nric_worker_permit_id"), conversation_transcript
+            )
             status = self._status_for_data(normalized)
 
             logger.info(
@@ -139,12 +149,14 @@ Return a JSON object with the extracted information. If any field is not mention
                 status,
                 [field for field in EXTRACTION_FIELDS if normalized.get(field)],
             )
-            return self._build_response(
+            body = self._build_response(
                 success=True,
                 status=status,
                 data=normalized,
                 message=self._message_for_status(status),
             )
+            body["timings"] = {"llm_ms": llm_ms, "model": get_extraction_model()}
+            return body
         except json.JSONDecodeError as exc:
             logger.error("[Customer Data Extractor] Failed to parse JSON response: %s", exc)
             return self._error_response("LLM returned invalid JSON for customer extraction.")
@@ -155,6 +167,12 @@ Return a JSON object with the extracted information. If any field is not mention
                 str(exc),
             )
             return self._error_response("Customer data extraction failed.", error=str(exc))
+
+    def _reconcile_id(self, llm_value: str | None, transcript: str) -> str | None:
+        """Prefer a well-formed ID; fall back to a regex hit on Customer: lines."""
+        if llm_value and NRIC_PATTERN.fullmatch(llm_value.lower()):
+            return llm_value
+        return extract_nric_from_transcript(transcript) or llm_value
 
     def _empty_customer_data(self) -> dict[str, None]:
         return {field: None for field in EXTRACTION_FIELDS}
@@ -260,13 +278,15 @@ extractor = CustomerDataExtractor()
 @router.post("/extract-customer-data")
 async def extract_customer_data(
     req: ExtractCustomerDataRequest,
+    background_tasks: BackgroundTasks,
     user_key: str = Depends(enforce_usage_limits),
 ) -> dict[str, Any]:
     """Extract customer information from conversation transcript."""
     try:
         body = await extractor.extract(req.conversation_transcript)
         err = body.get("error") if isinstance(body.get("error"), str) else None
-        persist_customer_extract_event(
+        background_tasks.add_task(
+            persist_customer_extract_event,
             req.session_id,
             user_key,
             req.conversation_transcript,

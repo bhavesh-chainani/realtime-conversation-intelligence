@@ -133,3 +133,42 @@ STRICT_READINESS = (os.getenv("STRICT_READINESS") or "false").strip().lower() in
     "on",
 }
 METRICS_TOKEN = (os.getenv("METRICS_TOKEN") or "").strip()
+
+# LLM latency controls
+LLM_MAX_RETRIES = int((os.getenv("LLM_MAX_RETRIES") or "2").strip())
+# Optional reasoning effort for GPT-5-family models (e.g. none|minimal|low). Empty = provider default.
+LLM_REASONING_EFFORT = (os.getenv("LLM_REASONING_EFFORT") or "").strip()
+SUGGESTION_TIMEOUT_SECONDS = float(
+    (os.getenv("SUGGESTION_TIMEOUT_SECONDS") or str(LLM_TIMEOUT_SECONDS)).strip()
+)
+SUGGESTION_MAX_TOKENS = int((os.getenv("SUGGESTION_MAX_TOKENS") or "900").strip())
+
+# Scripted live demo (script-guided diarisation, warm cache, prewarm endpoints)
+DEMO_MODE = (os.getenv("DEMO_MODE") or "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DEMO_SCRIPTS_DIR = pathlib.Path(
+    os.getenv("DEMO_SCRIPTS_DIR") or (_repo_root / "demo" / "scripts")
+)
+DEMO_CACHE_DIR = pathlib.Path(
+    os.getenv("DEMO_CACHE_DIR") or (_repo_root / "data" / "demo_cache")
+)
+# single = one merged LLM call (fast); router = router agent + suggestion agent.
+SUGGESTION_PIPELINE = (
+    (os.getenv("SUGGESTION_PIPELINE") or ("single" if DEMO_MODE else "router"))
+    .strip()
+    .lower()
+)
+
+# Optional extra columns selected from the customer history view (e.g. "address").
+CUSTOMER_HISTORY_EXTRA_COLUMNS = [
+    col.strip()
+    for col in (os.getenv("CUSTOMER_HISTORY_EXTRA_COLUMNS") or "").split(",")
+    if col.strip()
+]
+
+# Optional AssemblyAI streaming speech model (sent as `speech_model`); empty = server default.
+ASSEMBLYAI_SPEECH_MODEL = str(CONFIG.get("assemblyai_speech_model") or "").strip()

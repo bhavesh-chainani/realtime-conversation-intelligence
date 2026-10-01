@@ -62,7 +62,7 @@ CREATE TABLE demo.customer_cases (
 );
 
 CREATE VIEW public.customer_history_view AS
-SELECT c.customer_name, c.nric_worker_permit_id, k.case_id, k.company,
+SELECT c.customer_name, c.nric_worker_permit_id, c.address, k.case_id, k.company,
        k.case_type, k.case_status, k.case_summary
 FROM demo.customer_cases k
 JOIN demo.customers c USING (nric_worker_permit_id)
@@ -87,6 +87,7 @@ def main() -> None:
 
     print(f"Seeded {len(CUSTOMERS)} customers, {count} cases.")
     print(f"CUSTOMER_HISTORY_DATABASE_URL={uri}")
+    print("CUSTOMER_HISTORY_EXTRA_COLUMNS=address")
 
 
 if __name__ == "__main__":

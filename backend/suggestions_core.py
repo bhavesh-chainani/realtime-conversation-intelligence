@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Any, Dict
+import time
+from typing import Any, Dict, List, Optional
 
+from . import config as cfg
+from .llm import get_router_model, get_suggestion_model
+from .prompt_loader import format_customer_record, get_fallback_suggestions
 from .router_agent import RouterAgent
 from .suggestion_agent import SuggestionAgent
-from .prompt_loader import get_fallback_suggestions
+from .suggestion_fast import generate_fast
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -19,91 +22,101 @@ _router_agent = RouterAgent()
 _suggestion_agent = SuggestionAgent()
 
 
-async def compute_suggestions(context: str, max_suggestions: int = 2) -> Dict[str, Any]:
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    logger.info("=" * 80)
-    logger.info(f"[SUGGESTION REQUEST] {timestamp}")
-    logger.info("-" * 80)
-    logger.info(f"Input Conversation Transcript ({len(context)} chars):")
-    logger.info(f"'{context}'")
-    logger.info("-" * 80)
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 1)
+
+
+async def compute_suggestions(
+    context: str,
+    max_suggestions: int = 2,
+    customer_profile: Optional[Dict[str, Any]] = None,
+    customer_cases: Optional[List[Dict[str, Any]]] = None,
+    pipeline: Optional[str] = None,
+) -> Dict[str, Any]:
+    pipeline = (pipeline or cfg.SUGGESTION_PIPELINE or "router").lower()
+    started = time.perf_counter()
+    logger.info(
+        "[SUGGESTION REQUEST] pipeline=%s chars=%s cases=%s",
+        pipeline,
+        len(context),
+        len(customer_cases or []),
+    )
 
     try:
-        logger.info(
-            "[Agent 1: Router] Analyzing conversation to decide if suggestions are needed..."
-        )
+        if pipeline == "single":
+            body = await generate_fast(
+                context,
+                max_suggestions=max_suggestions,
+                customer_profile=customer_profile,
+                customer_cases=customer_cases,
+            )
+            body["timings"] = {
+                **body.get("timings", {}),
+                "total_ms": _elapsed_ms(started),
+                "pipeline": pipeline,
+            }
+            logger.info(
+                "[Suggestion] single-call produced %s suggestions in %sms (llm %sms)",
+                len(body["suggestions"]),
+                body["timings"]["total_ms"],
+                body["timings"].get("llm_ms"),
+            )
+            return body
+
+        router_started = time.perf_counter()
         router_decision = await _router_agent.should_get_suggestions(context)
-
+        router_ms = _elapsed_ms(router_started)
         logger.info(
-            f"[Agent 1: Router] Decision: should_suggest={router_decision['should_suggest']}, confidence={router_decision['confidence']:.2f}, reason={router_decision['reason']}"
+            "[Agent 1: Router] should_suggest=%s confidence=%.2f reason=%s (%sms)",
+            router_decision["should_suggest"],
+            router_decision["confidence"],
+            router_decision["reason"],
+            router_ms,
         )
 
-        known_info = router_decision.get("known_info", [])
-        missing_info = router_decision.get("missing_info", [])
-        if known_info:
-            logger.info(
-                f"[Agent 1: Router] Known information: {', '.join(known_info[:3])}"
-            )
-        if missing_info:
-            logger.info(
-                f"[Agent 1: Router] Missing information: {', '.join(missing_info[:3])}"
-            )
-
+        timings: Dict[str, Any] = {
+            "router_ms": router_ms,
+            "pipeline": pipeline,
+            "model": get_router_model(),
+        }
         if not router_decision["should_suggest"]:
-            logger.info(
-                "[Agent 1: Router] Decided NOT to generate suggestions at this time"
-            )
+            timings["total_ms"] = _elapsed_ms(started)
             return {
                 "suggestions": [],
                 "router_decision": router_decision,
                 "message": "Router agent determined suggestions are not needed at this time",
+                "timings": timings,
             }
 
-        logger.info("[Agent 2: Suggestion] Generating suggestions...")
+        suggest_started = time.perf_counter()
         suggestions = await _suggestion_agent.generate_suggestions(
             context,
             max_suggestions=max_suggestions,
-            known_info=known_info,
-            missing_info=missing_info,
+            known_info=router_decision.get("known_info", []),
+            missing_info=router_decision.get("missing_info", []),
+            customer_record=format_customer_record(customer_profile, customer_cases),
         )
-
-        logger.info(f"[Agent 2: Suggestion] Generated {len(suggestions)} suggestions")
-
-        logger.info("-" * 80)
-        logger.info(f"OUTPUT SUGGESTIONS ({len(suggestions)} total):")
-        for idx, sugg in enumerate(suggestions, 1):
-            logger.info(f"  [{idx}] Type: {sugg.get('type', 'N/A')}")
-            logger.info(f"       Topic: {sugg.get('topic', sugg.get('text', 'N/A'))}")
-            logger.info(f"       Confidence: {sugg.get('confidence', 0):.2f}")
-            logger.info(
-                f"       Priority: {sugg.get('details', {}).get('priority', 'N/A')}"
-            )
-            if sugg.get("details", {}).get("possibleConversation"):
-                logger.info(
-                    f"       Possible Conversation: {sugg['details']['possibleConversation'][:80]}..."
-                )
-        logger.info("=" * 80)
-        logger.info("")
-
-        return {"suggestions": suggestions, "router_decision": router_decision}
+        timings.update(
+            llm_ms=_elapsed_ms(suggest_started),
+            total_ms=_elapsed_ms(started),
+            model=get_suggestion_model(),
+        )
+        logger.info(
+            "[Agent 2: Suggestion] Generated %s suggestions (%sms total)",
+            len(suggestions),
+            timings["total_ms"],
+        )
+        return {
+            "suggestions": suggestions,
+            "router_decision": router_decision,
+            "timings": timings,
+        }
     except Exception as e:
         logger.error(f"ERROR processing suggestions: {type(e).__name__}: {str(e)}")
-        logger.error(f"Traceback: {repr(e)}")
-
-        fallback_suggestions = get_fallback_suggestions()
-
         logger.warning("Using fallback suggestions due to error")
-        logger.info("-" * 80)
-        logger.info(
-            f"OUTPUT FALLBACK SUGGESTIONS ({len(fallback_suggestions[:max_suggestions])} total):"
-        )
-        for idx, sugg in enumerate(fallback_suggestions[:max_suggestions], 1):
-            logger.info(f"  [{idx}] Type: {sugg.get('type', 'N/A')}")
-            logger.info(f"       Text: {sugg.get('text', 'N/A')}")
-        logger.info("=" * 80)
-        logger.info("")
-
         return {
-            "suggestions": fallback_suggestions[:max_suggestions],
-            "error": str(e),
+            "suggestions": get_fallback_suggestions()[:max_suggestions],
+            "error": str(e) or type(e).__name__,
+            "fallback": True,
+            "timings": {"total_ms": _elapsed_ms(started), "pipeline": pipeline},
         }

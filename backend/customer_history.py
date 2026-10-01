@@ -4,17 +4,13 @@ import logging
 import re
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 
+from . import config as cfg
 from .auth import enforce_usage_limits
-from .config import (
-    CUSTOMER_HISTORY_DATABASE_URL,
-    CUSTOMER_HISTORY_MAX_ROWS,
-    CUSTOMER_HISTORY_QUERY_TIMEOUT_MS,
-    CUSTOMER_HISTORY_VIEW,
-)
 from .persistence import persist_customer_history_lookup_event
+from .prompt_loader import is_open_case_status
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +41,7 @@ class CustomerHistoryService:
     _relation_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
     def is_configured(self) -> bool:
-        return bool(CUSTOMER_HISTORY_DATABASE_URL and CUSTOMER_HISTORY_VIEW and psycopg)
+        return bool(cfg.CUSTOMER_HISTORY_DATABASE_URL and cfg.CUSTOMER_HISTORY_VIEW and psycopg)
 
     def lookup(
         self, name: str | None, nric_worker_permit_id: str | None
@@ -82,6 +78,8 @@ class CustomerHistoryService:
 
         try:
             rows, matched_on = self._query_rows(clean_id, clean_name)
+            # Open cases first: they matter most to the operator and the prompt.
+            rows = sorted(rows, key=lambda r: not is_open_case_status(r.get("case_status")))
             cases = [self._format_case(row) for row in rows]
             logger.info(
                 "[customer-history] lookup complete matched_on=%s rows=%s",
@@ -111,16 +109,23 @@ class CustomerHistoryService:
                 *((row.get("nric_worker_permit_id") for row in rows)), fallback=clean_id
             )
             summary = self._build_summary(customer_name, customer_id, matched_on, cases)
+            customer: dict[str, Any] = {
+                "name": customer_name or None,
+                "nric_worker_permit_id": customer_id or None,
+            }
+            for column in self._extra_columns():
+                customer[column] = self._first_non_empty(
+                    *(row.get(column) for row in rows)
+                ) or None
 
             return self._response(
                 status="ok",
                 success=True,
                 found=True,
                 match_strategy=matched_on,
-                customer={
-                    "name": customer_name or None,
-                    "nric_worker_permit_id": customer_id or None,
-                },
+                customer=customer,
+                open_count=sum(1 for c in cases if is_open_case_status(c["status"])),
+                companies=sorted({c["company"] for c in cases if c["company"]}),
                 message=f"Found {len(cases)} customer history entr{'y' if len(cases) == 1 else 'ies'}.",
                 history_summary=summary,
                 cases=cases,
@@ -144,8 +149,21 @@ class CustomerHistoryService:
     def _query_rows(
         self, clean_id: str, clean_name: str
     ) -> tuple[list[dict[str, Any]], str]:
-        relation = self._relation_sql(CUSTOMER_HISTORY_VIEW)
-        max_rows = max(1, int(CUSTOMER_HISTORY_MAX_ROWS))
+        relation = self._relation_sql(cfg.CUSTOMER_HISTORY_VIEW)
+        max_rows = max(1, int(cfg.CUSTOMER_HISTORY_MAX_ROWS))
+        columns = sql.SQL(", ").join(
+            sql.Identifier(col)
+            for col in (
+                "customer_name",
+                "nric_worker_permit_id",
+                "case_id",
+                "company",
+                "case_type",
+                "case_status",
+                "case_summary",
+                *self._extra_columns(),
+            )
+        )
 
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -154,12 +172,12 @@ class CustomerHistoryService:
                     cur.execute(
                         sql.SQL(
                             """
-                            SELECT customer_name, nric_worker_permit_id, case_id, company, case_type, case_status, case_summary
+                            SELECT {columns}
                             FROM {relation}
-                            WHERE nric_worker_permit_id = %s
+                            WHERE UPPER(REPLACE(nric_worker_permit_id, ' ', '')) = UPPER(REPLACE(%s, ' ', ''))
                             LIMIT %s
                             """
-                        ).format(relation=relation),
+                        ).format(columns=columns, relation=relation),
                         (clean_id, max_rows),
                     )
                     rows = cur.fetchall()
@@ -171,12 +189,12 @@ class CustomerHistoryService:
                     cur.execute(
                         sql.SQL(
                             """
-                            SELECT customer_name, nric_worker_permit_id, case_id, company, case_type, case_status, case_summary
+                            SELECT {columns}
                             FROM {relation}
                             WHERE LOWER(TRIM(customer_name)) = LOWER(TRIM(%s))
                             LIMIT %s
                             """
-                        ).format(relation=relation),
+                        ).format(columns=columns, relation=relation),
                         (clean_name, max_rows),
                     )
                     rows = cur.fetchall()
@@ -190,15 +208,23 @@ class CustomerHistoryService:
         if psycopg is None or dict_row is None:
             raise RuntimeError("psycopg is not installed")
 
-        timeout_ms = max(100, int(CUSTOMER_HISTORY_QUERY_TIMEOUT_MS))
+        timeout_ms = max(100, int(cfg.CUSTOMER_HISTORY_QUERY_TIMEOUT_MS))
         return psycopg.connect(
-            CUSTOMER_HISTORY_DATABASE_URL,
+            cfg.CUSTOMER_HISTORY_DATABASE_URL,
             autocommit=True,
             row_factory=dict_row,
             options=(
                 f"-c default_transaction_read_only=on -c statement_timeout={timeout_ms}"
             ),
         )
+
+    def _extra_columns(self) -> list[str]:
+        """Validated optional columns (e.g. address) configured for this deployment."""
+        return [
+            col
+            for col in cfg.CUSTOMER_HISTORY_EXTRA_COLUMNS
+            if self._relation_pattern.match(col)
+        ]
 
     def _relation_sql(self, relation: str):
         if sql is None:
@@ -262,14 +288,17 @@ class CustomerHistoryService:
 customer_history_service = CustomerHistoryService()
 
 
+# Plain `def`: FastAPI runs it in the threadpool so blocking DB I/O never stalls the event loop.
 @router.post("/customer-history")
-async def lookup_customer_history(
+def lookup_customer_history(
     req: CustomerHistoryLookupRequest,
+    background_tasks: BackgroundTasks,
     user_key: str = Depends(enforce_usage_limits),
 ) -> dict[str, Any]:
     result = customer_history_service.lookup(req.name, req.nric_worker_permit_id)
     err = result.get("error") if isinstance(result.get("error"), str) else None
-    persist_customer_history_lookup_event(
+    background_tasks.add_task(
+        persist_customer_history_lookup_event,
         req.session_id,
         user_key,
         {"name": req.name, "nric_worker_permit_id": req.nric_worker_permit_id},

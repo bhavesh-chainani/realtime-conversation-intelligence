@@ -90,3 +90,46 @@ def test_customer_history_service_requires_lookup_fields():
     assert body["success"] is False
     assert body["found"] is False
     assert body["cases"] == []
+
+
+def test_lookup_returns_extra_columns_open_count_and_open_cases_first(monkeypatch):
+    from backend import config as cfg
+
+    rows = [
+        {
+            "customer_name": "Sarah Lim",
+            "nric_worker_permit_id": "S8823451D",
+            "address": "12 Tampines Street 45",
+            "case_id": "CASE-2025-10421",
+            "company": "Brightpath Logistics Pte Ltd",
+            "case_type": "Salary dispute",
+            "case_status": "Resolved",
+            "case_summary": "Paid after mediation.",
+        },
+        {
+            "customer_name": "Sarah Lim",
+            "nric_worker_permit_id": "S8823451D",
+            "address": "12 Tampines Street 45",
+            "case_id": "CASE-2026-03117",
+            "company": "Brightpath Logistics Pte Ltd",
+            "case_type": "Leave entitlement",
+            "case_status": "Open",
+            "case_summary": "Awaiting employer response.",
+        },
+    ]
+    monkeypatch.setattr(cfg, "CUSTOMER_HISTORY_DATABASE_URL", "postgresql://fake")
+    monkeypatch.setattr(cfg, "CUSTOMER_HISTORY_EXTRA_COLUMNS", ["address", "bad column;"])
+    monkeypatch.setattr(
+        customer_history_service,
+        "_query_rows",
+        lambda clean_id, clean_name: (rows, "nric_worker_permit_id"),
+    )
+
+    body = customer_history_service.lookup(None, "S8823451D")
+
+    assert body["status"] == "ok"
+    assert body["customer"]["address"] == "12 Tampines Street 45"
+    assert "bad column;" not in body["customer"]
+    assert body["open_count"] == 1
+    assert body["companies"] == ["Brightpath Logistics Pte Ltd"]
+    assert [c["case_id"] for c in body["cases"]] == ["CASE-2026-03117", "CASE-2025-10421"]

@@ -3,6 +3,7 @@ Router Agent (Agent 1): Decides when to pass conversation to the suggestion agen
 This agent analyzes the conversation in real-time and determines if legal advice/suggestions are needed.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -45,7 +46,8 @@ class RouterAgent:
             if not client:
                 raise ValueError("LLM API key not configured")
 
-            response = client.chat.completions.create(
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
                 model=get_router_model(),
                 temperature=self.temperature,
                 messages=[

@@ -126,6 +126,7 @@ def get_suggestion_user_prompt(
     max_suggestions: int,
     known_info: Optional[List[str]] = None,
     missing_info: Optional[List[str]] = None,
+    customer_record: Optional[str] = None,
 ) -> str:
     """Get the suggestion agent user prompt formatted with conversation transcript, max suggestions, and context."""
     if "suggestion_user_template" not in _cached_prompts:
@@ -152,6 +153,89 @@ def get_suggestion_user_prompt(
         max_suggestions=max_suggestions,
         known_info=known_info_str,
         missing_info=missing_info_str,
+        customer_record=customer_record or NO_CUSTOMER_RECORD,
+    )
+
+
+NO_CUSTOMER_RECORD = (
+    "CUSTOMER RECORD: not yet retrieved. Do not mention or guess at prior cases."
+)
+
+# Statuses that mean a case needs no further action; anything else counts as open.
+CLOSED_CASE_STATUSES = {"resolved", "closed", "approved", "withdrawn", "completed"}
+
+
+def is_open_case_status(status: Optional[str]) -> bool:
+    return (status or "").strip().lower() not in CLOSED_CASE_STATUSES
+
+
+def format_customer_record(
+    profile: Optional[Dict[str, Any]], cases: Optional[List[Dict[str, Any]]]
+) -> str:
+    """Render verified customer data + prior cases as a compact prompt block."""
+    profile = profile or {}
+    cases = [c for c in (cases or []) if isinstance(c, dict) and c.get("case_id")]
+    if not cases:
+        return NO_CUSTOMER_RECORD
+
+    ident = " | ".join(
+        f"{label}: {profile[key]}"
+        for key, label in (("name", "Name"), ("nric_worker_permit_id", "NRIC"))
+        if profile.get(key)
+    )
+    open_count = sum(1 for c in cases if is_open_case_status(c.get("status")))
+    if profile.get("record_match") == "name":
+        header = (
+            "CUSTOMER RECORD (possible match by NAME ONLY - identity NOT verified yet; "
+            "ask for NRIC / FIN before discussing any case details):"
+        )
+    else:
+        header = "CUSTOMER RECORD (verified from the case system, matched on NRIC):"
+    lines = [header]
+    if ident:
+        lines.append(ident)
+    lines.append(f"Prior cases ({len(cases)}; {open_count} open):")
+    for c in cases:
+        status = str(c.get("status") or "").strip()
+        status_label = f"{status.upper()} (open)" if is_open_case_status(status) else status
+        lines.append(
+            "- "
+            + " | ".join(
+                part
+                for part in (
+                    str(c.get("case_id") or "").strip(),
+                    str(c.get("company") or "").strip(),
+                    str(c.get("type") or "").strip(),
+                    status_label,
+                    str(c.get("summary") or "").strip(),
+                )
+                if part
+            )
+        )
+    return "\n".join(lines)
+
+
+def get_suggestion_fast_system_prompt() -> str:
+    """System prompt for the single-call (router + suggester merged) pipeline."""
+    if "suggestion_fast_system" not in _cached_prompts:
+        _cached_prompts["suggestion_fast_system"] = load_prompt(
+            "suggestion_fast_system_prompt.txt"
+        )
+    return _cached_prompts["suggestion_fast_system"]
+
+
+def get_suggestion_fast_user_prompt(
+    conversation_transcript: str, max_suggestions: int, customer_record: Optional[str]
+) -> str:
+    if "suggestion_fast_user_template" not in _cached_prompts:
+        _cached_prompts["suggestion_fast_user_template"] = load_prompt(
+            "suggestion_fast_user_prompt.txt"
+        )
+    return format_prompt(
+        _cached_prompts["suggestion_fast_user_template"],
+        conversation_transcript=conversation_transcript,
+        max_suggestions=max_suggestions,
+        customer_record=customer_record or NO_CUSTOMER_RECORD,
     )
 
 
