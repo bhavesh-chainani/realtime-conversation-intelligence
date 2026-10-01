@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import type {
   AutopilotState,
   CacheStatus,
@@ -78,6 +80,23 @@ export function DemoBar({
   isCheckingPreflight,
   onRunPreflight,
 }: DemoBarProps) {
+  // Hidden by default: on a shared screen the audience would read the next line before it is said.
+  const [showScript, setShowScript] = useState(false);
+  useEffect(() => {
+    try {
+      setShowScript(localStorage.getItem("DEMO_SHOW_SCRIPT") === "1");
+    } catch {}
+  }, []);
+  const toggleScript = () => {
+    setShowScript((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("DEMO_SHOW_SCRIPT", next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+  };
+
   const lines = scenario?.lines ?? [];
   const current = lines[cursor];
   const upcoming = lines[cursor + 1];
@@ -180,6 +199,17 @@ export function DemoBar({
           <button type="button" className="btn btn--ghost btn--sm" onClick={onReset}>
             Reset
           </button>
+          {scenario ? (
+            <button
+              type="button"
+              className={`btn btn--toggle btn--sm${showScript ? " btn--toggle-active" : ""}`}
+              onClick={toggleScript}
+              aria-pressed={showScript}
+              title="Show the presenters' script (teleprompter). Matching runs either way."
+            >
+              {showScript ? "Hide script" : "Show script"}
+            </button>
+          ) : null}
         </div>
 
         {inputMode === "autopilot" ? (
@@ -243,7 +273,7 @@ export function DemoBar({
         </div>
       </div>
 
-      {scenario ? (
+      {scenario && showScript ? (
         <div className="teleprompter" aria-live="polite">
           <div className="teleprompter__progress">
             {cursor >= lines.length ? "Script complete" : `Line ${cursor + 1} of ${lines.length}`}

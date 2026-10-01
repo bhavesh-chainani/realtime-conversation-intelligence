@@ -52,7 +52,7 @@ In `frontend/.env.local`, set `NEXT_PUBLIC_DEMO_MODE=true`. Alternatively, open 
 
 ## 3. The script
 
-The teleprompter in the demo bar always shows **NEXT · speaker: line** and the line after it, so presenters can read from the screen. Small wording slips are fine. Matching is fuzzy, and the script can be skipped ahead.
+The on-screen teleprompter is **hidden by default**, because the audience would otherwise read each line before it is said. Click **Show script** in the demo bar to show it while rehearsing. It displays **NEXT · speaker: line** and the line after it. On demo day, presenters should know the lines or read from a printout or a second screen. Script matching runs whether the teleprompter is shown or not. Small wording slips are fine: matching is fuzzy, and the script can be skipped ahead.
 
 | # | Speaker | Line | What to point out |
 |---|---|---|---|
