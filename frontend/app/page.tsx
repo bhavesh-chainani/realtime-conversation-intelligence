@@ -7,6 +7,7 @@ import { DemoBar } from "./components/demo-bar";
 import { SessionHeader } from "./components/session-header";
 import { SuggestionsPanel } from "./components/suggestions-panel";
 import { TranscriptPanel } from "./components/transcript-panel";
+import { WrapupCard } from "./components/wrapup-card";
 import { createAutopilot, type Autopilot } from "./lib/autopilot.ts";
 import { nextLookup } from "./lib/lookup-guard.ts";
 import { extractIntroName, extractNric } from "./lib/quick-entities.ts";
@@ -35,11 +36,15 @@ import {
   type FieldSource,
   type HistoryMeta,
   type InputMode,
+  type Moment,
+  type MomentKind,
   type Preflight,
   type SpeakerRole,
   type Suggestion,
   type SuggestionMeta,
   type Turn,
+  type Wrapup,
+  type WrapupState,
 } from "./lib/types.ts";
 
 type SpeakerRoleMap = Record<string, ScriptRole>;
@@ -233,6 +238,15 @@ export default function Page() {
   const [isBuildingCache, setIsBuildingCache] = useState(false);
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [isCheckingPreflight, setIsCheckingPreflight] = useState(false);
+  const [techView, setTechView] = useState(false);
+  const [dockOpen, setDockOpen] = useState(false);
+
+  // Call presentation
+  const [moments, setMoments] = useState<Moment[]>([]);
+  const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
+  const [callEndedAt, setCallEndedAt] = useState<number | null>(null);
+  const [micLevel, setMicLevel] = useState(0);
+  const [wrapup, setWrapup] = useState<WrapupState>({ status: "idle" });
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRef = useRef<MediaStream | null>(null);
@@ -272,6 +286,10 @@ export default function Page() {
   const autopilotRef = useRef<Autopilot | null>(null);
   const speedRef = useRef(1);
   const preflightReqIdRef = useRef(0);
+  const momentKeysRef = useRef<Set<string>>(new Set());
+  const micTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wrapupReqIdRef = useRef(0);
+  const callEndedRef = useRef(false);
   const stepModeRef = useRef(false);
 
   useEffect(() => {
@@ -299,6 +317,9 @@ export default function Page() {
     const params = new URLSearchParams(window.location.search);
     debugRef.current = params.get("debug") === "1";
     setDemoEnabled(process.env.NEXT_PUBLIC_DEMO_MODE === "true" || params.get("demo") === "1");
+    try {
+      setTechView(localStorage.getItem("DEMO_TECH_VIEW") === "1");
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -474,6 +495,32 @@ export default function Page() {
     return out;
   };
 
+  /** Narrate a milestone once, anchored after a transcript turn (default: the latest). */
+  const emitMoment = (key: string, kind: MomentKind, text: string, afterTurnId?: string | null) => {
+    if (momentKeysRef.current.has(key)) return;
+    momentKeysRef.current.add(key);
+    const anchor =
+      afterTurnId !== undefined ? afterTurnId : turnsRef.current[turnsRef.current.length - 1]?.id ?? null;
+    setMoments((prev) => [...prev, { id: key, afterTurnId: anchor, kind, text }]);
+  };
+
+  /** First time a suggestion cites a case, say so in the conversation. */
+  const noteCitations = (list: Suggestion[], turnId: string) => {
+    const byId = new Map(historyCasesRef.current.map((c) => [c.case_id, c]));
+    for (const s of list) {
+      for (const id of s.linked_records || []) {
+        const c = byId.get(id);
+        if (!c) continue;
+        emitMoment(
+          `cite:${id}`,
+          "link",
+          isOpenCaseStatus(c.status) ? `Linked to open case ${id}` : `Referenced past case ${id} · ${c.status}`,
+          turnId
+        );
+      }
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Suggestions (live call raced against the prepared demo cache)
   // ---------------------------------------------------------------------------
@@ -502,12 +549,14 @@ export default function Page() {
     const showCached = () => {
       if (!cached || shown !== "none" || reqId !== suggestReqIdRef.current) return;
       shown = "instant";
-      setSuggestions(cached.suggestions.slice(0, MAX_SUGGESTIONS));
+      const prepared = cached.suggestions.slice(0, MAX_SUGGESTIONS);
+      setSuggestions(prepared);
       setSuggestionMeta({
         origin: "instant",
         latencyMs: performance.now() - turn.committedAt,
         lineId: turn.scriptLineId,
       });
+      noteCitations(prepared, turn.id);
     };
     const raceTimer = cached
       ? setTimeout(showCached, Math.max(0, CACHE_RACE_MS - (performance.now() - turn.committedAt)))
@@ -577,6 +626,7 @@ export default function Page() {
         model: timings.model,
         lineId: turn.scriptLineId,
       });
+      noteCitations(list, turn.id);
     } catch (err) {
       if (controller.signal.aborted) return;
       console.error("[Frontend] Failed to fetch suggestions:", err);
@@ -638,18 +688,33 @@ export default function Page() {
       const matchedOn =
         normalizedStatus === "ok" && typeof body.match_strategy === "string" ? body.match_strategy : null;
 
+      const openCount =
+        typeof body.open_count === "number" ? body.open_count : cases.filter((c) => isOpenCaseStatus(c.status)).length;
       historyCasesRef.current = cases;
       historyMatchRef.current = matchedOn;
       setCustomerHistoryStatus(normalizedStatus);
       setCustomerHistory(summary || message || "No customer history found.");
       setCustomerHistoryCases(cases);
+
+      const anchor = lastCustomerTurnRef.current?.id ?? null;
+      if (matchedOn === "name") {
+        emitMoment("match:name", "warning", "Possible match in records · verify NRIC", anchor);
+      } else if (matchedOn === "nric_worker_permit_id") {
+        emitMoment("match:verified", "success", "Identity verified · NRIC matches records", anchor);
+        emitMoment(
+          "returning",
+          "info",
+          `Returning customer · ${cases.length} prior case${cases.length === 1 ? "" : "s"}, ${openCount} open`,
+          anchor
+        );
+      } else if (normalizedStatus === "not_found" && args.nric_worker_permit_id) {
+        emitMoment("new-customer", "info", "New customer · no prior cases", anchor);
+      }
+
       setHistoryMeta(
         normalizedStatus === "ok"
           ? {
-              openCount:
-                typeof body.open_count === "number"
-                  ? body.open_count
-                  : cases.filter((c) => isOpenCaseStatus(c.status)).length,
+              openCount,
               companies: Array.isArray(body.companies)
                 ? body.companies.map(String)
                 : Array.from(new Set(cases.map((c) => c.company).filter(Boolean))),
@@ -675,6 +740,7 @@ export default function Page() {
       const lastTurn = lastCustomerTurnRef.current;
       if (
         lastTurn &&
+        !callEndedRef.current &&
         !suggestTimerRef.current &&
         casesKey(matchedOn, cases) !== lastSuggestionCasesKeyRef.current
       ) {
@@ -980,6 +1046,9 @@ export default function Page() {
 
   function closeWs() {
     streamAttemptRef.current += 1;
+    if (micTimerRef.current) clearInterval(micTimerRef.current);
+    micTimerRef.current = null;
+    setMicLevel(0);
 
     const ws = wsRef.current;
     wsRef.current = null;
@@ -1030,6 +1099,7 @@ export default function Page() {
   async function openWs() {
     closeWs();
     stopAutopilot();
+    startCall();
     const myAttempt = streamAttemptRef.current;
 
     // A new stream may assign A/B differently: forget the old label map and votes.
@@ -1058,6 +1128,21 @@ export default function Page() {
     processorRef.current = proc;
     source.connect(proc);
     proc.connect(ctx.destination);
+
+    // Mic level for the header's listening indicator (~10 Hz).
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    micTimerRef.current = setInterval(() => {
+      analyser.getByteTimeDomainData(samples);
+      let sum = 0;
+      for (const v of samples) {
+        const x = (v - 128) / 128;
+        sum += x * x;
+      }
+      setMicLevel(Math.min(1, Math.sqrt(sum / samples.length) * 5));
+    }, 100);
 
     function pcmEncode(input: Float32Array) {
       const out = new Int16Array(input.length);
@@ -1194,6 +1279,92 @@ export default function Page() {
     } catch {}
   }
 
+  /** Start (or resume) the call clock and get presenter controls out of the way. */
+  function startCall() {
+    setCallStartedAt((prev) => prev ?? Date.now());
+    setCallEndedAt(null);
+    callEndedRef.current = false;
+    setWrapup({ status: "idle" });
+    setDockOpen(false);
+  }
+
+  async function endCall() {
+    stopAutopilot();
+    closeWs();
+    if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
+    suggestTimerRef.current = null;
+    suggestReqIdRef.current += 1;
+    suggestAbortRef.current?.abort();
+    setIsFetchingSuggestions(false);
+    callEndedRef.current = true;
+    setCallEndedAt(Date.now());
+
+    const context = formatLabeledTranscript(turnsRef.current);
+    if (context.trim().length < 10) {
+      setWrapup({ status: "error" });
+      return;
+    }
+    const reqId = ++wrapupReqIdRef.current;
+    const started = performance.now();
+    setWrapup({ status: "loading" });
+
+    // The prepared wrap-up only fits when the scripted call was (nearly) completed.
+    const script = scenarioRef.current;
+    const prepared =
+      script && alignStateRef.current.cursor >= script.lines.length - 1
+        ? (cacheStepsRef.current._wrapup as unknown as Wrapup | undefined)
+        : undefined;
+    let shown = false;
+    const show = (data: Wrapup, origin: "live" | "prepared") => {
+      if (reqId !== wrapupReqIdRef.current) return;
+      shown = true;
+      setWrapup({ status: "ready", data, origin, latencyMs: performance.now() - started });
+      emitMoment("wrapup", "wrapup", "Wrap-up notes drafted");
+    };
+    const raceTimer = prepared
+      ? setTimeout(() => {
+          if (!shown) show(prepared, "prepared");
+        }, CACHE_RACE_MS)
+      : null;
+
+    try {
+      const cases = historyCasesRef.current;
+      const profile = profilePayload();
+      const res = await fetch(`${backendUrl}/call-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          context,
+          customer_profile: Object.keys(profile).length ? profile : undefined,
+          customer_history: cases.length ? cases : undefined,
+          session_id: sessionIdRef.current || undefined,
+        }),
+      });
+      const data = res.ok ? await res.json() : null;
+      if (reqId !== wrapupReqIdRef.current) return;
+      if (data && !data.fallback && data.summary) show(data as Wrapup, "live");
+      else if (prepared && !shown) show(prepared, "prepared");
+      else if (!shown) setWrapup({ status: "error" });
+    } catch (err) {
+      console.error("[Frontend] Failed to draft wrap-up:", err);
+      if (reqId !== wrapupReqIdRef.current) return;
+      if (prepared && !shown) show(prepared, "prepared");
+      else if (!shown) setWrapup({ status: "error" });
+    } finally {
+      if (raceTimer) clearTimeout(raceTimer);
+    }
+  }
+
+  const toggleTechView = () => {
+    setTechView((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("DEMO_TECH_VIEW", next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+  };
+
   function stopAutopilot() {
     autopilotRef.current?.stop();
     autopilotRef.current = null;
@@ -1224,6 +1395,7 @@ export default function Page() {
       }
     );
     autopilotRef.current = ap;
+    startCall();
     ap.start();
     setAutopilotState("running");
     void prewarm();
@@ -1261,6 +1433,14 @@ export default function Page() {
     lastCustomerTurnRef.current = null;
     lastSuggestionCasesKeyRef.current = "";
     lastCustomerDataExtractRef.current = "";
+
+    setMoments([]);
+    momentKeysRef.current = new Set();
+    setCallStartedAt(null);
+    setCallEndedAt(null);
+    callEndedRef.current = false;
+    wrapupReqIdRef.current += 1;
+    setWrapup({ status: "idle" });
 
     setResetNonce((n) => n + 1);
   };
@@ -1395,16 +1575,21 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demoEnabled, demoActive]);
 
-  // Presenter shortcut: → plays the next autopilot line.
+  // Presenter shortcuts: → next autopilot line, D presenter dock, T technical view.
   useEffect(() => {
     if (!demoEnabled) return;
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "ArrowRight" && autopilotRef.current) {
         e.preventDefault();
         autopilotRef.current.next();
         setAutopilotState("running");
+      } else if (e.key === "d" || e.key === "D") {
+        setDockOpen((open) => !open);
+      } else if (e.key === "t" || e.key === "T") {
+        toggleTechView();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1446,10 +1631,26 @@ export default function Page() {
   const mappedCustomerLabel = Object.entries(speakerRoleMap).find(([, r]) => r === "customer")?.[0];
   const hasRoleMapping = Object.keys(speakerRoleMap).length > 0;
 
+  // Outside demo mode the workspace keeps showing all operational detail.
+  const showTech = !demoEnabled || techView;
+  const autopilotActive = autopilotState === "running" || autopilotState === "waiting";
+  const isLive = isListening || autopilotActive;
+  const citedIds = useMemo(
+    () => new Set(suggestions.flatMap((s) => s.linked_records || [])),
+    [suggestions]
+  );
+
   return (
     <div className="shell shell--workspace">
       <SessionHeader
-        isLive={isListening || autopilotState === "running" || autopilotState === "waiting"}
+        isLive={isLive}
+        callerName={customerData.name.trim() || null}
+        startedAt={callStartedAt}
+        endedAt={callEndedAt}
+        audioMode={isListening ? "mic" : autopilotActive ? "autopilot" : null}
+        micLevel={micLevel}
+        canEndCall={callStartedAt !== null && callEndedAt === null && turns.length > 0}
+        onEndCall={() => void endCall()}
         isAuthenticated={isAuthenticated}
         showAuthButton={Boolean(cognitoDomain && cognitoClientId)}
         showSessionControls={!demoEnabled}
@@ -1461,8 +1662,64 @@ export default function Page() {
         onStop={closeWs}
       />
 
+      <main className="workspace-grid">
+        <TranscriptPanel
+          turns={turns}
+          live={live}
+          liveRole={liveRole}
+          moments={moments}
+          techView={showTech}
+          status={
+            isListening ? "Listening" : autopilotActive ? "Playing script" : autopilotState === "paused" ? "Paused" : "Ready"
+          }
+          scriptGuided={Boolean(scenario)}
+          nextVoiceIsStaff={nextVoiceIsStaff}
+          hasRoleMapping={hasRoleMapping}
+          mappedStaffLabel={mappedStaffLabel}
+          mappedCustomerLabel={mappedCustomerLabel}
+          onSetNextVoiceRole={setNextVoiceRole}
+          onSwapSpeakerRoles={swapSpeakerRoles}
+          onFlipTurn={flipTurn}
+          transcriptListRef={transcriptListRef}
+        />
+
+        <aside className="panel assistance-rail" aria-label="Operator assistance workspace">
+          {callEndedAt !== null ? (
+            <WrapupCard state={wrapup} cases={customerHistoryCases} techView={showTech} />
+          ) : (
+            <SuggestionsPanel
+              suggestions={suggestions}
+              meta={suggestionMeta}
+              cases={customerHistoryCases}
+              techView={showTech}
+              hasTranscript={hasTranscript}
+              isLive={isLive}
+              isFetchingSuggestions={isFetchingSuggestions}
+            />
+          )}
+
+          <CustomerPanel
+            customerData={customerData}
+            fieldSources={fieldSources}
+            techView={showTech}
+            citedIds={citedIds}
+            onCustomerDataChange={handleCustomerDataChange}
+            onLookup={obtainCustomerInfo}
+            customerHistoryStatus={customerHistoryStatus}
+            customerHistoryMessage={customerHistory}
+            customerHistoryCases={customerHistoryCases}
+            historyMeta={historyMeta}
+            isLoadingCustomerHistory={isLoadingCustomerHistory}
+          />
+        </aside>
+      </main>
+
       {demoEnabled ? (
         <DemoBar
+          open={dockOpen}
+          onToggleOpen={() => setDockOpen((o) => !o)}
+          techView={techView}
+          onToggleTechView={toggleTechView}
           scenarios={scenarios ?? []}
           scenarioId={scenarioId}
           onScenarioChange={setScenarioId}
@@ -1515,55 +1772,6 @@ export default function Page() {
           onRunPreflight={() => void runPreflight(scenarioId)}
         />
       ) : null}
-
-      <main className="workspace-grid">
-        <TranscriptPanel
-          turns={turns}
-          live={live}
-          liveRole={liveRole}
-          status={
-            isListening
-              ? "Listening"
-              : autopilotState === "running" || autopilotState === "waiting"
-                ? "Playing script"
-                : autopilotState === "paused"
-                  ? "Paused"
-                  : "Ready"
-          }
-          scriptGuided={Boolean(scenario)}
-          nextVoiceIsStaff={nextVoiceIsStaff}
-          hasRoleMapping={hasRoleMapping}
-          mappedStaffLabel={mappedStaffLabel}
-          mappedCustomerLabel={mappedCustomerLabel}
-          onSetNextVoiceRole={setNextVoiceRole}
-          onSwapSpeakerRoles={swapSpeakerRoles}
-          onFlipTurn={flipTurn}
-          transcriptListRef={transcriptListRef}
-        />
-
-        <aside className="panel assistance-rail" aria-label="Operator assistance workspace">
-          <SuggestionsPanel
-            suggestions={suggestions}
-            meta={suggestionMeta}
-            cases={customerHistoryCases}
-            hasTranscript={hasTranscript}
-            isListening={isListening || autopilotState === "running"}
-            isFetchingSuggestions={isFetchingSuggestions}
-          />
-
-          <CustomerPanel
-            customerData={customerData}
-            fieldSources={fieldSources}
-            onCustomerDataChange={handleCustomerDataChange}
-            onLookup={obtainCustomerInfo}
-            customerHistoryStatus={customerHistoryStatus}
-            customerHistoryMessage={customerHistory}
-            customerHistoryCases={customerHistoryCases}
-            historyMeta={historyMeta}
-            isLoadingCustomerHistory={isLoadingCustomerHistory}
-          />
-        </aside>
-      </main>
     </div>
   );
 }

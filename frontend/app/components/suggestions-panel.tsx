@@ -9,8 +9,10 @@ type SuggestionsPanelProps = {
   suggestions: Suggestion[];
   meta: SuggestionMeta | null;
   cases: CustomerHistoryCase[];
+  /** Show type, confidence and the live/prepared latency chip. */
+  techView: boolean;
   hasTranscript: boolean;
-  isListening: boolean;
+  isLive: boolean;
   isFetchingSuggestions: boolean;
 };
 
@@ -19,38 +21,57 @@ function formatSeconds(ms: number): string {
 }
 
 function latencyLabel(meta: SuggestionMeta): string {
-  if (meta.origin === "instant") return `Instant · prepared${meta.latencyMs != null ? ` · ${formatSeconds(meta.latencyMs)}` : ""}`;
+  if (meta.origin === "instant") return `Prepared${meta.latencyMs != null ? ` · ${formatSeconds(meta.latencyMs)}` : ""}`;
   if (meta.origin === "fallback") return "Fallback guidance";
   const total = meta.latencyMs != null ? formatSeconds(meta.latencyMs) : "";
   const llm = typeof meta.llmMs === "number" ? ` (LLM ${formatSeconds(meta.llmMs)})` : "";
   return `Live · ${total}${llm}`;
 }
 
+/** Case chips with status; open cases are highlighted. Shared with the wrap-up card. */
+export function RecordChips({ ids, cases, label }: { ids: string[]; cases: CustomerHistoryCase[]; label: string }) {
+  const caseById = new Map(cases.map((c) => [c.case_id, c]));
+  const shown = ids.filter((id) => caseById.has(id) || cases.length === 0);
+  if (shown.length === 0) return null;
+  return (
+    <div className="record-links" aria-label={label}>
+      <span className="record-links__label">{label}</span>
+      {shown.map((id) => {
+        const c = caseById.get(id);
+        const open = c ? isOpenCaseStatus(c.status) : false;
+        return (
+          <span
+            key={id}
+            className={`record-chip${open ? " record-chip--open" : ""}`}
+            title={c ? `${c.type} · ${c.company} · ${c.summary}` : id}
+          >
+            {id}
+            {c ? <span className="record-chip__status">{c.status}</span> : null}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export function SuggestionsPanel({
   suggestions,
   meta,
   cases,
+  techView,
   hasTranscript,
-  isListening,
+  isLive,
   isFetchingSuggestions,
 }: SuggestionsPanelProps) {
-  let emptyMessage = "Start a session to receive live guidance as the conversation develops.";
-
-  if (hasTranscript && isFetchingSuggestions) {
-    emptyMessage = "Analyzing the latest conversation and preparing the next suggestion for staff.";
-  } else if (hasTranscript) {
-    emptyMessage = isListening
-      ? "Listening for the next moment where staff guidance would be helpful."
-      : "Suggestions will reappear when a new conversation is available to analyze.";
-  }
-
-  const caseById = new Map(cases.map((c) => [c.case_id, c]));
+  let emptyMessage = "Guidance appears here when the customer speaks.";
+  if (hasTranscript && isFetchingSuggestions) emptyMessage = "Preparing a suggestion…";
+  else if (isLive) emptyMessage = "Listening for the customer…";
 
   return (
-    <section className="rail-section" aria-label="AI suggestions">
+    <section className="rail-section suggestion-hero" aria-label="Suggested response">
       <div className="panel-heading">
-        <h2 className="panel-title">AI suggestions</h2>
-        {meta ? (
+        <h2 className="panel-title">Suggested response</h2>
+        {techView && meta ? (
           <span
             className={`latency-chip latency-chip--${meta.origin}${isFetchingSuggestions ? " latency-chip--busy" : ""}`}
             title={
@@ -63,78 +84,49 @@ export function SuggestionsPanel({
           >
             {latencyLabel(meta)}
           </span>
-        ) : isFetchingSuggestions ? (
-          <span className="latency-chip latency-chip--busy">Thinking…</span>
         ) : null}
       </div>
 
       {suggestions.length === 0 ? (
-        <div className="empty-state">{emptyMessage}</div>
-      ) : (
-        <div className="suggestion-stack">
-          {suggestions.map((suggestion, index) => {
-            const details = suggestion.details || {};
-            const topic = suggestion.topic || suggestion.text || "Follow up on the current conversation";
-            const phrasing =
-              details.operatorResponse ||
-              details.suggestedConversation ||
-              details.possibleConversation ||
-              suggestion.text ||
-              "";
-            const priority = typeof details.priority === "string" ? details.priority : "";
-            const confidence =
-              typeof suggestion.confidence === "number" && Number.isFinite(suggestion.confidence)
-                ? `${Math.round(suggestion.confidence * 100)}% confidence`
-                : "";
-            const linked = (suggestion.linked_records || []).filter((id) => caseById.has(id) || cases.length === 0);
-
-            return (
-              <article
-                key={`${meta?.origin || "s"}-${suggestion.type || "suggestion"}-${index}`}
-                className={`suggestion-card${linked.length ? " suggestion-card--linked" : ""}`}
-              >
-                <div className="suggestion-card__header">
-                  <span className="tag tag--accent">{suggestion.type || `Suggestion ${index + 1}`}</span>
-                  {priority ? <span className="tag tag--muted">Priority: {priority}</span> : null}
-                </div>
-
-                <div className="suggestion-card__block">
-                  <div className="suggestion-card__label">Recommended focus</div>
-                  <h3 className="suggestion-card__title">{topic}</h3>
-                </div>
-
-                {phrasing ? (
-                  <div className="suggestion-card__block">
-                    <div className="suggestion-card__label">Suggested phrasing</div>
-                    <p className="suggestion-card__quote">{phrasing}</p>
-                  </div>
-                ) : null}
-
-                {linked.length ? (
-                  <div className="record-links" aria-label="Linked customer records">
-                    <span className="record-links__label">From records</span>
-                    {linked.map((id) => {
-                      const c = caseById.get(id);
-                      const open = c ? isOpenCaseStatus(c.status) : false;
-                      return (
-                        <span
-                          key={id}
-                          className={`record-chip${open ? " record-chip--open" : ""}`}
-                          title={c ? `${c.type} · ${c.company} · ${c.summary}` : id}
-                        >
-                          {id}
-                          {c ? <span className="record-chip__status">{c.status}</span> : null}
-                        </span>
-                      );
-                    })}
-                  </div>
-                ) : null}
-
-                {confidence ? <div className="suggestion-card__footer">{confidence}</div> : null}
-              </article>
-            );
-          })}
+        <div className={`hero-empty${isLive || isFetchingSuggestions ? " hero-empty--active" : ""}`}>
+          <span className="hero-empty__dot" aria-hidden />
+          {emptyMessage}
         </div>
+      ) : (
+        suggestions.map((suggestion, index) => {
+          const details = suggestion.details || {};
+          const topic = suggestion.topic || suggestion.text || "Follow up on the current conversation";
+          const phrasing =
+            details.operatorResponse ||
+            details.suggestedConversation ||
+            details.possibleConversation ||
+            suggestion.text ||
+            "";
+          const highPriority = String(details.priority || "").toLowerCase() === "high";
+          const confidence =
+            typeof suggestion.confidence === "number" && Number.isFinite(suggestion.confidence)
+              ? `${Math.round(suggestion.confidence * 100)}% confidence`
+              : "";
+
+          return (
+            <article
+              // Content-based key replays the entrance animation whenever the guidance changes.
+              key={`${index}-${topic}-${phrasing.slice(0, 40)}`}
+              className={`hero-card${highPriority ? " hero-card--priority" : ""}`}
+            >
+              {techView ? (
+                <div className="hero-card__tags">
+                  {suggestion.type ? <span className="tag tag--accent">{suggestion.type}</span> : null}
+                  {details.priority ? <span className="tag tag--muted">Priority: {String(details.priority)}</span> : null}
+                  {confidence ? <span className="tag tag--muted">{confidence}</span> : null}
+                </div>
+              ) : null}
+              <h3 className="hero-card__topic">{topic}</h3>
+              {phrasing ? <p className="hero-card__quote">“{phrasing}”</p> : null}
+              <RecordChips ids={suggestion.linked_records || []} cases={cases} label="Based on" />
+            </article>
+          );
+        })
       )}
     </section>
   );

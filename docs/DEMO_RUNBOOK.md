@@ -1,13 +1,25 @@
 # Live demo runbook: Sarah Lim / Brightpath
 
-A scripted two-person call. One presenter plays the operator **Daniel (Staff)** and the other plays the caller **Sarah Lim (Customer)**. They share one laptop mic. On screen, the audience sees four things:
+A scripted two-person call. One presenter plays the operator **Daniel (Staff)** and the other plays the caller **Sarah Lim (Customer)**. They share one laptop mic. On screen, the audience sees:
 
 | Capability | What the audience sees |
 |---|---|
-| Speaker diarisation | Every turn is labelled Staff/Customer correctly. The caption on each turn shows why, e.g. `script L08 · 0.92` or `diarised B`. |
-| Latency | A suggestion appears about 1.3 s after the customer stops speaking: either a prepared card (`Instant · prepared`) or the live one (`Live · 1.9s`). |
-| Database retrieval | The NRIC fills in the moment it is spoken. Name and address then fill in as **Verified from records**, a "Returning customer · 2 prior cases, 1 open" banner appears, and the case table shows up. |
-| Suggestions linked to records | Cards cite the cases they rely on: **From records: CASE-2026-03117 (Open)**. |
+| Speaker diarisation | Every turn is labelled Staff/Customer correctly. Technical view shows why on each turn, e.g. `script L08 · 0.92` or `diarised B`. |
+| Latency | A **Suggested response** appears about 1.3 s after the customer stops speaking. Technical view shows whether it is prepared or live (`Prepared` / `Live · 1.9s`). |
+| Database retrieval | The NRIC fills in the moment it is spoken. Name and address then fill in with a ✓ (**Verified from case records**), and the Caller card shows "Returning customer · 2 prior cases · 1 open". |
+| Suggestions linked to records | The suggestion cites the cases it relies on (**Based on: CASE-2026-03117 · Open**), and the cited case is highlighted in Prior cases. |
+| Story moments | The conversation narrates milestones inline: *Identity verified*, *Returning customer*, *Linked to open case …*, *Wrap-up notes drafted*. |
+| After-call work | **End call** drafts the case notes (summary, linked cases, next steps, documents requested), ready to copy. |
+
+**Screen layout.** The whole call fits on one screen with no scrolling at 1366×768 and up, so it holds up over a laptop screen share. Presenter controls live in a small **dock** at the bottom right, so they stay out of the audience's way:
+
+| Key | Action |
+|---|---|
+| **D** | Open or close the presenter dock: scenario, Live/Autopilot, pace, prepared cards, preflight, Show script |
+| **T** | Toggle **Technical view**: attribution captions, speaker labels, Swap roles, prepared/live timing, field sources. Use it when someone technical asks "how does it know?" |
+| **→** | Autopilot: play or finish the next line |
+
+The dot on the dock summarises preflight: green means ready, amber means the prepared cards need rebuilding, and red means a check is failing (hover for details).
 
 ## 1. Start-up (about 3 minutes, in this order)
 
@@ -36,23 +48,24 @@ CUSTOMER_HISTORY_EXTRA_COLUMNS=address
 
 In `frontend/.env.local`, set `NEXT_PUBLIC_DEMO_MODE=true`. Alternatively, open the app with `?demo=1`.
 
-4. Open **http://localhost:3000/?demo=1** and select **Sarah Lim · salary deduction after a leave complaint**.
-5. Click the cache chip to build the cache. It should read **Prepared 7/7** in about 10 s. Rebuild it after any edit to the prompts, the script or the model.
-6. All preflight dots must be green: **LLM · DB · STT · Cache · Limits**. Hover a dot for details, or click the dots to re-run the checks.
+4. Open **http://localhost:3000/?demo=1**. Press **D** to open the dock and select **Sarah Lim · salary deduction after a leave complaint**.
+5. In the dock, click the prepared-cards chip to build it. It should read **Prepared 8/8** (7 customer lines plus the wrap-up) in about 10 s. Rebuild it after any edit to the prompts, the script or the model.
+6. All preflight dots must be green: **LLM · DB · STT · Cache · Limits**, and the dock dot must be green. Hover a dot for details, or click the dots to re-run the checks.
 
 ## 2. Pre-flight checklist
 
-- [ ] Preflight is all green and the cache shows `Prepared 7/7` (not `stale`).
+- [ ] The dock dot is green and the dock shows `Prepared 8/8` (not `stale`).
+- [ ] **Technical view is off** (press **T** if captions or timing chips are visible), and the dock is closed.
 - [ ] The browser has microphone permission and the right input device is selected.
 - [ ] The laptop sits between the two presenters, about 30–50 cm from each. Speak one at a time and leave a short pause between turns.
 - [ ] A phone hotspot is ready as backup network.
 - [ ] Rehearsal 1: **Autopilot** at 1×, the whole script.
 - [ ] Rehearsal 2: **Live mic** with `?demo=1&debug=1`. Check the console tables: alignment scores should be ≥ 0.55 on scripted lines.
-- [ ] Click **Reset** before the audience arrives. Reset clears the conversation and starts a new session.
+- [ ] Click **Reset** before the audience arrives. Reset clears the conversation and the wrap-up, and starts a new session.
 
 ## 3. The script
 
-The on-screen teleprompter is **hidden by default**, because the audience would otherwise read each line before it is said. Click **Show script** in the demo bar to show it while rehearsing. It displays **NEXT · speaker: line** and the line after it. On demo day, presenters should know the lines or read from a printout or a second screen. Script matching runs whether the teleprompter is shown or not. Small wording slips are fine: matching is fuzzy, and the script can be skipped ahead.
+The teleprompter is **hidden by default**, because the audience would otherwise read each line before it is said. To show it while rehearsing, open the dock (**D**) and click **Show script**; it appears inside the dock, not on the main screen. It displays **NEXT · speaker: line** and the line after it. On demo day, presenters should know the lines or read from a printout or a second screen. Script matching runs whether the teleprompter is shown or not. Small wording slips are fine: matching is fuzzy, and the script can be skipped ahead.
 
 | # | Speaker | Line | What to point out |
 |---|---|---|---|
@@ -71,25 +84,28 @@ The on-screen teleprompter is **hidden by default**, because the audience would 
 | L13 | Daniel | That message is really important. Please send us a screenshot and your last three payslips… | |
 | L14 | Sarah | Okay, thank you. Will it take as long as last time? | Expectations are set from the earlier outcome (SGD 1,840 recovered at mediation). |
 
-After L14, the presenters can ad-lib a closing. The captions switch to `diarised A/B`, which shows the system still handles speech that is not in the script.
+After L14, the presenters can ad-lib a closing (in Technical view the captions switch to `diarised A/B`, which shows the system still handles speech that is not in the script).
+
+**Close with End call** (top right). The call clock stops, and the right-hand panel switches to **Wrap-up notes**: issue, summary, linked cases, next steps and documents requested. Click **Copy to case notes** and say: *"That's the after-call work done."* A prepared version appears after about 1.3 s if the live one is slow. Press **Reset** for the next run.
 
 Talking points:
 - **Diarisation:** the script fixes the roles, and confident matches also teach the system which voice is which. Diarisation on its own makes mistakes from a single mic: in testing it gave Sarah's NRIC line to Daniel's voice, and the script corrected it. A staff member can click any turn to flip it.
-- **Latency:** "Instant · prepared" is a suggestion computed in advance for this script line. The live answer replaces it as soon as it arrives. The chip always says which one is on screen.
+- **Latency:** if asked, press **T**. A "Prepared" card was computed in advance for this script line, and the live answer replaces it as soon as it arrives (usually about 2 s). The chip always says which one is on screen. The business view makes no timing claims.
 - **Grounding:** suggestions can only cite case IDs that really exist in the record. Others are discarded on the server. Before the NRIC is verified, no case details are shown.
 
 ## 4. Fallback ladder
 
 | Symptom | Action |
 |---|---|
-| A turn has the wrong speaker | Click the turn to flip it, or use **Swap roles**. A flip also re-teaches the voice mapping. |
-| Transcription stalls or an error alert appears | Click **Stop mic**, switch to **Autopilot**, then **Continue from here**. Autopilot resumes at the current script line. |
+| A turn has the wrong speaker | Click the turn to flip it (or press **T** and use **Swap roles**). A flip also re-teaches the voice mapping. |
+| Transcription stalls or an error alert appears | In the dock, click **Stop mic**, press **D**, switch to **Autopilot**, then click **Continue**. Autopilot resumes at the current script line. |
+| The wrap-up can't be drafted | Prepared notes appear automatically for a completed script. Otherwise, take notes manually. |
 | The live suggestion is slow | Nothing to do. The prepared card appears at 1.3 s automatically. |
 | The LLM gateway is down | Prepared cards still appear for every scripted customer line. |
 | Lookup shows *Lookup failed* | Re-run `scripts/demo_db.py`, then click **Look up** in Case history. |
 | You have to start over | Click **Reset**. |
 
-Autopilot controls: pace **1× / 1.5× / 2×**. **Step** pauses after every line; press **Next line** or the → key to continue, which lets you narrate between lines.
+Autopilot controls (in the dock): pace **1× / 1.5× / 2×**. **Step** pauses after every line; press **Next →** or the → key to continue, which lets you narrate between lines.
 
 ## 5. Hands-free rehearsal of the live-mic path
 
@@ -97,7 +113,7 @@ Autopilot controls: pace **1× / 1.5× / 2×**. **Step** pauses after every line
 realtime-venv/bin/python scripts/make_demo_audio.py   # writes data/demo_audio/sarah_lim_brightpath.wav (two TTS voices)
 ```
 
-Launch Chrome with the WAV as the microphone, then open `/?demo=1` and click **Start mic**:
+Launch Chrome with the WAV as the microphone, then open `/?demo=1` and click **Start mic** in the dock:
 
 ```
 --use-fake-ui-for-media-stream --use-fake-device-for-media-stream \
