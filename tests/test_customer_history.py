@@ -98,7 +98,7 @@ def test_lookup_returns_extra_columns_open_count_and_open_cases_first(monkeypatc
     rows = [
         {
             "customer_name": "Sarah Lim",
-            "nric_worker_permit_id": "S8823451D",
+            "nric_worker_permit_id": "S1234567A",
             "address": "12 Tampines Street 45",
             "case_id": "CASE-2025-10421",
             "company": "Brightpath Logistics Pte Ltd",
@@ -108,7 +108,7 @@ def test_lookup_returns_extra_columns_open_count_and_open_cases_first(monkeypatc
         },
         {
             "customer_name": "Sarah Lim",
-            "nric_worker_permit_id": "S8823451D",
+            "nric_worker_permit_id": "S1234567A",
             "address": "12 Tampines Street 45",
             "case_id": "CASE-2026-03117",
             "company": "Brightpath Logistics Pte Ltd",
@@ -125,7 +125,7 @@ def test_lookup_returns_extra_columns_open_count_and_open_cases_first(monkeypatc
         lambda clean_id, clean_name: (rows, "nric_worker_permit_id"),
     )
 
-    body = customer_history_service.lookup(None, "S8823451D")
+    body = customer_history_service.lookup(None, "S1234567A")
 
     assert body["status"] == "ok"
     assert body["customer"]["address"] == "12 Tampines Street 45"

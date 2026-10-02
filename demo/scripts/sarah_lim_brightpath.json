@@ -1,131 +1,85 @@
 {
   "id": "sarah_lim_brightpath",
   "title": "Sarah Lim · salary deduction after a leave complaint",
-  "description": "Returning customer. New salary deduction and shift cut from the same employer as an open leave case — possible retaliation.",
+  "description": "Returning customer. A salary deduction from the same employer as her open leave case: possible retaliation.",
   "persona": {
     "name": "Sarah Lim",
-    "nric": "S8823451D",
+    "nric": "S1234567A",
     "address": "12 Tampines Street 45, #08-112, Singapore 520012",
     "employer": "Brightpath Logistics Pte Ltd"
   },
-  "staff_name": "Daniel",
+  "staff_name": "Bhavesh",
   "first_speaker": "staff",
   "keyterms": [
+    "Bhavesh",
     "Sarah Lim",
-    "S8823451D",
+    "S1234567A",
     "Brightpath",
     "Brightpath Logistics",
-    "Tampines",
-    "Tampines Street 45",
     "admin penalty",
     "annual leave",
-    "payslip",
     "payslips",
     "WhatsApp",
-    "mediation",
     "Employment Advice Centre"
   ],
-  "stt_prompt": "A Singapore employment advice phone call between a staff member named Daniel and a caller named Sarah Lim (NRIC S8823451D) about her employer Brightpath Logistics, an admin penalty salary deduction, annual leave, shift cuts and payslips.",
+  "stt_prompt": "A Singapore employment advice phone call between a staff member named Bhavesh and a caller named Sarah Lim (NRIC S1234567A) about her employer Brightpath Logistics, an admin penalty salary deduction, annual leave, shifts and payslips.",
   "autopilot": { "wpm": 185, "gap_ms": [450, 850] },
   "lines": [
     {
       "id": "L01",
       "role": "staff",
-      "text": "Good afternoon, thank you for calling the Employment Advice Centre. My name is Daniel. May I have your full name, please?"
+      "text": "Good afternoon, Employment Advice Centre, this is Bhavesh. May I have your name and NRIC, please?"
     },
     {
       "id": "L02",
       "role": "customer",
-      "text": "Hi Daniel, my name is Sarah Lim.",
+      "text": "Hi Bhavesh, my name is Sarah Lim, and my NRIC is S1234567A.",
+      "say": "Hi Bhavesh, my name is Sarah Lim, and my NRIC is S, one two three four five six seven, A.",
       "beat": {
-        "label": "Name heard → records found by name",
-        "expect": { "linked_records": [], "gist": "Records exist for a Sarah Lim; verify identity with NRIC before discussing them." }
+        "label": "Identity verified, returning customer",
+        "expect": { "linked_records": ["CASE-2026-03117"], "gist": "Records found on NRIC: 2 prior cases, 1 open; ask how to help or whether it's about the open case." }
       }
     },
     {
       "id": "L03",
       "role": "staff",
-      "text": "Thank you, Ms Lim. Could I have your NRIC number so I can pull up your records?"
+      "text": "Thank you, Ms Lim, I have your records here. How can I help you today?"
     },
     {
       "id": "L04",
       "role": "customer",
-      "text": "Sure, it's S8823451D.",
-      "say": "Sure, it's S, eight eight two three four five one, D.",
+      "text": "It's my employer again, Brightpath Logistics. They took four hundred and fifty dollars from my salary as an admin penalty, right after I complained about my annual leave.",
       "beat": {
-        "label": "NRIC → verified record, returning customer",
-        "expect": { "linked_records": ["CASE-2026-03117"], "gist": "Identity verified; confirm address; note the open leave case." }
+        "label": "Key moment: repeat employer, linked to the open case",
+        "expect": { "linked_records": ["CASE-2026-03117"], "gist": "Possible retaliation linked to the open leave case; add to it rather than open a duplicate; ask for anything in writing." }
       }
     },
     {
       "id": "L05",
       "role": "staff",
-      "text": "Thank you. Can I just confirm your address?"
+      "text": "I can see your leave case against Brightpath is still open. Do you have anything in writing about this?"
     },
     {
       "id": "L06",
       "role": "customer",
-      "text": "It's 12 Tampines Street 45, #08-112, Singapore 520012.",
-      "say": "It's twelve Tampines Street forty-five, number oh eight one one two, Singapore five two zero zero one two.",
+      "text": "Yes, my supervisor sent me a WhatsApp saying people who make trouble don't get full shifts.",
       "beat": {
-        "label": "Address matches records",
-        "expect": { "linked_records": [], "gist": "Address matches; ask the reason for the call — is it about the open leave case?" }
+        "label": "Evidence",
+        "expect": { "linked_records": ["CASE-2026-03117"], "gist": "Ask for the screenshot and payslips; add it to the open case." }
       }
     },
     {
       "id": "L07",
       "role": "staff",
-      "text": "That matches our records. How can I help you today?"
+      "text": "That's really important. Please send us the screenshot and your last three payslips, and I'll add this to your open case."
     },
     {
       "id": "L08",
       "role": "customer",
-      "text": "It's about my employer again, Brightpath Logistics. My September salary came in four hundred and fifty dollars short. They called it an admin penalty, but nobody ever told me about any penalty.",
-      "beat": {
-        "label": "Repeat employer",
-        "expect": { "linked_records": ["CASE-2025-10421"], "gist": "Same employer as the earlier overtime dispute; ask for the payslip or written reason for the deduction." }
-      }
-    },
-    {
-      "id": "L09",
-      "role": "staff",
-      "text": "I'm sorry to hear that. Did you get a payslip or anything in writing explaining the deduction?"
-    },
-    {
-      "id": "L10",
-      "role": "customer",
-      "text": "The payslip just says admin penalty. And honestly, it started after I complained about my annual leave. My supervisor also cut my shifts from five days to three.",
-      "beat": {
-        "label": "Possible retaliation → open case",
-        "expect": { "linked_records": ["CASE-2026-03117"], "gist": "Link to the open leave case; ask when the shift cut started and whether the complaint was mentioned." }
-      }
-    },
-    {
-      "id": "L11",
-      "role": "staff",
-      "text": "I can see you still have an open leave case with us against Brightpath. When did the shift cut start, and did anyone mention your complaint?"
-    },
-    {
-      "id": "L12",
-      "role": "customer",
-      "text": "About two weeks after I filed it, in early September. My supervisor told me people who make trouble don't get full shifts. I have it in a WhatsApp message.",
-      "beat": {
-        "label": "Evidence → link case and mediation",
-        "expect": { "linked_records": ["CASE-2026-03117", "CASE-2025-10421"], "gist": "Ask for the WhatsApp screenshot and recent payslips; add to the open case; salary claim to mediation as before." }
-      }
-    },
-    {
-      "id": "L13",
-      "role": "staff",
-      "text": "That message is really important. Please send us a screenshot and your last three payslips. I'll link this to your open leave case and set up the salary claim for mediation."
-    },
-    {
-      "id": "L14",
-      "role": "customer",
       "text": "Okay, thank you. Will it take as long as last time?",
       "beat": {
-        "label": "Expectations from past outcome",
-        "expect": { "linked_records": ["CASE-2025-10421"], "gist": "Last time mediation recovered SGD 1,840; explain next steps and timing." }
+        "label": "Expectations from the past outcome",
+        "expect": { "linked_records": ["CASE-2025-10421"], "gist": "Last time mediation recovered SGD 1,840; explain next steps." }
       }
     }
   ]

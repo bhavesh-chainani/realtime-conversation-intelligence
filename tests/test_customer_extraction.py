@@ -105,15 +105,15 @@ def test_extractor_falls_back_to_regex_nric_from_customer_lines(monkeypatch):
     monkeypatch.setattr(
         "backend.customer_data_extractor.get_llm_client",
         lambda: _FakeCompletionClient(
-            '{"name": "Sarah Lim", "nric_worker_permit_id": "S eight eight", "address": null, "purpose_of_call": null}'
+            '{"name": "Sarah Lim", "nric_worker_permit_id": "S one two", "address": null, "purpose_of_call": null}'
         ),
     )
 
     body = asyncio.run(
         extractor.extract(
-            "Staff: Could I have your NRIC?\nCustomer: Sure, it's S, eight eight two three four five one, D."
+            "Staff: Could I have your NRIC?\nCustomer: Sure, it's S, one two three four five six seven, A."
         )
     )
 
-    assert body["data"]["nric_worker_permit_id"] == "S8823451D"
+    assert body["data"]["nric_worker_permit_id"] == "S1234567A"
     assert "llm_ms" in body["timings"]

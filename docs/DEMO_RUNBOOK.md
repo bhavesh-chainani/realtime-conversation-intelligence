@@ -1,6 +1,6 @@
 # Live demo runbook: Sarah Lim / Brightpath
 
-A scripted two-person call. One presenter plays the operator **Daniel (Staff)** and the other plays the caller **Sarah Lim (Customer)**. They share one laptop mic. On screen, the audience sees:
+A scripted two-person call. One presenter plays the operator **Bhavesh (Staff)** and the other plays the caller **Sarah Lim (Customer)**. They share one laptop mic. On screen, the audience sees:
 
 | Capability | What the audience sees |
 |---|---|
@@ -50,12 +50,12 @@ CUSTOMER_HISTORY_EXTRA_COLUMNS=address
 In `frontend/.env.local`, set `NEXT_PUBLIC_DEMO_MODE=true`. Alternatively, open the app with `?demo=1`.
 
 4. Open **http://localhost:3000/?demo=1**. Press **D** to open the dock and select **Sarah Lim · salary deduction after a leave complaint**.
-5. In the dock, click the prepared-cards chip to build it. It should read **Prepared 8/8** (7 customer lines plus the wrap-up) in about 10 s. Rebuild it after any edit to the prompts, the script or the model.
+5. In the dock, click the prepared-cards chip to build it. It should read **Prepared 5/5** (4 customer lines plus the wrap-up) in about 10 s. Rebuild it after any edit to the prompts, the script or the model.
 6. All preflight dots must be green: **LLM · DB · STT · Cache · Limits**, and the dock dot must be green. Hover a dot for details, or click the dots to re-run the checks.
 
 ## 2. Pre-flight checklist
 
-- [ ] The dock dot is green and the dock shows `Prepared 8/8` (not `stale`).
+- [ ] The dock dot is green and the dock shows `Prepared 5/5` (not `stale`).
 - [ ] **Technical view is off** (press **T** if captions or timing chips are visible), and the dock is closed.
 - [ ] The browser has microphone permission and the right input device is selected.
 - [ ] The laptop sits between the two presenters, about 30–50 cm from each. Speak one at a time and leave a short pause between turns.
@@ -72,29 +72,25 @@ For the printable presenter version, with pause points and talk tracks, see **[D
 
 The teleprompter is **hidden by default**, because the audience would otherwise read each line before it is said. To show it while rehearsing, open the dock (**D**) and click **Show script**; it appears inside the dock, not on the main screen. It displays **NEXT · speaker: line** and the line after it. On demo day, presenters should know the lines or read from a printout or a second screen. Script matching runs whether the teleprompter is shown or not. Small wording slips are fine: matching is fuzzy, and the script can be skipped ahead.
 
+The call is 8 lines (about a minute of speech; 2–3 minutes with one pause and the wrap-up).
+
 | # | Speaker | Line | What to point out |
 |---|---|---|---|
-| L01 | Daniel | Good afternoon, thank you for calling the Employment Advice Centre. My name is Daniel. May I have your full name, please? | |
-| L02 | Sarah | Hi Daniel, my name is Sarah Lim. | Name is heard and the lookup by name runs. The banner shows **Possible returning customer** (amber). The suggestion asks to verify the NRIC before discussing any records. |
-| L03 | Daniel | Thank you, Ms Lim. Could I have your NRIC number so I can pull up your records? | |
-| L04 | Sarah | Sure, it's S8823451D. | **NRIC fills instantly**. Name and address become *Verified from records*. The banner turns green: 2 prior cases, 1 open. |
-| L05 | Daniel | Thank you. Can I just confirm your address? | |
-| L06 | Sarah | It's 12 Tampines Street 45, #08-112, Singapore 520012. | Address matches the records. The suggestion asks whether the call is about the open leave case. |
-| L07 | Daniel | That matches our records. How can I help you today? | |
-| L08 | Sarah | It's about my employer again, Brightpath Logistics. My September salary came in four hundred and fifty dollars short… admin penalty… | **Repeat employer.** Linked to `CASE-2025-10421`. The suggestion asks for the payslip or a written reason. |
-| L09 | Daniel | I'm sorry to hear that. Did you get a payslip or anything in writing explaining the deduction? | |
-| L10 | Sarah | The payslip just says admin penalty… started after I complained about my annual leave… cut my shifts from five days to three. | **Key moment: possible retaliation.** Linked to the open case `CASE-2026-03117`. The suggestion is to link this to that case rather than open a duplicate. |
-| L11 | Daniel | I can see you still have an open leave case with us against Brightpath. When did the shift cut start…? | |
-| L12 | Sarah | About two weeks after I filed it… "people who make trouble don't get full shifts"… WhatsApp message. | Evidence: ask for the screenshot and payslips, and go to mediation as in the earlier case. Both cases are linked. |
-| L13 | Daniel | That message is really important. Please send us a screenshot and your last three payslips… | |
-| L14 | Sarah | Okay, thank you. Will it take as long as last time? | Expectations are set from the earlier outcome (SGD 1,840 recovered at mediation). |
+| L01 | Bhavesh | Good afternoon, Employment Advice Centre, this is Bhavesh. May I have your name and NRIC, please? | |
+| L02 | Sarah | Hi Bhavesh, my name is Sarah Lim, and my NRIC is S1234567A. (Say: "S, one two three four five six seven, A".) | **NRIC fills instantly**; *Identity verified*; name and address fill in from records (✓); Caller card: **Returning customer · 2 prior cases · 1 open**. |
+| L03 | Bhavesh | Thank you, Ms Lim, I have your records here. How can I help you today? | |
+| L04 | Sarah | It's my employer again, Brightpath Logistics. They took four hundred and fifty dollars from my salary as an admin penalty, right after I complained about my annual leave. | **Key moment: repeat employer, possible retaliation.** Suggestion links it to the open case `CASE-2026-03117` instead of opening a duplicate. **Pause here** to walk through the screen. |
+| L05 | Bhavesh | I can see your leave case against Brightpath is still open. Do you have anything in writing about this? | |
+| L06 | Sarah | Yes, my supervisor sent me a WhatsApp saying people who make trouble don't get full shifts. | Evidence: ask for the screenshot and payslips; add to the open case. |
+| L07 | Bhavesh | That's really important. Please send us the screenshot and your last three payslips, and I'll add this to your open case. | |
+| L08 | Sarah | Okay, thank you. Will it take as long as last time? | Expectations from the earlier outcome (`CASE-2025-10421`, SGD 1,840 recovered at mediation). Then **End call**. |
 
-After L14, the presenters can ad-lib a closing (in Technical view the captions switch to `diarised A/B`, which shows the system still handles speech that is not in the script).
+After L08, the presenters can ad-lib a closing (in Technical view the captions switch to `diarised A/B`, which shows the system still handles speech that is not in the script).
 
 **Close with End call** (top right). The call clock stops, and the right-hand panel switches to **Wrap-up notes**: issue, summary, linked cases, next steps and documents requested. Click **Copy to case notes** and say: *"That's the after-call work done."* A prepared version appears after about 1.3 s if the live one is slow. Press **Reset** for the next run.
 
 Talking points:
-- **Diarisation:** the script fixes the roles, and confident matches also teach the system which voice is which. Diarisation on its own makes mistakes from a single mic: in testing it gave Sarah's NRIC line to Daniel's voice, and the script corrected it. A staff member can click any turn to flip it.
+- **Diarisation:** the script fixes the roles, and confident matches also teach the system which voice is which. Diarisation on its own makes mistakes from a single mic: in testing it gave Sarah's NRIC line to the operator's voice, and the script corrected it. A staff member can click any turn to flip it.
 - **Latency:** if asked, press **T**. A "Prepared" card was computed in advance for this script line, and the live answer replaces it as soon as it arrives (usually about 2 s). The chip always says which one is on screen. The business view makes no timing claims.
 - **Grounding:** suggestions can only cite case IDs that really exist in the record. Others are discarded on the server. Before the NRIC is verified, no case details are shown.
 

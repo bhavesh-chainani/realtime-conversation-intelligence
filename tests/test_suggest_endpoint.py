@@ -63,7 +63,7 @@ def test_suggest_passes_customer_history_into_prompt(client, monkeypatch):
         "/suggest",
         json={
             "context": "Staff: Hello\nCustomer: My salary was cut.",
-            "customer_profile": {"name": "Sarah Lim", "nric_worker_permit_id": "S8823451D"},
+            "customer_profile": {"name": "Sarah Lim", "nric_worker_permit_id": "S1234567A"},
             "customer_history": [
                 {"case_id": "CASE-1", "company": "Brightpath", "type": "Leave", "status": "Open", "summary": "x"}
             ],

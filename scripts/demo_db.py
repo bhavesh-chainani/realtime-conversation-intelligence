@@ -13,7 +13,7 @@ import psycopg
 PGDATA = Path(__file__).resolve().parent.parent / "data" / "demo_pg"
 
 CUSTOMERS = [
-    ("Sarah Lim", "S8823451D", "12 Tampines Street 45, #08-112, Singapore 520012"),
+    ("Sarah Lim", "S1234567A", "12 Tampines Street 45, #08-112, Singapore 520012"),
     ("Rajesh Kumar", "G5512873K", "Blk 305 Jurong East Ave 1, #04-21, Singapore 600305"),
     ("Maria Santos", "F7734219N", "88 Serangoon Road, #10-03, Singapore 218000"),
     ("David Tan", "S7612094B", "21 Bishan Street 13, #12-45, Singapore 570021"),
@@ -22,9 +22,9 @@ CUSTOMERS = [
 
 # (nric, case_id, company, case_type, case_status, case_summary)
 CASES = [
-    ("S8823451D", "CASE-2025-10421", "Brightpath Logistics Pte Ltd", "Salary dispute", "Resolved",
+    ("S1234567A", "CASE-2025-10421", "Brightpath Logistics Pte Ltd", "Salary dispute", "Resolved",
      "Unpaid overtime for March to May 2025. Employer paid SGD 1,840 after mediation."),
-    ("S8823451D", "CASE-2026-03117", "Brightpath Logistics Pte Ltd", "Leave entitlement", "Open",
+    ("S1234567A", "CASE-2026-03117", "Brightpath Logistics Pte Ltd", "Leave entitlement", "Open",
      "Claims annual leave was forfeited without notice. Awaiting employer response."),
     ("G5512873K", "CASE-2025-08833", "Harbourline Construction Pte Ltd", "Workplace injury", "Closed",
      "Hand injury on site in Aug 2025. WICA claim approved and compensation paid."),

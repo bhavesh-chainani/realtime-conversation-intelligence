@@ -54,7 +54,7 @@ def _spoken_tokens(text: str) -> list[str]:
 
 
 def collapse_spelled_runs(tokens: list[str]) -> list[str]:
-    """Join runs of single letters / digit groups that contain a digit ("s 88 23451 d" -> "s8823451d")."""
+    """Join runs of single letters / digit groups that contain a digit ("s 12 34567 a" -> "s1234567a")."""
     out: list[str] = []
     run: list[str] = []
 

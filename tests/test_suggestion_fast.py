@@ -67,7 +67,7 @@ def test_customer_record_is_rendered_into_prompt(monkeypatch):
     body = asyncio.run(
         generate_fast(
             TRANSCRIPT,
-            customer_profile={"name": "Sarah Lim", "nric_worker_permit_id": "S8823451D"},
+            customer_profile={"name": "Sarah Lim", "nric_worker_permit_id": "S1234567A"},
             customer_cases=CASES,
         )
     )

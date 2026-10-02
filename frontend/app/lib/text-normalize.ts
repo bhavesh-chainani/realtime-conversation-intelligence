@@ -86,7 +86,7 @@ export function spokenTokens(text: string, numberWords: Record<string, string> =
   return out;
 }
 
-/** Join runs of single letters / digit groups containing a digit ("s 88 23451 d" -> "s8823451d"). */
+/** Join runs of single letters / digit groups containing a digit ("s 12 34567 a" -> "s1234567a"). */
 export function collapseSpelledRuns(tokens: string[]): string[] {
   const out: string[] = [];
   let run: string[] = [];
