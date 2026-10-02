@@ -15,6 +15,7 @@ from .auth import enforce_usage_limits
 from .llm import get_async_llm_client, get_suggestion_model, llm_extra_params
 from .prompt_loader import format_customer_record, load_prompt
 from .suggestions import CustomerCase
+from .text_guard import ForeignScriptError, contains_foreign_script
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ async def generate_call_summary(
     if not summary:
         raise ValueError("Model returned an empty summary")
 
-    return {
+    notes = {
         "summary": summary,
         "issue": str(parsed.get("issue") or "").strip(),
         "linked_records": [
@@ -104,8 +105,10 @@ async def generate_call_summary(
         "actions": _str_list(parsed.get("actions"), 4),
         "documents_requested": _str_list(parsed.get("documents_requested"), 6),
         "follow_up": str(parsed.get("follow_up") or "").strip(),
-        "timings": {"llm_ms": llm_ms, "model": model},
     }
+    if contains_foreign_script(notes):
+        raise ForeignScriptError("Model output contained non-English text")
+    return {**notes, "timings": {"llm_ms": llm_ms, "model": model}}
 
 
 async def compute_call_summary(
@@ -115,9 +118,16 @@ async def compute_call_summary(
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     try:
-        body = await generate_call_summary(
-            conversation_transcript, customer_profile, customer_cases
-        )
+        try:
+            body = await generate_call_summary(
+                conversation_transcript, customer_profile, customer_cases
+            )
+        except ForeignScriptError:
+            # A stray non-English word is a sampling glitch; one retry almost always fixes it.
+            logger.warning("[call-summary] non-English output, retrying once")
+            body = await generate_call_summary(
+                conversation_transcript, customer_profile, customer_cases
+            )
         body["timings"]["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
         return body
     except Exception as exc:

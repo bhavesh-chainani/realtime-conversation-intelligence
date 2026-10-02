@@ -10,6 +10,7 @@ CUSTOMER RECORD:
 - If the record was matched by name only, do not reference prior cases.
 
 RULES:
+- Write in English only. Never use words or characters from other languages.
 - Only write what was said or agreed on the call. Do not invent dates, amounts, names or promises.
 - Use plain language. No legal citations.
 - "summary": 2-3 sentences covering who called, what the issue is, and what was agreed.

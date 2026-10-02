@@ -19,6 +19,7 @@ from .prompt_loader import (
     get_suggestion_fast_user_prompt,
 )
 from .suggestion_agent import validate_suggestion
+from .text_guard import ForeignScriptError, contains_foreign_script
 
 logger = logging.getLogger(__name__)
 
@@ -86,16 +87,24 @@ async def generate_fast(
         raise ValueError("Model did not return a JSON object")
 
     suggestions: List[Dict[str, Any]] = []
+    dropped_foreign = 0
     raw_items = parsed.get("suggestions")
     for item in (raw_items if isinstance(raw_items, list) else [])[:max_suggestions]:
         validated = validate_suggestion(item)
         if validated is None:
+            continue
+        if contains_foreign_script(validated):
+            dropped_foreign += 1
             continue
         # Only keep case IDs that really exist in the record we sent.
         linked = [cid for cid in validated.get("linked_records", []) if cid in known_case_ids]
         validated["linked_records"] = linked
         validated["source"] = "history" if linked else "conversation"
         suggestions.append(validated)
+
+    if dropped_foreign and not suggestions:
+        # Surface as a failure so the caller shows the prepared card / fallback instead.
+        raise ForeignScriptError("Model output contained non-English text")
 
     should_suggest = bool(parsed.get("should_suggest", True)) or bool(suggestions)
     return {

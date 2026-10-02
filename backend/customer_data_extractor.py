@@ -15,6 +15,7 @@ from .config import SUGGESTION_TEMPERATURE
 from .llm import get_extraction_model, get_llm_client, llm_extra_params
 from .persistence import persist_customer_extract_event
 from .quick_entities import NRIC_PATTERN, extract_nric_from_transcript
+from .text_guard import has_foreign_script
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,10 @@ Return a JSON object with the extracted information. If any field is not mention
             normalized["nric_worker_permit_id"] = self._reconcile_id(
                 normalized.get("nric_worker_permit_id"), conversation_transcript
             )
+            # Drop any field the model wrote partly in another script; staff see it blank instead.
+            for field, value in normalized.items():
+                if value and has_foreign_script(value):
+                    normalized[field] = None
             status = self._status_for_data(normalized)
 
             logger.info(
