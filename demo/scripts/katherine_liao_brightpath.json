@@ -1,9 +1,9 @@
 {
-  "id": "sarah_lim_brightpath",
-  "title": "Sarah Lim · salary deduction after a leave complaint",
+  "id": "katherine_liao_brightpath",
+  "title": "Katherine Liao · salary deduction after a leave complaint",
   "description": "Returning customer. A salary deduction from the same employer as her open leave case: possible retaliation.",
   "persona": {
-    "name": "Sarah Lim",
+    "name": "Katherine Liao",
     "nric": "S1234567A",
     "address": "12 Tampines Street 45, #08-112, Singapore 520012",
     "employer": "Brightpath Logistics Pte Ltd"
@@ -12,7 +12,7 @@
   "first_speaker": "staff",
   "keyterms": [
     "Bhavesh",
-    "Sarah Lim",
+    "Katherine Liao",
     "S1234567A",
     "Brightpath",
     "Brightpath Logistics",
@@ -22,7 +22,7 @@
     "WhatsApp",
     "Employment Advice Centre"
   ],
-  "stt_prompt": "A Singapore employment advice phone call between a staff member named Bhavesh and a caller named Sarah Lim (NRIC S1234567A) about her employer Brightpath Logistics, an admin penalty salary deduction, annual leave, shifts and payslips.",
+  "stt_prompt": "A Singapore employment advice phone call between a staff member named Bhavesh and a caller named Katherine Liao (NRIC S1234567A) about her employer Brightpath Logistics, an admin penalty salary deduction, annual leave, shifts and payslips.",
   "autopilot": { "wpm": 185, "gap_ms": [450, 850] },
   "lines": [
     {
@@ -33,8 +33,8 @@
     {
       "id": "L02",
       "role": "customer",
-      "text": "Hi Bhavesh, my name is Sarah Lim, and my NRIC is S1234567A.",
-      "say": "Hi Bhavesh, my name is Sarah Lim, and my NRIC is S, one two three four five six seven, A.",
+      "text": "Hi Bhavesh, my name is Katherine Liao, and my NRIC is S1234567A.",
+      "say": "Hi Bhavesh, my name is Katherine Liao, and my NRIC is S, one two three four five six seven, A.",
       "beat": {
         "label": "Identity verified, returning customer",
         "expect": { "linked_records": ["CASE-2026-03117"], "gist": "Records found on NRIC: 2 prior cases, 1 open; ask how to help or whether it's about the open case." }
@@ -43,7 +43,7 @@
     {
       "id": "L03",
       "role": "staff",
-      "text": "Thank you, Ms Lim, I have your records here. How can I help you today?"
+      "text": "Thank you, Ms Liao, I have your records here. How can I help you today?"
     },
     {
       "id": "L04",

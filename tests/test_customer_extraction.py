@@ -105,7 +105,7 @@ def test_extractor_falls_back_to_regex_nric_from_customer_lines(monkeypatch):
     monkeypatch.setattr(
         "backend.customer_data_extractor.get_llm_client",
         lambda: _FakeCompletionClient(
-            '{"name": "Sarah Lim", "nric_worker_permit_id": "S one two", "address": null, "purpose_of_call": null}'
+            '{"name": "Katherine Liao", "nric_worker_permit_id": "S one two", "address": null, "purpose_of_call": null}'
         ),
     )
 

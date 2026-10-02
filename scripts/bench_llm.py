@@ -5,7 +5,7 @@ point) through the suggestion pipeline and prints p50/p95 latency plus which cas
 IDs each beat linked.
 
 Usage:
-  realtime-venv/bin/python scripts/bench_llm.py [--scenario sarah_lim_brightpath]
+  realtime-venv/bin/python scripts/bench_llm.py [--scenario katherine_liao_brightpath]
       [--pipeline single|router] [--runs 2] [--effort none|minimal|low|default]
       [--model openai.gpt-5.4-mini]
 """
@@ -37,7 +37,7 @@ def pct(values: list[float], q: float) -> float:
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", default="sarah_lim_brightpath")
+    parser.add_argument("--scenario", default="katherine_liao_brightpath")
     parser.add_argument("--pipeline", default="single", choices=["single", "router"])
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--effort", default=None, help="none|minimal|low|default")

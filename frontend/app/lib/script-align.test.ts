@@ -14,7 +14,7 @@ import {
 } from "./script-align.ts";
 
 const script = JSON.parse(
-  readFileSync(new URL("../../../demo/scripts/sarah_lim_brightpath.json", import.meta.url), "utf8")
+  readFileSync(new URL("../../../demo/scripts/katherine_liao_brightpath.json", import.meta.url), "utf8")
 ) as { lines: ScriptLine[] };
 const lines = script.lines;
 const idx = (id: string) => lines.findIndex((l) => l.id === id);
@@ -46,7 +46,7 @@ test("every exact script line maps to its role and advances the cursor", () => {
 
 test("STT-noised lines still match with high confidence", () => {
   const cases: Array<[string, string]> = [
-    ["L02", "hi bavesh my name is sara lim and my nric is s one two three four five six seven a"],
+    ["L02", "hi bavesh my name is catherine liao and my nric is s one two three four five six seven a"],
     ["L04", "its my employer again bright path logistics they took 450 from my salary as an admin penalty right after i complained about my annual leave"],
     ["L06", "yes my supervisor sent me a whatsapp saying people who make trouble dont get full shifts"],
   ];

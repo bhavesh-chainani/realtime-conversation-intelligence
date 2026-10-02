@@ -13,7 +13,7 @@ import psycopg
 PGDATA = Path(__file__).resolve().parent.parent / "data" / "demo_pg"
 
 CUSTOMERS = [
-    ("Sarah Lim", "S1234567A", "12 Tampines Street 45, #08-112, Singapore 520012"),
+    ("Katherine Liao", "S1234567A", "12 Tampines Street 45, #08-112, Singapore 520012"),
     ("Rajesh Kumar", "G5512873K", "Blk 305 Jurong East Ave 1, #04-21, Singapore 600305"),
     ("Maria Santos", "F7734219N", "88 Serangoon Road, #10-03, Singapore 218000"),
     ("David Tan", "S7612094B", "21 Bishan Street 13, #12-45, Singapore 570021"),

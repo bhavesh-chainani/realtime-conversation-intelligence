@@ -23,7 +23,7 @@ function fakeClock() {
   };
 }
 
-const LINES = [{ text: "Hello there" }, { text: "Hi I am Sarah" }, { text: "Great" }];
+const LINES = [{ text: "Hello there" }, { text: "Hi I am Katherine" }, { text: "Great" }];
 
 test("plays every line in order, revealing words as partials", () => {
   const clock = fakeClock();

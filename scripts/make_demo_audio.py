@@ -4,7 +4,7 @@ Use it to rehearse or regression-test the live-mic path without two presenters:
 feed the WAV to Chrome as a fake microphone (see docs/DEMO_RUNBOOK.md).
 
 Usage:
-  realtime-venv/bin/python scripts/make_demo_audio.py [--scenario sarah_lim_brightpath]
+  realtime-venv/bin/python scripts/make_demo_audio.py [--scenario katherine_liao_brightpath]
       [--out data/demo_audio/<scenario>.wav] [--model openai.tts-1]
       [--staff-voice onyx] [--customer-voice nova] [--gap-ms 900] [--lead-ms 4000]
 """
@@ -31,7 +31,7 @@ def silence(ms: int) -> bytes:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", default="sarah_lim_brightpath")
+    parser.add_argument("--scenario", default="katherine_liao_brightpath")
     parser.add_argument("--out", default=None)
     parser.add_argument("--model", default="openai.tts-1")
     parser.add_argument("--staff-voice", default="onyx")

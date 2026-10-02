@@ -63,11 +63,11 @@ def test_suggest_passes_customer_history_into_prompt(client, monkeypatch):
         "/suggest",
         json={
             "context": "Staff: Hello\nCustomer: My salary was cut.",
-            "customer_profile": {"name": "Sarah Lim", "nric_worker_permit_id": "S1234567A"},
+            "customer_profile": {"name": "Katherine Liao", "nric_worker_permit_id": "S1234567A"},
             "customer_history": [
                 {"case_id": "CASE-1", "company": "Brightpath", "type": "Leave", "status": "Open", "summary": "x"}
             ],
-            "scenario_id": "sarah_lim_brightpath",
+            "scenario_id": "katherine_liao_brightpath",
             "script_step": "L08",
         },
     )
@@ -98,7 +98,7 @@ def test_router_pipeline_still_works(client, monkeypatch):
         ),
     )
 
-    r = client.post("/suggest", json={"context": "Staff: Hi there\nCustomer: My name is Sarah Lim."})
+    r = client.post("/suggest", json={"context": "Staff: Hi there\nCustomer: My name is Katherine Liao."})
 
     assert r.status_code == 200
     body = r.json()

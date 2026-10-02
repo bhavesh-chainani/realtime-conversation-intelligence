@@ -44,11 +44,11 @@ def test_extract_nric_from_transcript_uses_customer_lines_only():
 @pytest.mark.parametrize(
     "text,expected",
     [
-        ("Hi Bhavesh, my name is Sarah Lim.", "Sarah Lim"),
+        ("Hi Bhavesh, my name is Katherine Liao.", "Katherine Liao"),
         ("This is Rajesh Kumar calling", "Rajesh Kumar"),
         ("I'm Maria Santos", "Maria Santos"),
         ("I am Calling About my salary", None),
-        ("my name is sarah", None),
+        ("my name is katherine", None),
     ],
 )
 def test_extract_intro_name(text, expected):

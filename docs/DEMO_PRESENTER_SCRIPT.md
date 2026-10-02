@@ -1,7 +1,7 @@
-# Presenter script: Sarah Lim / Brightpath (2–3 minutes)
+# Presenter script: Katherine Liao / Brightpath (2–3 minutes)
 
 **You** play **Bhavesh**, the operator. You sit at the laptop and drive the controls.
-**Your friend** plays **Sarah Lim**, the caller.
+**Your friend** plays **Katherine Liao**, the caller.
 Both of you speak into the same laptop mic.
 
 | Do this | How |
@@ -28,7 +28,7 @@ Both of you speak into the same laptop mic.
 
 ## Opening (mic off, about 15 s)
 
-> "This is what an advice-centre operator sees on a live call. It listens to both sides, pulls up the caller's records, and tells the operator what to say next. My colleague is calling in as Sarah."
+> "This is what an advice-centre operator sees on a live call. It listens to both sides, pulls up the caller's records, and tells the operator what to say next. My colleague is calling in as Katherine."
 
 Click **Start mic** and wait for the green **On call**.
 
@@ -37,9 +37,9 @@ Click **Start mic** and wait for the green **On call**.
 | Who | Line | What appears on screen |
 |---|---|---|
 | **Bhavesh** | Good afternoon, Employment Advice Centre, this is Bhavesh. May I have your name and NRIC, please? | |
-| **Sarah** | Hi Bhavesh, my name is Sarah Lim, and my NRIC is **S, one two three four five six seven, A**. | NRIC fills in; *Identity verified*; Caller card goes green: **Returning customer · 2 prior cases · 1 open** |
-| **Bhavesh** | Thank you, Ms Lim, I have your records here. How can I help you today? | |
-| **Sarah** | It's my employer again, Brightpath Logistics. They took four hundred and fifty dollars from my salary as an admin penalty, right after I complained about my annual leave. | Suggestion: link it to her **open** leave case. **Based on: CASE-2026-03117 · Open** |
+| **Katherine** | Hi Bhavesh, my name is Katherine Liao, and my NRIC is **S, one two three four five six seven, A**. | NRIC fills in; *Identity verified*; Caller card goes green: **Returning customer · 2 prior cases · 1 open** |
+| **Bhavesh** | Thank you, Ms Liao, I have your records here. How can I help you today? | |
+| **Katherine** | It's my employer again, Brightpath Logistics. They took four hundred and fifty dollars from my salary as an admin penalty, right after I complained about my annual leave. | Suggestion: link it to her **open** leave case. **Based on: CASE-2026-03117 · Open** |
 
 Wait for the suggestion card to update, then press **P**.
 
@@ -56,9 +56,9 @@ Press **P** to resume. Wait for **On call**.
 | Who | Line |
 |---|---|
 | **Bhavesh** | I can see your leave case against Brightpath is still open. Do you have anything in writing about this? |
-| **Sarah** | Yes, my supervisor sent me a WhatsApp saying people who make trouble don't get full shifts. |
+| **Katherine** | Yes, my supervisor sent me a WhatsApp saying people who make trouble don't get full shifts. |
 | **Bhavesh** | That's really important. Please send us the screenshot and your last three payslips, and I'll add this to your open case. |
-| **Sarah** | Okay, thank you. Will it take as long as last time? |
+| **Katherine** | Okay, thank you. Will it take as long as last time? |
 
 Click **End call**.
 
@@ -83,6 +83,7 @@ Press **Reset** before the next run.
 | What happens | What to do |
 |---|---|
 | A line gets the wrong label | Click the bubble to flip it and carry on. |
+| *Transcription disconnected · press Resume* appears | Press **Resume** (or **P**), wait for the green **On call**, then repeat the last line. |
 | Error alert, or nothing is transcribed | **P**, then **D**. Choose **Autopilot**, then **Continue**. It plays the rest of the script for you. |
 | Suggestion is slow | Keep talking; it will catch up. |
 | Pressed End call too early | **← Back to call**, then **Resume** |

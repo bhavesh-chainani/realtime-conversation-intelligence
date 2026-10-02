@@ -21,28 +21,28 @@ test("NRIC from written and spoken forms (mirrors backend tests)", () => {
 });
 
 test("intro names (mirrors backend tests)", () => {
-  assert.equal(extractIntroName("Hi Bhavesh, my name is Sarah Lim."), "Sarah Lim");
+  assert.equal(extractIntroName("Hi Bhavesh, my name is Katherine Liao."), "Katherine Liao");
   assert.equal(extractIntroName("This is Rajesh Kumar calling"), "Rajesh Kumar");
   assert.equal(extractIntroName("I'm Maria Santos"), "Maria Santos");
   assert.equal(extractIntroName("I am Calling About my salary"), null);
-  assert.equal(extractIntroName("my name is sarah"), null);
+  assert.equal(extractIntroName("my name is katherine"), null);
 });
 
 test("lookup guard: name first, ID supersedes, no repeats", () => {
-  const byName = nextLookup(null, { name: "Sarah Lim", nric_worker_permit_id: "" });
-  assert.deepEqual(byName, { key: "name:sarah lim", name: "Sarah Lim" });
-  assert.equal(nextLookup(byName!.key, { name: "Sarah Lim", nric_worker_permit_id: "" }), null);
+  const byName = nextLookup(null, { name: "Katherine Liao", nric_worker_permit_id: "" });
+  assert.deepEqual(byName, { key: "name:katherine liao", name: "Katherine Liao" });
+  assert.equal(nextLookup(byName!.key, { name: "Katherine Liao", nric_worker_permit_id: "" }), null);
 
-  const byId = nextLookup(byName!.key, { name: "Sarah Lim", nric_worker_permit_id: "s1234567a" });
+  const byId = nextLookup(byName!.key, { name: "Katherine Liao", nric_worker_permit_id: "s1234567a" });
   assert.deepEqual(byId, { key: "id:S1234567A", nric_worker_permit_id: "S1234567A" });
-  assert.equal(nextLookup(byId!.key, { name: "Sarah Lim", nric_worker_permit_id: "S1234567A" }), null);
+  assert.equal(nextLookup(byId!.key, { name: "Katherine Liao", nric_worker_permit_id: "S1234567A" }), null);
   // After an ID lookup, a name change alone does not trigger a name lookup.
-  assert.equal(nextLookup(byId!.key, { name: "Sarah Tan", nric_worker_permit_id: "" }), null);
+  assert.equal(nextLookup(byId!.key, { name: "Katherine Tan", nric_worker_permit_id: "" }), null);
   // Single names and malformed IDs never trigger.
-  assert.equal(nextLookup(null, { name: "Sarah", nric_worker_permit_id: "S88" }), null);
+  assert.equal(nextLookup(null, { name: "Katherine", nric_worker_permit_id: "S88" }), null);
 });
 
 test("areSimilar treats formatted/unformatted variants as duplicates", () => {
   assert.ok(areSimilar("sure its s one two three four five six seven a", "Sure, it's S1234567A."));
-  assert.ok(!areSimilar("My name is Sarah Lim.", "Can I confirm your address?"));
+  assert.ok(!areSimilar("My name is Katherine Liao.", "Can I confirm your address?"));
 });

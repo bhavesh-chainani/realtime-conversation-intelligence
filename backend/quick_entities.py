@@ -87,7 +87,7 @@ def extract_nric(text: str) -> str | None:
 
 
 def extract_intro_name(text: str) -> str | None:
-    """Return a self-introduced, capitalised name ("my name is Sarah Lim") or None."""
+    """Return a self-introduced, capitalised name ("my name is Katherine Liao") or None."""
     if not text:
         return None
     match = INTRO_NAME_PATTERN.search(text)

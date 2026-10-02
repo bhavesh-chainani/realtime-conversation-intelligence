@@ -18,7 +18,7 @@ SCENARIO = {
     "stt_prompt": "A test call.",
     "lines": [
         {"id": "L01", "role": "staff", "text": "May I have your name?"},
-        {"id": "L02", "role": "customer", "text": "My name is Sarah Lim."},
+        {"id": "L02", "role": "customer", "text": "My name is Katherine Liao."},
         {"id": "L03", "role": "staff", "text": "And your NRIC?"},
         {"id": "L04", "role": "customer", "text": "It's S1234567A."},
     ],
@@ -44,7 +44,7 @@ def demo_env(tmp_path, monkeypatch):
             return {
                 "status": "ok",
                 "match_strategy": match,
-                "customer": {"name": "Sarah Lim", "nric_worker_permit_id": "S1234567A", "address": "12 Tampines"},
+                "customer": {"name": "Katherine Liao", "nric_worker_permit_id": "S1234567A", "address": "12 Tampines"},
                 "cases": CASES,
             }
 
@@ -84,7 +84,7 @@ def test_known_context_mirrors_frontend_quick_path(demo_env):
     profile_l04, _ = context["L04"]
     assert profile_l04["record_match"] == "nric_worker_permit_id"
     assert profile_l04["address"] == "12 Tampines"
-    assert demo_env == [("Sarah Lim", None), (None, "S1234567A")]
+    assert demo_env == [("Katherine Liao", None), (None, "S1234567A")]
 
 
 def test_cache_build_covers_every_customer_line_and_detects_staleness(demo_env, monkeypatch):
@@ -96,7 +96,7 @@ def test_cache_build_covers_every_customer_line_and_detects_staleness(demo_env, 
 
     async def fake_summary(context, profile=None, cases=None):
         calls.append({"context": context, "cases": cases, "pipeline": "wrapup"})
-        return {"summary": "Sarah called about leave.", "linked_records": ["CASE-1"], "timings": {}}
+        return {"summary": "Katherine called about leave.", "linked_records": ["CASE-1"], "timings": {}}
 
     monkeypatch.setattr(demo_cache, "compute_suggestions", fake_compute)
     monkeypatch.setattr(demo_cache, "compute_call_summary", fake_summary)
@@ -108,7 +108,7 @@ def test_cache_build_covers_every_customer_line_and_detects_staleness(demo_env, 
     assert status["steps"] == status["total"] == 3
     assert {c["pipeline"] for c in calls} == {"single", "wrapup"}
     cache = demo_cache.get_cache("unit_scenario")
-    assert cache["steps"]["_wrapup"]["summary"] == "Sarah called about leave."
+    assert cache["steps"]["_wrapup"]["summary"] == "Katherine called about leave."
     wrapup_call = next(c for c in calls if c["pipeline"] == "wrapup")
     assert wrapup_call["context"].endswith("Customer: It's S1234567A.") and wrapup_call["cases"] == CASES
     assert cache["steps"]["L04"]["suggestions"][0]["topic"] == "Customer: It's S1234567A."

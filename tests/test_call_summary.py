@@ -26,7 +26,7 @@ class _FakeAsyncClient:
 
 def _reply(**overrides) -> str:
     body = {
-        "summary": "Sarah Lim reported a salary deduction after her leave complaint.",
+        "summary": "Katherine Liao reported a salary deduction after her leave complaint.",
         "issue": "Salary deduction, possible retaliation",
         "linked_records": ["CASE-2026-03117", "CASE-0000-00000"],
         "actions": ["Link to open leave case", "Start salary claim for mediation"],
@@ -42,7 +42,7 @@ def test_summary_uses_record_and_drops_invented_case_ids(monkeypatch):
     monkeypatch.setattr("backend.call_summary.get_async_llm_client", lambda: fake)
 
     body = asyncio.run(
-        compute_call_summary(TRANSCRIPT, {"name": "Sarah Lim", "record_match": "nric_worker_permit_id"}, CASES)
+        compute_call_summary(TRANSCRIPT, {"name": "Katherine Liao", "record_match": "nric_worker_permit_id"}, CASES)
     )
 
     prompt = fake.calls[0]["messages"][1]["content"]
@@ -76,7 +76,7 @@ def test_call_summary_endpoint(client, monkeypatch):
 
     r = client.post(
         "/call-summary",
-        json={"context": TRANSCRIPT, "customer_history": CASES, "customer_profile": {"name": "Sarah Lim"}},
+        json={"context": TRANSCRIPT, "customer_history": CASES, "customer_profile": {"name": "Katherine Liao"}},
     )
 
     assert r.status_code == 200

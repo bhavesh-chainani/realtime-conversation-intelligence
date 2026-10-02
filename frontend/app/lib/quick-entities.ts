@@ -22,7 +22,7 @@ export function extractNric(text: string): string | null {
   return null;
 }
 
-/** Self-introduced, capitalised full name ("my name is Sarah Lim"), else null. */
+/** Self-introduced, capitalised full name ("my name is Katherine Liao"), else null. */
 export function extractIntroName(text: string): string | null {
   if (!text) return null;
   const match = INTRO_NAME.exec(text);

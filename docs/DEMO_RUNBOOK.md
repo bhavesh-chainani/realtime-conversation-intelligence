@@ -1,6 +1,6 @@
-# Live demo runbook: Sarah Lim / Brightpath
+# Live demo runbook: Katherine Liao / Brightpath
 
-A scripted two-person call. One presenter plays the operator **Bhavesh (Staff)** and the other plays the caller **Sarah Lim (Customer)**. They share one laptop mic. On screen, the audience sees:
+A scripted two-person call. One presenter plays the operator **Bhavesh (Staff)** and the other plays the caller **Katherine Liao (Customer)**. They share one laptop mic. On screen, the audience sees:
 
 | Capability | What the audience sees |
 |---|---|
@@ -49,7 +49,7 @@ CUSTOMER_HISTORY_EXTRA_COLUMNS=address
 
 In `frontend/.env.local`, set `NEXT_PUBLIC_DEMO_MODE=true`. Alternatively, open the app with `?demo=1`.
 
-4. Open **http://localhost:3000/?demo=1**. Press **D** to open the dock and select **Sarah Lim · salary deduction after a leave complaint**.
+4. Open **http://localhost:3000/?demo=1**. Press **D** to open the dock and select **Katherine Liao · salary deduction after a leave complaint**.
 5. In the dock, click the prepared-cards chip to build it. It should read **Prepared 5/5** (4 customer lines plus the wrap-up) in about 10 s. Rebuild it after any edit to the prompts, the script or the model.
 6. All preflight dots must be green: **LLM · DB · STT · Cache · Limits**, and the dock dot must be green. Hover a dot for details, or click the dots to re-run the checks.
 
@@ -77,20 +77,20 @@ The call is 8 lines (about a minute of speech; 2–3 minutes with one pause and 
 | # | Speaker | Line | What to point out |
 |---|---|---|---|
 | L01 | Bhavesh | Good afternoon, Employment Advice Centre, this is Bhavesh. May I have your name and NRIC, please? | |
-| L02 | Sarah | Hi Bhavesh, my name is Sarah Lim, and my NRIC is S1234567A. (Say: "S, one two three four five six seven, A".) | **NRIC fills instantly**; *Identity verified*; name and address fill in from records (✓); Caller card: **Returning customer · 2 prior cases · 1 open**. |
-| L03 | Bhavesh | Thank you, Ms Lim, I have your records here. How can I help you today? | |
-| L04 | Sarah | It's my employer again, Brightpath Logistics. They took four hundred and fifty dollars from my salary as an admin penalty, right after I complained about my annual leave. | **Key moment: repeat employer, possible retaliation.** Suggestion links it to the open case `CASE-2026-03117` instead of opening a duplicate. **Pause here** to walk through the screen. |
+| L02 | Katherine | Hi Bhavesh, my name is Katherine Liao, and my NRIC is S1234567A. (Say: "S, one two three four five six seven, A".) | **NRIC fills instantly**; *Identity verified*; name and address fill in from records (✓); Caller card: **Returning customer · 2 prior cases · 1 open**. |
+| L03 | Bhavesh | Thank you, Ms Liao, I have your records here. How can I help you today? | |
+| L04 | Katherine | It's my employer again, Brightpath Logistics. They took four hundred and fifty dollars from my salary as an admin penalty, right after I complained about my annual leave. | **Key moment: repeat employer, possible retaliation.** Suggestion links it to the open case `CASE-2026-03117` instead of opening a duplicate. **Pause here** to walk through the screen. |
 | L05 | Bhavesh | I can see your leave case against Brightpath is still open. Do you have anything in writing about this? | |
-| L06 | Sarah | Yes, my supervisor sent me a WhatsApp saying people who make trouble don't get full shifts. | Evidence: ask for the screenshot and payslips; add to the open case. |
+| L06 | Katherine | Yes, my supervisor sent me a WhatsApp saying people who make trouble don't get full shifts. | Evidence: ask for the screenshot and payslips; add to the open case. |
 | L07 | Bhavesh | That's really important. Please send us the screenshot and your last three payslips, and I'll add this to your open case. | |
-| L08 | Sarah | Okay, thank you. Will it take as long as last time? | Expectations from the earlier outcome (`CASE-2025-10421`, SGD 1,840 recovered at mediation). Then **End call**. |
+| L08 | Katherine | Okay, thank you. Will it take as long as last time? | Expectations from the earlier outcome (`CASE-2025-10421`, SGD 1,840 recovered at mediation). Then **End call**. |
 
 After L08, the presenters can ad-lib a closing (in Technical view the captions switch to `diarised A/B`, which shows the system still handles speech that is not in the script).
 
 **Close with End call** (top right). The call clock stops, and the right-hand panel switches to **Wrap-up notes**: issue, summary, linked cases, next steps and documents requested. Click **Copy to case notes** and say: *"That's the after-call work done."* A prepared version appears after about 1.3 s if the live one is slow. Press **Reset** for the next run.
 
 Talking points:
-- **Diarisation:** the script fixes the roles, and confident matches also teach the system which voice is which. Diarisation on its own makes mistakes from a single mic: in testing it gave Sarah's NRIC line to the operator's voice, and the script corrected it. A staff member can click any turn to flip it.
+- **Diarisation:** the script fixes the roles, and confident matches also teach the system which voice is which. Diarisation on its own makes mistakes from a single mic: in testing it gave Katherine's NRIC line to the operator's voice, and the script corrected it. A staff member can click any turn to flip it.
 - **Latency:** if asked, press **T**. A "Prepared" card was computed in advance for this script line, and the live answer replaces it as soon as it arrives (usually about 2 s). The chip always says which one is on screen. The business view makes no timing claims.
 - **Grounding:** suggestions can only cite case IDs that really exist in the record. Others are discarded on the server. Before the NRIC is verified, no case details are shown.
 
@@ -99,6 +99,7 @@ Talking points:
 | Symptom | Action |
 |---|---|
 | A turn has the wrong speaker | Click the turn to flip it (or press **T** and use **Swap roles**). A flip also re-teaches the voice mapping. |
+| *Transcription disconnected · press Resume* appears in the conversation | Press **Resume** (or **P**), wait for the green **On call**, then repeat the last line. |
 | Transcription stalls or an error alert appears | In the dock, click **Stop mic**, press **D**, switch to **Autopilot**, then click **Continue**. Autopilot resumes at the current script line. |
 | The wrap-up can't be drafted | Prepared notes appear automatically for a completed script. Otherwise, take notes manually. |
 | The live suggestion is slow | Nothing to do. The prepared card appears at 1.3 s automatically. |
@@ -111,14 +112,14 @@ Autopilot controls (in the dock): pace **1× / 1.5× / 2×**. **Step** pauses af
 ## 5. Hands-free rehearsal of the live-mic path
 
 ```bash
-realtime-venv/bin/python scripts/make_demo_audio.py   # writes data/demo_audio/sarah_lim_brightpath.wav (two TTS voices)
+realtime-venv/bin/python scripts/make_demo_audio.py   # writes data/demo_audio/katherine_liao_brightpath.wav (two TTS voices)
 ```
 
 Launch Chrome with the WAV as the microphone, then open `/?demo=1` and click **Start mic** in the dock:
 
 ```
 --use-fake-ui-for-media-stream --use-fake-device-for-media-stream \
---use-file-for-fake-audio-capture=data/demo_audio/sarah_lim_brightpath.wav%noloop
+--use-file-for-fake-audio-capture=data/demo_audio/katherine_liao_brightpath.wav%noloop
 ```
 
 This runs the real path end to end: AssemblyAI STT and diarisation, alignment, lookup and suggestions.

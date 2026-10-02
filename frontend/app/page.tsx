@@ -292,6 +292,7 @@ export default function Page() {
   const callEndedRef = useRef(false);
   const lastPartialLabelRef = useRef<string | null>(null);
   const pauseToggleRef = useRef<() => void>(() => {});
+  const sttDropCountRef = useRef(0);
   const stepModeRef = useRef(false);
 
   useEffect(() => {
@@ -983,8 +984,15 @@ export default function Page() {
   };
 
   // Long-lived callbacks (WebSocket, autopilot timers) call through this ref to the latest closures.
-  const handlersRef = useRef({ ingestFinalTurn, ingestPartial });
-  handlersRef.current = { ingestFinalTurn, ingestPartial };
+  /** The STT socket dropped or never connected: say so, instead of silently going quiet. */
+  const notifySttDrop = () => {
+    sttDropCountRef.current += 1;
+    emitMoment(`stt-drop:${sttDropCountRef.current}`, "warning", "Transcription disconnected · press Resume");
+    closeWs();
+  };
+
+  const handlersRef = useRef({ ingestFinalTurn, ingestPartial, notifySttDrop });
+  handlersRef.current = { ingestFinalTurn, ingestPartial, notifySttDrop };
 
   // ---------------------------------------------------------------------------
   // Speaker controls
@@ -1211,9 +1219,11 @@ export default function Page() {
     wsRef.current = ws;
 
     ws.onopen = () => setIsListening(true);
+    // closeWs() detaches this handler first, so reaching it means the connection was lost.
     ws.onclose = (evt) => {
-      if (evt.code !== 1000 && evt.code !== 1005) console.warn("[STT] Closed", evt.code, evt.reason);
+      console.warn("[STT] Closed", evt.code, evt.reason);
       setIsListening(false);
+      if (wsRef.current === ws) handlersRef.current.notifySttDrop();
     };
     ws.onerror = () => setIsListening(false);
 

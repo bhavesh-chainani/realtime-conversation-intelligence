@@ -97,7 +97,7 @@ def test_lookup_returns_extra_columns_open_count_and_open_cases_first(monkeypatc
 
     rows = [
         {
-            "customer_name": "Sarah Lim",
+            "customer_name": "Katherine Liao",
             "nric_worker_permit_id": "S1234567A",
             "address": "12 Tampines Street 45",
             "case_id": "CASE-2025-10421",
@@ -107,7 +107,7 @@ def test_lookup_returns_extra_columns_open_count_and_open_cases_first(monkeypatc
             "case_summary": "Paid after mediation.",
         },
         {
-            "customer_name": "Sarah Lim",
+            "customer_name": "Katherine Liao",
             "nric_worker_permit_id": "S1234567A",
             "address": "12 Tampines Street 45",
             "case_id": "CASE-2026-03117",
