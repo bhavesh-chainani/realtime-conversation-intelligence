@@ -1630,3 +1630,65 @@ select {
   background: var(--warning-soft);
   border-color: rgba(217, 119, 6, 0.25);
 }
+
+/* -- Live transcription legibility ---------------------------------- */
+
+/* New turns slide in so the eye catches each new line. */
+.transcript-list > .turn-card:not(.turn-card--live) {
+  animation: card-in 0.25s ease-out;
+}
+
+.turn-card--live {
+  border-style: dashed;
+}
+
+.turn-card__text--live {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.typing-dots {
+  display: inline-flex;
+  gap: 4px;
+  vertical-align: middle;
+}
+
+.typing-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: typing 1.1s ease-in-out infinite;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typing {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 0.9;
+    transform: translateY(-3px);
+  }
+}
+
+.call-status--connecting {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: rgba(49, 93, 150, 0.25);
+}
+
+.call-status--connecting .call-status__dot {
+  background: var(--accent);
+  animation: pulse 0.8s ease-in-out infinite;
+}

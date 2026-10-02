@@ -8,7 +8,7 @@ Both of you speak into the same laptop mic.
 |---|---|
 | Start the call | Dock (bottom right): **Start mic** |
 | Pause to point at the screen | **Pause** (top right) or **P**. The mic stops and everything stays on screen. |
-| Carry on | **Resume** or **P**. Wait for the green **On call** before speaking. |
+| Carry on | **Resume** or **P**. The header shows **Connecting…** for about a second; speak once it turns green (**On call**). |
 | Finish | **End call** (top right) |
 | Ended by mistake | **← Back to call**, then **Resume** |
 
@@ -30,7 +30,7 @@ Both of you speak into the same laptop mic.
 
 > "This is what an advice-centre operator sees on a live call. It listens to both sides, pulls up the caller's records, and tells the operator what to say next. My colleague is calling in as Katherine."
 
-Click **Start mic** and wait for the green **On call**.
+Click **Start mic**. The header shows **Connecting…** for about a second; start once it turns green (**On call**).
 
 ## The call (about 1 minute)
 
@@ -51,7 +51,7 @@ Point at each part:
 2. **Caller card:** "Her NRIC was captured the moment she said it. Her name and address came straight from the case system, and the ✓ means verified."
 3. **Suggested response:** "This is the key part. It connected today's complaint to her **open** leave case with the same employer, flagged possible retaliation, and gave me the words to say. **Based on** shows exactly which record it used."
 
-Press **P** to resume. Wait for **On call**.
+Press **P** to resume, and wait about a second for the green **On call**.
 
 | Who | Line |
 |---|---|

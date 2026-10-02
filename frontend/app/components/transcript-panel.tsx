@@ -5,6 +5,8 @@ import type { Moment, SpeakerRole, Turn } from "../lib/types.ts";
 type TranscriptPanelProps = {
   turns: Turn[];
   live: string;
+  /** Speech detected but little or no text yet (u3 models stream few partials). */
+  speaking: boolean;
   liveRole: SpeakerRole;
   moments: Moment[];
   /** Show attribution captions, speaker labels and speaker controls. */
@@ -65,6 +67,7 @@ function MomentChip({ moment }: { moment: Moment }) {
 export function TranscriptPanel({
   turns,
   live,
+  speaking,
   liveRole,
   moments,
   techView,
@@ -161,7 +164,7 @@ export function TranscriptPanel({
 
       <div className="transcript-canvas">
         <div className="transcript-list" ref={transcriptListRef}>
-          {turns.length === 0 && !live ? (
+          {turns.length === 0 && !live && !speaking ? (
             <div className="empty-state empty-state--large">The conversation will appear here once the call starts.</div>
           ) : null}
 
@@ -195,13 +198,20 @@ export function TranscriptPanel({
             </Fragment>
           ))}
 
-          {live ? (
-            <article className={`turn-card turn-card--live turn-card--${liveRole}`}>
+          {live || speaking ? (
+            <article className={`turn-card turn-card--live turn-card--${liveRole}`} aria-live="polite">
               <div className="turn-card__meta">
                 <span className={`role-badge role-badge--${liveRole}`}>{roleDisplayName(liveRole)}</span>
-                <span className="turn-card__speaker">speaking…</span>
+                <span className="turn-card__speaker">speaking</span>
               </div>
-              <p className="turn-card__text">{live}</p>
+              <p className="turn-card__text turn-card__text--live">
+                {live ? <span>{live} </span> : null}
+                <span className="typing-dots" aria-label="speaking">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </p>
             </article>
           ) : null}
         </div>

@@ -153,3 +153,4 @@ def test_token_endpoint_uses_u3_model_and_prompt_for_scenarios(demo_env, monkeyp
     # Without a scenario nothing demo-specific is added.
     body = client.get("/assemblyai-token").json()
     assert "prompt" not in body and "speech_model" not in body
+    assert body["stream_params"]["max_turn_silence"] == "1000"

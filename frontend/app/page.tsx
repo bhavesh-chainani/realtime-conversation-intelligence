@@ -66,6 +66,9 @@ const CACHE_RACE_MS = 1300;
 /** Max time a suggestion request waits for an in-flight history lookup. */
 const LOOKUP_WAIT_MS = 700;
 const PREWARM_INTERVAL_MS = 45_000;
+/** Streaming tokens are valid for 300 s; keep a spare one fresher than this for instant Start/Resume. */
+const STT_TOKEN_MAX_AGE_MS = 240_000;
+const STT_TOKEN_REFRESH_MS = 210_000;
 const TRANSCRIPT_WINDOW_TURNS = 16;
 /** Operators get one focused suggestion at a time. */
 const MAX_SUGGESTIONS = 1;
@@ -206,6 +209,7 @@ export default function Page() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [live, setLive] = useState("");
+  const [speaking, setSpeaking] = useState(false);
   const [liveRole, setLiveRole] = useState<SpeakerRole>("unknown");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestionMeta, setSuggestionMeta] = useState<SuggestionMeta | null>(null);
@@ -219,6 +223,7 @@ export default function Page() {
   const [customerData, setCustomerData] = useState<CustomerData>(EMPTY_CUSTOMER);
   const [fieldSources, setFieldSources] = useState<Partial<Record<CustomerDataField, FieldSource>>>({});
   const [isListening, setIsListening] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [speakerRoleMap, setSpeakerRoleMap] = useState<SpeakerRoleMap>({});
   const [nextVoiceIsStaff, setNextVoiceIsStaff] = useState(true);
   const [resetNonce, setResetNonce] = useState(0);
@@ -293,6 +298,7 @@ export default function Page() {
   const lastPartialLabelRef = useRef<string | null>(null);
   const pauseToggleRef = useRef<() => void>(() => {});
   const sttDropCountRef = useRef(0);
+  const sttTokenRef = useRef<{ key: string; payload: Record<string, unknown>; fetchedAt: number } | null>(null);
   const stepModeRef = useRef(false);
 
   useEffect(() => {
@@ -875,8 +881,15 @@ export default function Page() {
     setLiveRole(expected ?? labelRoleFor(speakerLabel) ?? "unknown");
   };
 
+  const ingestSpeechStart = () => {
+    setSpeaking(true);
+    const expected = scenarioRef.current?.lines[alignStateRef.current.cursor]?.role;
+    if (!liveRef.current) setLiveRole(expected ?? "unknown");
+  };
+
   const ingestFinalTurn = (input: FinalTurnInput) => {
     const text = input.text.trim();
+    setSpeaking(false);
     setLive("");
     liveRef.current = "";
     setLiveRole("unknown");
@@ -991,8 +1004,8 @@ export default function Page() {
     closeWs();
   };
 
-  const handlersRef = useRef({ ingestFinalTurn, ingestPartial, notifySttDrop });
-  handlersRef.current = { ingestFinalTurn, ingestPartial, notifySttDrop };
+  const handlersRef = useRef({ ingestFinalTurn, ingestPartial, ingestSpeechStart, notifySttDrop });
+  handlersRef.current = { ingestFinalTurn, ingestPartial, ingestSpeechStart, notifySttDrop };
 
   // ---------------------------------------------------------------------------
   // Speaker controls
@@ -1103,15 +1116,53 @@ export default function Page() {
 
     setLive("");
     liveRef.current = "";
+    setSpeaking(false);
     setLiveRole("unknown");
     setIsListening(false);
+    setIsConnecting(false);
+  }
+
+  const sttTokenKey = () => scenarioRef.current?.id ?? "";
+
+  async function fetchSttToken(): Promise<Record<string, unknown>> {
+    const key = sttTokenKey();
+    const res = await fetch(`${backendUrl}/assemblyai-token${key ? `?scenario=${encodeURIComponent(key)}` : ""}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`token status ${res.status}`);
+    return (await res.json()) as Record<string, unknown>;
+  }
+
+  /** Keep a spare single-use token ready so Start/Resume skips a ~1 s round trip. */
+  async function prefetchSttToken() {
+    const cached = sttTokenRef.current;
+    if (cached && cached.key === sttTokenKey() && Date.now() - cached.fetchedAt < STT_TOKEN_MAX_AGE_MS) return;
+    try {
+      const payload = await fetchSttToken();
+      sttTokenRef.current = { key: sttTokenKey(), payload, fetchedAt: Date.now() };
+    } catch {
+      sttTokenRef.current = null;
+    }
+  }
+
+  async function takeSttToken(): Promise<Record<string, unknown>> {
+    const cached = sttTokenRef.current;
+    sttTokenRef.current = null;
+    if (cached && cached.key === sttTokenKey() && Date.now() - cached.fetchedAt < STT_TOKEN_MAX_AGE_MS) {
+      return cached.payload;
+    }
+    return fetchSttToken();
   }
 
   async function openWs() {
     closeWs();
     stopAutopilot();
     startCall();
+    setIsConnecting(true);
     const myAttempt = streamAttemptRef.current;
+    // Token and microphone in parallel: the token round trip used to add ~1 s before listening.
+    const tokenPromise = takeSttToken();
+    tokenPromise.catch(() => {});
 
     // A new stream may assign A/B differently: forget the old label map and votes.
     setRoleMap({});
@@ -1167,23 +1218,21 @@ export default function Page() {
     let keytermsPrompt: string[] = [];
     let sttPrompt = "";
     let speechModel = "";
+    let streamParams: Record<string, string> = {};
     try {
-      const scenarioParam = scenarioRef.current ? `?scenario=${encodeURIComponent(scenarioRef.current.id)}` : "";
-      const res = await fetch(`${backendUrl}/assemblyai-token${scenarioParam}`, {
-        headers: getAuthHeaders(),
-      });
-      if (!res.ok) {
-        alert("Failed to obtain streaming token from backend.");
-        closeWs();
-        return;
-      }
-      const payload = await res.json();
+      const payload = await tokenPromise;
+      if (myAttempt !== streamAttemptRef.current) return;
       streamingToken = String(payload.token || "").trim();
       keytermsPrompt = Array.isArray(payload.keyterms_prompt)
         ? payload.keyterms_prompt.map((t: unknown) => String(t))
         : [];
       sttPrompt = typeof payload.prompt === "string" ? payload.prompt : "";
       speechModel = typeof payload.speech_model === "string" ? payload.speech_model : "";
+      if (payload.stream_params && typeof payload.stream_params === "object") {
+        streamParams = Object.fromEntries(
+          Object.entries(payload.stream_params as Record<string, unknown>).map(([k, v]) => [k, String(v)])
+        );
+      }
       if (!streamingToken) {
         alert("Backend returned empty streaming token.");
         closeWs();
@@ -1208,6 +1257,7 @@ export default function Page() {
     }
     if (sttPrompt) params.set("prompt", sttPrompt);
     if (speechModel) params.set("speech_model", speechModel);
+    for (const [key, value] of Object.entries(streamParams)) params.set(key, value);
 
     const ws = new WebSocket(`wss://streaming.assemblyai.com/v3/ws?${params}`);
     if (myAttempt !== streamAttemptRef.current) {
@@ -1218,7 +1268,11 @@ export default function Page() {
     }
     wsRef.current = ws;
 
-    ws.onopen = () => setIsListening(true);
+    ws.onopen = () => {
+      setIsConnecting(false);
+      setIsListening(true);
+      void prefetchSttToken(); // ready for the next Resume
+    };
     // closeWs() detaches this handler first, so reaching it means the connection was lost.
     ws.onclose = (evt) => {
       console.warn("[STT] Closed", evt.code, evt.reason);
@@ -1239,6 +1293,11 @@ export default function Page() {
     ws.onmessage = (evt) => {
       try {
         const d = JSON.parse(evt.data as string) as Record<string, unknown>;
+        if (d.type === "SpeechStarted") {
+          // u3 models send few partials: show "speaking" straight away so the screen never looks frozen.
+          handlersRef.current.ingestSpeechStart();
+          return;
+        }
         if (d.type === "Begin") {
           console.info("[STT] Session started", d);
           return;
@@ -1617,6 +1676,7 @@ export default function Page() {
         setScenario(data);
       } catch {}
       if (cancelled) return;
+      void prefetchSttToken();
       await loadCache(scenarioId);
       await runPreflight(scenarioId);
     })();
@@ -1625,6 +1685,14 @@ export default function Page() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demoEnabled, scenarios, scenarioId, backendUrl, loadCache, runPreflight]);
+
+  // Keep a fresh spare streaming token so Start/Resume connects quickly.
+  useEffect(() => {
+    if (!demoEnabled) return;
+    const timer = setInterval(() => void prefetchSttToken(), STT_TOKEN_REFRESH_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoEnabled]);
 
   // Keep LLM connections warm while a demo conversation is running.
   const demoActive = isListening || autopilotState === "running" || autopilotState === "waiting";
@@ -1712,6 +1780,7 @@ export default function Page() {
     <div className="shell shell--workspace">
       <SessionHeader
         isLive={isLive}
+        isConnecting={isConnecting}
         callerName={customerData.name.trim() || null}
         startedAt={callStartedAt}
         endedAt={callEndedAt}
@@ -1738,6 +1807,7 @@ export default function Page() {
         <TranscriptPanel
           turns={turns}
           live={live}
+          speaking={speaking}
           liveRole={liveRole}
           moments={moments}
           techView={showTech}

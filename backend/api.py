@@ -189,6 +189,8 @@ async def assemblyai_token(
         out["prompt"] = prompt
     if speech_model:
         out["speech_model"] = speech_model
+    if cfg.ASSEMBLYAI_STREAM_PARAMS:
+        out["stream_params"] = dict(cfg.ASSEMBLYAI_STREAM_PARAMS)
     return out
 
 

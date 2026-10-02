@@ -5,5 +5,9 @@
   "sql_lookup_model": "gpt-4o-mini",
   "suggestion_temperature": 0.3,
   "max_suggestions": 1,
-  "assemblyai_keyterms": []
+  "assemblyai_keyterms": [],
+  "assemblyai_stream_params": {
+    "min_end_of_turn_silence_when_confident": 240,
+    "max_turn_silence": 1000
+  }
 }

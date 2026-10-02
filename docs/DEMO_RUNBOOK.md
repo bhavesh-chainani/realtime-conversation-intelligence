@@ -126,6 +126,21 @@ This runs the real path end to end: AssemblyAI STT and diarisation, alignment, l
 
 ## 6. Tuning and diagnostics
 
+**Live transcription timing** (measured with `scripts/bench_stt.py` and in the browser, 2026-10-02):
+
+| Stage | Typical |
+|---|---|
+| Click **Start mic** / **Resume** → mic live (header turns green) | ~0.9–1.0 s (the next streaming token is fetched in advance) |
+| Person starts speaking → "speaking" bubble with dots | immediate (on AssemblyAI's `SpeechStarted` event) |
+| Person stops speaking → finished line on screen | ~1.0–1.4 s |
+| Finished customer line → suggestion card | prepared at 1.3 s, live ~2 s |
+
+`u3-rt-pro` is used for demo sessions because it transcribes the NRIC and names correctly. The standard streaming model streams words faster but misheard "S1234567A" as "S124567A", which breaks verification. `u3-rt-pro` sends few word-by-word updates, so the live bubble shows animated dots while someone speaks, and the full line lands when they pause. End-of-turn timing is set in `config.json` (`assemblyai_stream_params`: 240 ms / 1000 ms); this brings finished lines in about 0.6 s sooner than the defaults. Benchmark models and settings with:
+
+```bash
+realtime-venv/bin/python scripts/bench_stt.py --configs u3,u3-snappy,universal --show-text
+```
+
 - **Latency benchmark:** `realtime-venv/bin/python scripts/bench_llm.py --runs 2 --effort none`. It prints p50/p95 and whether each beat linked the expected cases.
 - **Alignment thresholds:** set in `frontend/app/lib/script-align.ts` (`ALIGN_HIGH` 0.55, `ALIGN_LOW` 0.35, `WINDOW_AHEAD` 3). Use `?debug=1` to log a score table for every turn.
 - **STT:** demo sessions use `u3-rt-pro` (`DEMO_SPEECH_MODEL`) so that the scenario's context prompt is accepted. Script keyterms (Brightpath, Tampines, the NRIC) are merged into `keyterms_prompt` automatically.

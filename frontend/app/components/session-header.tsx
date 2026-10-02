@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 
 type SessionHeaderProps = {
   isLive: boolean;
+  /** Mic starting up: tell presenters not to speak yet. */
+  isConnecting: boolean;
   callerName: string | null;
   /** Date.now() when the call started / ended (null when not applicable). */
   startedAt: number | null;
@@ -44,6 +46,7 @@ function ListeningBars({ mode, level }: { mode: "mic" | "autopilot"; level: numb
 
 export function SessionHeader({
   isLive,
+  isConnecting,
   callerName,
   startedAt,
   endedAt,
@@ -77,8 +80,12 @@ export function SessionHeader({
     tone = "ended";
   } else if (startedAt !== null) {
     const who = callerName ? ` · ${callerName}` : "";
-    status = `${isLive ? "On call" : "On hold"}${who} · ${formatClock(now - startedAt)}`;
-    tone = isLive ? "live" : "hold";
+    const state = isLive ? "On call" : isConnecting ? "Connecting…" : "On hold";
+    status = `${state}${who} · ${formatClock(now - startedAt)}`;
+    tone = isLive ? "live" : isConnecting ? "connecting" : "hold";
+  } else if (isConnecting) {
+    status = "Connecting…";
+    tone = "connecting";
   }
 
   return (
