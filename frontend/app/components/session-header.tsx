@@ -10,6 +10,11 @@ type SessionHeaderProps = {
   micLevel: number;
   canEndCall: boolean;
   onEndCall: () => void;
+  /** Hold the call: stop listening but keep everything on screen. */
+  canPause: boolean;
+  canResume: boolean;
+  onPause: () => void;
+  onResume: () => void;
   isAuthenticated: boolean;
   showAuthButton: boolean;
   /** Hidden in demo mode, where the presenter dock owns start/stop. */
@@ -46,6 +51,10 @@ export function SessionHeader({
   micLevel,
   canEndCall,
   onEndCall,
+  canPause,
+  canResume,
+  onPause,
+  onResume,
   isAuthenticated,
   showAuthButton,
   showSessionControls,
@@ -67,7 +76,8 @@ export function SessionHeader({
     status = `Call ended · ${formatClock(endedAt - startedAt)}`;
     tone = "ended";
   } else if (startedAt !== null) {
-    status = `On call${callerName ? ` · ${callerName}` : ""} · ${formatClock(now - startedAt)}`;
+    const who = callerName ? ` · ${callerName}` : "";
+    status = `${isLive ? "On call" : "On hold"}${who} · ${formatClock(now - startedAt)}`;
     tone = isLive ? "live" : "hold";
   }
 
@@ -84,6 +94,17 @@ export function SessionHeader({
           <span className="call-status__text">{status}</span>
           {audioMode ? <ListeningBars mode={audioMode} level={micLevel} /> : null}
         </span>
+
+        {canPause ? (
+          <button type="button" className="btn btn--secondary btn--sm" onClick={onPause} title="Stop listening, keep everything on screen (P)">
+            Pause
+          </button>
+        ) : null}
+        {canResume ? (
+          <button type="button" className="btn btn--primary btn--sm" onClick={onResume} title="Resume listening (P)">
+            Resume
+          </button>
+        ) : null}
 
         {canEndCall ? (
           <button type="button" className="btn btn--danger btn--sm" onClick={onEndCall}>

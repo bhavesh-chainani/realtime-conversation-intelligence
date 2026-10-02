@@ -7,6 +7,8 @@ type WrapupCardProps = {
   state: WrapupState;
   cases: CustomerHistoryCase[];
   techView: boolean;
+  /** Return to the live view (End call pressed by mistake, or to keep talking). */
+  onBackToCall: () => void;
 };
 
 function notesText(w: Wrapup): string {
@@ -19,7 +21,7 @@ function notesText(w: Wrapup): string {
   return lines.join("\n");
 }
 
-export function WrapupCard({ state, cases, techView }: WrapupCardProps) {
+export function WrapupCard({ state, cases, techView, onBackToCall }: WrapupCardProps) {
   const [copied, setCopied] = useState(false);
   const data = state.data;
 
@@ -44,6 +46,9 @@ export function WrapupCard({ state, cases, techView }: WrapupCardProps) {
             {state.latencyMs != null ? ` · ${(state.latencyMs / 1000).toFixed(1)}s` : ""}
           </span>
         ) : null}
+        <button type="button" className="btn btn--ghost btn--sm wrapup-card__back" onClick={onBackToCall}>
+          ← Back to call
+        </button>
         {state.status === "ready" && data ? (
           // In the header so it is always visible, even when the notes are long.
           <button type="button" className="btn btn--primary btn--sm wrapup-card__copy" onClick={() => void copy()}>

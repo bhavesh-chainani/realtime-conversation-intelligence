@@ -290,6 +290,8 @@ export default function Page() {
   const micTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wrapupReqIdRef = useRef(0);
   const callEndedRef = useRef(false);
+  const lastPartialLabelRef = useRef<string | null>(null);
+  const pauseToggleRef = useRef<() => void>(() => {});
   const stepModeRef = useRef(false);
 
   useEffect(() => {
@@ -867,6 +869,7 @@ export default function Page() {
     const trimmed = text.trim();
     setLive(trimmed);
     liveRef.current = trimmed;
+    lastPartialLabelRef.current = speakerLabel;
     const expected = scenarioRef.current?.lines[alignStateRef.current.cursor]?.role;
     setLiveRole(expected ?? labelRoleFor(speakerLabel) ?? "unknown");
   };
@@ -1288,6 +1291,53 @@ export default function Page() {
     setDockOpen(false);
   }
 
+  /** Stop the mic without losing the sentence that was still being transcribed. */
+  function stopListening() {
+    const pending = liveRef.current.trim();
+    if (pending && wsRef.current) {
+      handlersRef.current.ingestFinalTurn({
+        text: pending,
+        speakerLabel: lastPartialLabelRef.current,
+        source: "mic",
+      });
+    }
+    closeWs();
+  }
+
+  /** Put the call on hold: stop listening / playback but keep everything on screen. */
+  function pauseCall() {
+    if (autopilotState === "running" || autopilotState === "waiting") {
+      autopilotRef.current?.pause();
+      setAutopilotState("paused");
+    } else if (isListening) {
+      stopListening();
+    }
+  }
+
+  function resumeCall() {
+    if (inputMode === "autopilot" && scenarioRef.current) {
+      if (autopilotRef.current) {
+        startCall();
+        autopilotRef.current.start();
+        setAutopilotState("running");
+      } else {
+        startAutopilot();
+      }
+    } else {
+      void openWs();
+    }
+  }
+
+  /** Undo End call: back to the live view with the conversation intact (on hold). */
+  function backToCall() {
+    wrapupReqIdRef.current += 1;
+    callEndedRef.current = false;
+    setCallEndedAt(null);
+    setWrapup({ status: "idle" });
+    momentKeysRef.current.delete("wrapup");
+    setMoments((prev) => prev.filter((m) => m.id !== "wrapup"));
+  }
+
   async function endCall() {
     stopAutopilot();
     closeWs();
@@ -1590,6 +1640,8 @@ export default function Page() {
         setDockOpen((open) => !open);
       } else if (e.key === "t" || e.key === "T") {
         toggleTechView();
+      } else if (e.key === "p" || e.key === "P") {
+        pauseToggleRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1635,6 +1687,12 @@ export default function Page() {
   const showTech = !demoEnabled || techView;
   const autopilotActive = autopilotState === "running" || autopilotState === "waiting";
   const isLive = isListening || autopilotActive;
+  const callActive = callStartedAt !== null && callEndedAt === null;
+  pauseToggleRef.current = () => {
+    if (!callActive) return;
+    if (isLive) pauseCall();
+    else resumeCall();
+  };
   const citedIds = useMemo(
     () => new Set(suggestions.flatMap((s) => s.linked_records || [])),
     [suggestions]
@@ -1649,8 +1707,12 @@ export default function Page() {
         endedAt={callEndedAt}
         audioMode={isListening ? "mic" : autopilotActive ? "autopilot" : null}
         micLevel={micLevel}
-        canEndCall={callStartedAt !== null && callEndedAt === null && turns.length > 0}
+        canEndCall={callActive && turns.length > 0}
         onEndCall={() => void endCall()}
+        canPause={callActive && isLive}
+        canResume={callActive && !isLive}
+        onPause={pauseCall}
+        onResume={resumeCall}
         isAuthenticated={isAuthenticated}
         showAuthButton={Boolean(cognitoDomain && cognitoClientId)}
         showSessionControls={!demoEnabled}
@@ -1685,7 +1747,12 @@ export default function Page() {
 
         <aside className="panel assistance-rail" aria-label="Operator assistance workspace">
           {callEndedAt !== null ? (
-            <WrapupCard state={wrapup} cases={customerHistoryCases} techView={showTech} />
+            <WrapupCard
+              state={wrapup}
+              cases={customerHistoryCases}
+              techView={showTech}
+              onBackToCall={backToCall}
+            />
           ) : (
             <SuggestionsPanel
               suggestions={suggestions}
@@ -1736,12 +1803,7 @@ export default function Page() {
             if (inputMode === "autopilot") startAutopilot();
             else void openWs();
           }}
-          onStop={() => {
-            if (inputMode === "autopilot") {
-              autopilotRef.current?.pause();
-              setAutopilotState("paused");
-            } else closeWs();
-          }}
+          onStop={pauseCall}
           onNextLine={() => {
             if (!autopilotRef.current) startAutopilot();
             else {
