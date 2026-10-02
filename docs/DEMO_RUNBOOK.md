@@ -16,6 +16,7 @@ A scripted two-person call. One presenter plays the operator **Daniel (Staff)** 
 | Key | Action |
 |---|---|
 | **D** | Open or close the presenter dock: scenario, Live/Autopilot, pace, prepared cards, preflight, Show script |
+| **P** | Pause or resume the call: listening stops, the screen stays |
 | **T** | Toggle **Technical view**: attribution captions, speaker labels, Swap roles, prepared/live timing, field sources. Use it when someone technical asks "how does it know?" |
 | **→** | Autopilot: play or finish the next line |
 
@@ -64,6 +65,10 @@ In `frontend/.env.local`, set `NEXT_PUBLIC_DEMO_MODE=true`. Alternatively, open 
 - [ ] Click **Reset** before the audience arrives. Reset clears the conversation and the wrap-up, and starts a new session.
 
 ## 3. The script
+
+For the printable presenter version, with pause points and talk tracks, see **[DEMO_PRESENTER_SCRIPT.md](DEMO_PRESENTER_SCRIPT.md)**.
+
+**Pausing to explain:** press **Pause** (top right) or **P**. Listening stops, everything stays on screen, and the header reads *On hold*. Press **Resume** or **P** to continue. Don't use **End call** to pause: it ends the call and drafts the wrap-up. If you press it by mistake, click **← Back to call**.
 
 The teleprompter is **hidden by default**, because the audience would otherwise read each line before it is said. To show it while rehearsing, open the dock (**D**) and click **Show script**; it appears inside the dock, not on the main screen. It displays **NEXT · speaker: line** and the line after it. On demo day, presenters should know the lines or read from a printout or a second screen. Script matching runs whether the teleprompter is shown or not. Small wording slips are fine: matching is fuzzy, and the script can be skipped ahead.
 
