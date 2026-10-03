@@ -1,3 +1,4 @@
 pytest>=8.0.0
 httpx==0.27.2
 pgserver
+numpy>=2.0  # scripts: demo-audio room simulation, diarisation eval
