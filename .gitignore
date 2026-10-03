@@ -27,6 +27,7 @@ temp/
 
 #Virtual environment
 realtime-venv/
+diar-venv/
 .venv/
 venv/
 
