@@ -90,7 +90,8 @@ function newTurnId(): string {
 function normalizeSpeakerLabel(raw: unknown): string | null {
   if (raw == null) return null;
   const label = String(raw).trim().toUpperCase();
-  if (!label || label === "UNKNOWN" || label === "NULL" || label === "NONE") {
+  // AssemblyAI marks words it has not attributed yet as "PENDING": not a third voice.
+  if (!label || label === "UNKNOWN" || label === "NULL" || label === "NONE" || label === "PENDING") {
     return null;
   }
   return label;
