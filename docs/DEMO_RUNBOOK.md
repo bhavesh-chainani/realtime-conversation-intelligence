@@ -105,7 +105,7 @@ Talking points:
 | The wrap-up can't be drafted | Prepared notes appear automatically for a completed script. Otherwise, take notes manually. |
 | The live suggestion is slow | Nothing to do. The prepared card appears at 1.3 s automatically. |
 | The LLM gateway is down | Prepared cards still appear for every scripted customer line. |
-| Lookup shows *Lookup failed* | Re-run `scripts/demo_db.py`, then click **Look up** in Case history. |
+| *Prior cases* shows **Error** | Re-run `scripts/demo_db.py`, then click **Look up** in the Caller panel. |
 | You have to start over | Click **Reset**. |
 
 Autopilot controls (in the dock): pace **1× / 1.5× / 2×**. **Step** pauses after every line; press **Next →** or the → key to continue, which lets you narrate between lines.

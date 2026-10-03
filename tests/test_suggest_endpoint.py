@@ -67,8 +67,6 @@ def test_suggest_passes_customer_history_into_prompt(client, monkeypatch):
             "customer_history": [
                 {"case_id": "CASE-1", "company": "Brightpath", "type": "Leave", "status": "Open", "summary": "x"}
             ],
-            "scenario_id": "katherine_liao_brightpath",
-            "script_step": "L08",
         },
     )
 

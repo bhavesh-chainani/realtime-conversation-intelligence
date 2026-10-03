@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from .auth import enforce_usage_limits
 from .config import SUGGESTION_TEMPERATURE
-from .llm import get_extraction_model, get_llm_client, llm_extra_params
+from .llm import get_extraction_model, get_llm_client, llm_extra_params, strip_code_fences
 from .persistence import persist_customer_extract_event
 from .quick_entities import NRIC_PATTERN, extract_nric_from_transcript
 from .text_guard import has_foreign_script
@@ -135,7 +135,7 @@ Return a JSON object with the extracted information. If any field is not mention
                 **llm_extra_params(),
             )
             llm_ms = round((time.perf_counter() - started) * 1000, 1)
-            content = self._strip_code_fences(
+            content = strip_code_fences(
                 (response.choices[0].message.content or "").strip()
             )
             extracted_data = json.loads(content)
@@ -267,14 +267,6 @@ Return a JSON object with the extracted information. If any field is not mention
             error=error,
         )
 
-    def _strip_code_fences(self, content: str) -> str:
-        if content.startswith("```"):
-            content = content.strip("`")
-            if content.startswith("json"):
-                content = content[4:].lstrip()
-            if content.startswith("\n"):
-                content = content[1:]
-        return content
 
 
 extractor = CustomerDataExtractor()

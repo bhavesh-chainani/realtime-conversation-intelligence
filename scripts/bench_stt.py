@@ -48,7 +48,13 @@ CONFIGS = {
 
 def fetch_token(backend: str, scenario: str) -> dict:
     with urllib.request.urlopen(f"{backend}/assemblyai-token?scenario={scenario}") as resp:
-        return json.load(resp)
+        payload = json.load(resp)
+    if "token" not in payload:
+        raise SystemExit(
+            "The backend offered the Nemotron relay, not an AssemblyAI token: this benchmark measures the direct "
+            "path, so run it against a backend without DIARIZATION_BACKEND=nemotron"
+        )
+    return payload
 
 
 async def run_config(name: str, wav_path: Path, backend: str, scenario: str, expect_terms: list[str]) -> dict:

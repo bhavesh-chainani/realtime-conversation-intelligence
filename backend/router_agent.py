@@ -6,9 +6,9 @@ This agent analyzes the conversation in real-time and determines if legal advice
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from .llm import get_llm_client, get_router_model
+from .llm import get_llm_client, get_router_model, strip_code_fences
 from .prompt_loader import get_router_system_prompt, get_router_user_prompt
 
 logger = logging.getLogger(__name__)
@@ -23,8 +23,6 @@ class RouterAgent:
     async def should_get_suggestions(
         self,
         conversation_transcript: str,
-        last_suggestion_time: Optional[float] = None,
-        min_time_since_last: float = 2.0,  # Minimum seconds between suggestions
     ) -> Dict[str, Any]:
         """
         Analyze conversation and decide if suggestions should be generated.
@@ -55,17 +53,7 @@ class RouterAgent:
                     {"role": "user", "content": user_prompt},
                 ],
             )
-            raw = (response.choices[0].message.content or "").strip()
-
-            # Clean JSON response
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                if raw.startswith("json"):
-                    raw = raw[4:].lstrip()
-                if raw.startswith("\n"):
-                    raw = raw[1:]
-
-            decision = json.loads(raw)
+            decision = json.loads(strip_code_fences(response.choices[0].message.content or ""))
 
             # Validate structure
             if not isinstance(decision, dict):

@@ -5,6 +5,8 @@
 venv
 .venv
 realtime-venv
+diar-venv
+data
 __pycache__
 *.pyc
 .pytest_cache
@@ -16,4 +18,3 @@ frontend/.cache
 logs
 cache
 temp
-agent-transcripts

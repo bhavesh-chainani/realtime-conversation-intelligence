@@ -76,8 +76,6 @@ if DEMO_MODE:
 
 @app.get("/health")
 async def health():
-    from . import config as cfg
-
     out: dict = {"ok": True}
     if cfg.APP_VERSION:
         out["version"] = cfg.APP_VERSION
@@ -89,8 +87,6 @@ async def health():
 @app.get("/ready")
 async def ready():
     """Deep readiness: optional strict mode (503 if LLM/STT keys missing)."""
-    from . import config as cfg
-
     llm_cfg = llm_runtime_config()
     customer_history_configured = bool(cfg.CUSTOMER_HISTORY_DATABASE_URL)
     detail = {
@@ -101,7 +97,6 @@ async def ready():
         "router_model_configured": bool(llm_cfg["router_model_configured"]),
         "suggestion_model_configured": bool(llm_cfg["suggestion_model_configured"]),
         "extraction_model_configured": bool(llm_cfg["extraction_model_configured"]),
-        "sql_lookup_model_configured": bool(llm_cfg["sql_lookup_model_configured"]),
         "customer_history_configured": customer_history_configured,
         "assemblyai_configured": bool(cfg.ASSEMBLYAI_API_KEY),
         "diarization": diarization_status(),
@@ -118,8 +113,6 @@ async def ready():
 
 @app.get("/metrics")
 async def metrics(authorization: str | None = Header(None)):
-    from . import config as cfg
-
     if not cfg.METRICS_ENABLED:
         raise HTTPException(status_code=404, detail="metrics disabled")
     if cfg.METRICS_TOKEN:

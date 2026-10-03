@@ -12,31 +12,17 @@ import time
 from typing import Any, Dict, List, Optional
 
 from . import config as cfg
-from .llm import get_async_llm_client, get_suggestion_model, llm_extra_params
+from .llm import get_async_llm_client, get_suggestion_model, llm_extra_params, str_list, strip_code_fences
 from .prompt_loader import (
     format_customer_record,
     get_suggestion_fast_system_prompt,
     get_suggestion_fast_user_prompt,
+    verified_case_ids,
 )
 from .suggestion_agent import validate_suggestion
 from .text_guard import ForeignScriptError, contains_foreign_script
 
 logger = logging.getLogger(__name__)
-
-
-def _strip_code_fences(raw: str) -> str:
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return raw.strip()
-
-
-def _as_str_list(value: Any) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(v).strip() for v in value if str(v).strip()]
 
 
 async def generate_fast(
@@ -48,14 +34,7 @@ async def generate_fast(
     """Return {suggestions, router_decision, timings}. Raises on LLM/parse failure."""
     max_suggestions = max(1, min(5, int(max_suggestions or 2)))
     customer_record = format_customer_record(customer_profile, customer_cases)
-    known_case_ids = {
-        str(c.get("case_id")).strip()
-        for c in (customer_cases or [])
-        if isinstance(c, dict) and c.get("case_id")
-    }
-    # A name-only match is unverified: never surface case references yet.
-    if (customer_profile or {}).get("record_match") == "name":
-        known_case_ids = set()
+    known_case_ids = verified_case_ids(customer_profile, customer_cases)
 
     client = get_async_llm_client()
     if not client:
@@ -82,7 +61,7 @@ async def generate_fast(
     )
     llm_ms = (time.perf_counter() - started) * 1000
 
-    parsed = json.loads(_strip_code_fences(response.choices[0].message.content or ""))
+    parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
     if not isinstance(parsed, dict):
         raise ValueError("Model did not return a JSON object")
 
@@ -113,8 +92,8 @@ async def generate_fast(
             "should_suggest": should_suggest,
             "confidence": 1.0 if should_suggest else 0.0,
             "reason": "single-call pipeline",
-            "known_info": _as_str_list(parsed.get("known_info")),
-            "missing_info": _as_str_list(parsed.get("missing_info")),
+            "known_info": str_list(parsed.get("known_info")),
+            "missing_info": str_list(parsed.get("missing_info")),
         },
         "timings": {"llm_ms": round(llm_ms, 1), "model": model},
     }

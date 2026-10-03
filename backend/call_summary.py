@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 
 from . import config as cfg
 from .auth import enforce_usage_limits
-from .llm import get_async_llm_client, get_suggestion_model, llm_extra_params
-from .prompt_loader import format_customer_record, load_prompt
+from .llm import get_async_llm_client, get_suggestion_model, llm_extra_params, str_list, strip_code_fences
+from .prompt_loader import format_customer_record, load_prompt, verified_case_ids
 from .suggestions import CustomerCase
 from .text_guard import ForeignScriptError, contains_foreign_script
 
@@ -32,35 +32,13 @@ def get_call_summary_system_prompt() -> str:
     return _system_prompt
 
 
-def _str_list(value: Any, limit: int) -> List[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(v).strip() for v in value if str(v).strip()][:limit]
-
-
-def _strip_code_fences(raw: str) -> str:
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return raw.strip()
-
-
 async def generate_call_summary(
     conversation_transcript: str,
     customer_profile: Optional[Dict[str, Any]] = None,
     customer_cases: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Return the drafted notes. Raises on LLM/parse failure."""
-    known_case_ids = {
-        str(c.get("case_id")).strip()
-        for c in (customer_cases or [])
-        if isinstance(c, dict) and c.get("case_id")
-    }
-    # A name-only match is unverified: never reference cases in the notes.
-    if (customer_profile or {}).get("record_match") == "name":
-        known_case_ids = set()
+    known_case_ids = verified_case_ids(customer_profile, customer_cases)
 
     client = get_async_llm_client()
     if not client:
@@ -89,7 +67,7 @@ async def generate_call_summary(
     )
     llm_ms = round((time.perf_counter() - started) * 1000, 1)
 
-    parsed = json.loads(_strip_code_fences(response.choices[0].message.content or ""))
+    parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
     if not isinstance(parsed, dict):
         raise ValueError("Model did not return a JSON object")
     summary = str(parsed.get("summary") or "").strip()
@@ -100,10 +78,10 @@ async def generate_call_summary(
         "summary": summary,
         "issue": str(parsed.get("issue") or "").strip(),
         "linked_records": [
-            cid for cid in _str_list(parsed.get("linked_records"), 10) if cid in known_case_ids
+            cid for cid in str_list(parsed.get("linked_records"), 10) if cid in known_case_ids
         ],
-        "actions": _str_list(parsed.get("actions"), 4),
-        "documents_requested": _str_list(parsed.get("documents_requested"), 6),
+        "actions": str_list(parsed.get("actions"), 4),
+        "documents_requested": str_list(parsed.get("documents_requested"), 6),
         "follow_up": str(parsed.get("follow_up") or "").strip(),
     }
     if contains_foreign_script(notes):

@@ -16,6 +16,8 @@ RUN if [ "$INSTALL_DIARIZATION" = "true" ]; then \
 
 COPY backend /app/backend
 COPY config.json /app/config.json
+# Demo scenarios (used with DEMO_MODE=true)
+COPY demo /app/demo
 
 RUN mkdir -p /data
 ENV SQLITE_DB_PATH=/data/sessions.db

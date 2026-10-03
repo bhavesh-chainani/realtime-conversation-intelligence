@@ -44,9 +44,6 @@ SUGGESTION_MODEL = (
 EXTRACTION_MODEL = (
     os.getenv("EXTRACTION_MODEL") or CONFIG.get("extraction_model") or SUGGESTION_MODEL
 )
-SQL_LOOKUP_MODEL = (
-    os.getenv("SQL_LOOKUP_MODEL") or CONFIG.get("sql_lookup_model") or EXTRACTION_MODEL
-)
 SUGGESTION_TEMPERATURE = float(
     os.getenv("SUGGESTION_TEMPERATURE") or CONFIG.get("suggestion_temperature") or 0.3
 )

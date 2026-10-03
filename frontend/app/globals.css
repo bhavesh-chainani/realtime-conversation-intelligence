@@ -1,5 +1,4 @@
 :root {
-  --bg-canvas: #eef3f8;
   --bg-shell: linear-gradient(180deg, #f7fafe 0%, #edf2f7 100%);
   --surface: rgba(255, 255, 255, 0.94);
   --surface-strong: #ffffff;
@@ -27,14 +26,12 @@
   --danger: #b42318;
   --danger-soft: rgba(180, 35, 24, 0.12);
   --success: #0f8d78;
-  --success-soft: rgba(15, 141, 120, 0.12);
   --shadow-sm: 0 8px 24px rgba(15, 23, 42, 0.05);
   --shadow-md: 0 16px 40px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 24px 60px rgba(15, 23, 42, 0.1);
   --radius-sm: 12px;
   --radius-md: 18px;
   --radius-lg: 24px;
-  --radius-xl: 30px;
 }
 
 *,
@@ -434,9 +431,7 @@ select {
   border-color: rgba(49, 93, 150, 0.16);
 }
 
-.tag--muted,
-.status-badge--warning,
-.status-badge--error {
+.tag--muted {
   background: var(--surface-muted);
 }
 

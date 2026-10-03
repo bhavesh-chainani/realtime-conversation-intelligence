@@ -47,7 +47,6 @@ export function createAutopilot(
   let wordIdx = 0;
   let timer: unknown = null;
   let running = false;
-  let waiting = false;
 
   const words = (i: number) => lines[i].text.split(/\s+/).filter(Boolean);
   const wordMs = () => 60_000 / (options.wpm * speed);
@@ -65,7 +64,6 @@ export function createAutopilot(
 
   function finish() {
     running = false;
-    waiting = false;
     clear();
     callbacks.onDone();
   }
@@ -87,7 +85,6 @@ export function createAutopilot(
     if (index >= lines.length) return finish();
     if (stepMode) {
       running = false;
-      waiting = true;
       callbacks.onWaiting?.(index);
       return;
     }
@@ -98,7 +95,6 @@ export function createAutopilot(
     start() {
       if (running || index >= lines.length) return;
       running = true;
-      waiting = false;
       schedule(120);
     },
     pause() {
@@ -113,12 +109,10 @@ export function createAutopilot(
         return;
       }
       running = true;
-      waiting = false;
       schedule(0);
     },
     stop() {
       running = false;
-      waiting = false;
       clear();
     },
     setSpeed(next) {

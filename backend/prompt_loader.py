@@ -169,6 +169,19 @@ def is_open_case_status(status: Optional[str]) -> bool:
     return (status or "").strip().lower() not in CLOSED_CASE_STATUSES
 
 
+def verified_case_ids(
+    customer_profile: Optional[Dict[str, Any]], customer_cases: Optional[List[Dict[str, Any]]]
+) -> set[str]:
+    """Case IDs the model may cite. A name-only match is unverified, so none until the NRIC matches."""
+    if (customer_profile or {}).get("record_match") == "name":
+        return set()
+    return {
+        str(c.get("case_id")).strip()
+        for c in (customer_cases or [])
+        if isinstance(c, dict) and c.get("case_id")
+    }
+
+
 def format_customer_record(
     profile: Optional[Dict[str, Any]], cases: Optional[List[Dict[str, Any]]]
 ) -> str:
@@ -249,9 +262,3 @@ def get_fallback_suggestions() -> List[Dict[str, Any]]:
     import copy
 
     return copy.deepcopy(_cached_prompts["fallback_suggestions"])
-
-
-def reload_prompts():
-    """Clear cached prompts to force reload from files. Useful for development/testing."""
-    _cached_prompts.clear()
-    logger.info("Prompt cache cleared. Prompts will be reloaded on next access.")

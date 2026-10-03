@@ -30,7 +30,6 @@ def test_runtime_models_are_task_specific(monkeypatch):
     monkeypatch.setattr("backend.config.ROUTER_MODEL", "router-fast")
     monkeypatch.setattr("backend.config.SUGGESTION_MODEL", "suggest-smart")
     monkeypatch.setattr("backend.config.EXTRACTION_MODEL", "extract-json")
-    monkeypatch.setattr("backend.config.SQL_LOOKUP_MODEL", "sql-lookup")
     monkeypatch.setattr("backend.config.LLM_API_KEY", "proxy-key")
     monkeypatch.setattr("backend.config.LLM_BASE_URL", "http://localhost:4000")
 
@@ -39,5 +38,4 @@ def test_runtime_models_are_task_specific(monkeypatch):
     assert runtime["router_model"] == "router-fast"
     assert runtime["suggestion_model"] == "suggest-smart"
     assert runtime["extraction_model"] == "extract-json"
-    assert runtime["sql_lookup_model"] == "sql-lookup"
     assert runtime["llm_configured"] is True

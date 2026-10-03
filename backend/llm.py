@@ -42,15 +42,10 @@ def get_extraction_model() -> str:
     return _clean(cfg.EXTRACTION_MODEL) or get_suggestion_model()
 
 
-def get_sql_lookup_model() -> str:
-    return _clean(cfg.SQL_LOOKUP_MODEL) or get_extraction_model()
-
-
 def llm_runtime_config() -> dict[str, Any]:
     router_model = get_router_model()
     suggestion_model = get_suggestion_model()
     extraction_model = get_extraction_model()
-    sql_lookup_model = get_sql_lookup_model()
     api_key_loaded = bool(resolve_llm_api_key())
     base_url_configured = bool(resolve_llm_base_url())
 
@@ -63,8 +58,6 @@ def llm_runtime_config() -> dict[str, Any]:
         "suggestion_model_configured": bool(suggestion_model),
         "extraction_model": extraction_model,
         "extraction_model_configured": bool(extraction_model),
-        "sql_lookup_model": sql_lookup_model,
-        "sql_lookup_model_configured": bool(sql_lookup_model),
         "llm_configured": (
             api_key_loaded
             and base_url_configured
@@ -73,6 +66,23 @@ def llm_runtime_config() -> dict[str, Any]:
             and bool(extraction_model)
         ),
     }
+
+
+def strip_code_fences(raw: str) -> str:
+    """Model JSON replies sometimes arrive wrapped in a ```json fence."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return raw.strip()
+
+
+def str_list(value: Any, limit: int | None = None) -> list[str]:
+    """Non-empty strings from a model-returned list (anything else -> [])."""
+    if not isinstance(value, list):
+        return []
+    return [str(v).strip() for v in value if str(v).strip()][:limit]
 
 
 def llm_is_configured() -> bool:

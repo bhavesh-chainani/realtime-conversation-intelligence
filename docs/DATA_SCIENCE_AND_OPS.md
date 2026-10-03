@@ -14,7 +14,7 @@ Companion docs:
 
 **Goal:** Live **speech-to-text** on the client’s microphone, streamed to **AssemblyAI** with **streaming speaker diarization**, with **finalized role-labeled transcript segments** periodically sent to a **FastAPI backend** that runs:
 
-1. A **two-step LLM pipeline** (router → suggestion generator),
+1. A **suggestion pipeline**: one merged LLM call (`SUGGESTION_PIPELINE=single`, the demo default) or router → suggestion generator (`router`),
 2. A **structured extraction** endpoint (customer fields from **Customer**-attributed transcript lines), and/or  
 3. A **read-only customer-history lookup** against a curated Postgres view,
 
@@ -89,7 +89,7 @@ Async requires `ASYNC_JOBS_ENABLED=true`, a configured **job store** (`JOB_STORE
 1. **Backend** — from repo root with Python 3.11+:
 
    ```bash
-   python -m venv .venv && source .venv/bin/activate
+   python -m venv realtime-venv && source realtime-venv/bin/activate
    pip install -r requirements.txt
    cp .env.example .env   # fill keys
    uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload
@@ -148,6 +148,9 @@ BASE_URL=http://127.0.0.1:8000 python scripts/load_smoke.py
 | **Async jobs** | `ASYNC_JOBS_ENABLED`, `JOB_STORE_BACKEND`, `INFERENCE_QUEUE_MODE` (`poll` \| `sqs`), `AWS_SQS_INFERENCE_QUEUE_URL` | Job queue + worker model. Dynamo job store + poll mode is intentionally disallowed — use **SQS** ([`worker.py`](../backend/worker.py)). |
 | **Customer history** | `CUSTOMER_HISTORY_DATABASE_URL`, `CUSTOMER_HISTORY_VIEW`, `CUSTOMER_HISTORY_QUERY_TIMEOUT_MS`, `CUSTOMER_HISTORY_MAX_ROWS` | Read-only Postgres lookup against a curated customer-history view; intended for operator context, not arbitrary SQL execution. |
 | **Observability** | `LOG_JSON`, `LOG_LEVEL`, `APP_VERSION`, `GIT_SHA`, `METRICS_ENABLED`, `METRICS_TOKEN`, `STRICT_READINESS` | Structured logs, Prometheus `/metrics`, readiness strictness — see §7. |
+| **Suggestions / latency** | `SUGGESTION_PIPELINE` (`single` \| `router`), `LLM_MAX_RETRIES`, `LLM_REASONING_EFFORT`, `SUGGESTION_TIMEOUT_SECONDS`, `SUGGESTION_MAX_TOKENS` | Pipeline shape and per-call latency controls. |
+| **Diarisation** | `DIARIZATION_BACKEND` (`assemblyai` \| `nemotron`), `DIARIZATION_DEVICE`, `DIARIZATION_MODE`, `DIARIZATION_MAX_WAIT_MS`, `STT_TICKET_SECRET`, … | Nemotron 3 Diarization through the `/ws/stt` relay; see README "Nemotron speaker diarisation". |
+| **Demo** | `DEMO_MODE`, `DEMO_SPEECH_MODEL`, `DEMO_SCRIPTS_DIR`, `DEMO_CACHE_DIR` | Scripted demo endpoints and warm cache ([DEMO_RUNBOOK](DEMO_RUNBOOK.md)). |
 
 **`.env.example`** is the authoritative list for copy-paste; values are loaded with **override from `.env`** via `python-dotenv` in [`config.py`](../backend/config.py).
 
@@ -160,7 +163,6 @@ Stored at repo root [`config.json`](../config.json), read at startup:
 | `router_model` | Default model name for the lightweight routing/gating decision. |
 | `suggestion_model` | Default model name for operator suggestions. |
 | `extraction_model` | Default model name for structured customer-field extraction. |
-| `sql_lookup_model` | Reserved model slot for future SQL/NL retrieval layers; the first customer-history release is deterministic and view-based. |
 | `suggestion_temperature` | Sampling temperature for generation. |
 | `max_suggestions` | Upper bound routed into agents (bounded by runtime `max_suggestions` on payloads where applicable). |
 | `assemblyai_keyterms` | Up to ~100 boosted terms forwarded as **streaming** hint (not a substitute for fine-tuning). |
@@ -173,10 +175,12 @@ Text prompts live under [`backend/prompts/`](../backend/prompts/):
 
 - `router_system_prompt.txt`, `router_user_prompt.txt`
 - `suggestion_system_prompt.txt`, `suggestion_user_prompt.txt`
+- `suggestion_fast_system_prompt.txt`, `suggestion_fast_user_prompt.txt` (single-call pipeline)
+- `call_summary_system_prompt.txt` (after-call notes)
 
 These define **router** and **suggestion** behavior more than `config.json` alone. Treat them like **code**: review in PRs, tag releases, and pair with **`GIT_SHA`** in production logs so offline analysis can map outputs to exact prompt text.
 
-Fallback behavior when the LLM path fails uses [`fallback_suggestions.json`](../fallback_suggestions.json) (see suggestion core / agents).
+Fallback behavior when the LLM path fails uses [`fallback_suggestions.json`](../backend/prompts/fallback_suggestions.json) (see suggestion core / agents).
 
 ---
 
@@ -190,7 +194,7 @@ If the client sends a **`session_id`** (after `POST /sessions/`) and the session
 - **`customer_data.extract`** — extraction result or error.
 - **`customer_history.lookup`** — read-only customer-history lookup inputs and response payload.
 
-Session store implementation: [`session_store.py`](../session_store.py) (`sqlite` | `dynamodb` | `none`).
+Session store implementation: [`session_store.py`](../backend/session_store.py) (`sqlite` | `dynamodb` | `none`).
 
 **Implication for DS:** You can build **offline evaluation sets** from stored events *if* sessions are enabled and retention is allowed by policy. There is **no** built-in PII scanner — treat transcripts as **sensitive** (see §8).
 

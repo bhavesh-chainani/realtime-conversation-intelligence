@@ -11,6 +11,8 @@ RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r /a
 
 COPY backend /app/backend
 COPY config.json /app/config.json
+# Demo scenarios (used with DEMO_MODE=true)
+COPY demo /app/demo
 
 RUN mkdir -p /data
 ENV SQLITE_DB_PATH=/data/sessions.db

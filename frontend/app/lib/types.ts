@@ -23,11 +23,8 @@ export type Suggestion = {
   topic?: string;
   confidence?: number;
   linked_records?: string[];
-  source?: string;
   details?: {
     possibleConversation?: string;
-    operatorResponse?: string;
-    suggestedConversation?: string;
     priority?: string;
     [key: string]: unknown;
   };
@@ -38,7 +35,6 @@ export type SuggestionMeta = {
   latencyMs: number | null;
   llmMs?: number;
   model?: string;
-  lineId?: string;
 };
 
 export type CustomerData = {
@@ -72,11 +68,10 @@ export type CustomerHistoryStatus =
 
 export type HistoryMeta = {
   openCount: number;
-  companies: string[];
   matchedOn: string | null;
 };
 
-export type DemoScenarioSummary = { id: string; title: string; description?: string };
+export type DemoScenarioSummary = { id: string; title: string };
 
 export type DemoScenario = DemoScenarioSummary & {
   persona?: { name?: string; nric?: string; address?: string; employer?: string };
@@ -90,8 +85,6 @@ export type CacheStatus = {
   fresh: boolean;
   steps: number;
   total: number;
-  built_at?: string;
-  model?: string;
 };
 
 export type PreflightCheck = { ok: boolean; ms?: number; error?: string; [key: string]: unknown };

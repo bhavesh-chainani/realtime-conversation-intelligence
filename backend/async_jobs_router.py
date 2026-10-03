@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .auth import enforce_usage_limits
 from .config import ASYNC_JOBS_ENABLED, INFERENCE_QUEUE_MODE

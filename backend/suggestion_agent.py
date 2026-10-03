@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .config import SUGGESTION_MAX, SUGGESTION_TEMPERATURE
-from .llm import get_llm_client, get_suggestion_model
+from .llm import get_llm_client, get_suggestion_model, strip_code_fences
 from .prompt_loader import (
     get_fallback_suggestions,
     get_suggestion_system_prompt,
@@ -45,20 +45,6 @@ def validate_suggestion(suggestion: Any) -> Optional[Dict[str, Any]]:
         validated["details"] = {}
     details = validated["details"]
 
-    # Backward compatibility: map older field names onto possibleConversation.
-    if "possibleConversation" not in details:
-        if "operatorResponse" in details:
-            details["possibleConversation"] = details["operatorResponse"]
-        elif "naturalResponse" in details:
-            details["possibleConversation"] = details["naturalResponse"]
-        elif "suggestedConversation" in details:
-            conv = details["suggestedConversation"]
-            if "Operator:" in conv:
-                details["possibleConversation"] = (
-                    conv.split("Operator:")[1].split("\n")[0].strip()
-                )
-            else:
-                details["possibleConversation"] = conv
     details.setdefault(
         "possibleConversation", "Could you provide more details about your situation?"
     )
@@ -127,17 +113,7 @@ class SuggestionAgent:
                     {"role": "user", "content": user_prompt},
                 ],
             )
-            raw = (response.choices[0].message.content or "").strip()
-
-            # Clean up JSON response
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                if raw.startswith("json"):
-                    raw = raw[4:].lstrip()
-                if raw.startswith("\n"):
-                    raw = raw[1:]
-
-            parsed = json.loads(raw)
+            parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
             if not isinstance(parsed, list):
                 raise ValueError("Model did not return a JSON array")
 

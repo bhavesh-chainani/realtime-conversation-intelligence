@@ -96,12 +96,7 @@ export function SuggestionsPanel({
         suggestions.map((suggestion, index) => {
           const details = suggestion.details || {};
           const topic = suggestion.topic || suggestion.text || "Follow up on the current conversation";
-          const phrasing =
-            details.operatorResponse ||
-            details.suggestedConversation ||
-            details.possibleConversation ||
-            suggestion.text ||
-            "";
+          const phrasing = details.possibleConversation || suggestion.text || "";
           const highPriority = String(details.priority || "").toLowerCase() === "high";
           const confidence =
             typeof suggestion.confidence === "number" && Number.isFinite(suggestion.confidence)

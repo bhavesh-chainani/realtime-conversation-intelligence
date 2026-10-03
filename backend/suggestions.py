@@ -31,8 +31,6 @@ class SuggestRequest(BaseModel):
     customer_history: List[CustomerCase] | None = Field(
         None, description="Prior cases from the customer history lookup"
     )
-    scenario_id: str | None = Field(None, description="Demo scenario (logging only)")
-    script_step: str | None = Field(None, description="Demo script line (logging only)")
 
 
 @router.post("/suggest")

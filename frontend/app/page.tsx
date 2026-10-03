@@ -225,7 +225,6 @@ export default function Page() {
   const [customerHistory, setCustomerHistory] = useState("");
   const [customerHistoryCases, setCustomerHistoryCases] = useState<CustomerHistoryCase[]>([]);
   const [historyMeta, setHistoryMeta] = useState<HistoryMeta | null>(null);
-  const [isLoadingCustomerHistory, setIsLoadingCustomerHistory] = useState(false);
   const [customerData, setCustomerData] = useState<CustomerData>(EMPTY_CUSTOMER);
   const [fieldSources, setFieldSources] = useState<Partial<Record<CustomerDataField, FieldSource>>>({});
   const [isListening, setIsListening] = useState(false);
@@ -313,20 +312,6 @@ export default function Page() {
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [turns, live, pendingTurns]);
-
-  useEffect(() => {
-    speakerRoleMapRef.current = speakerRoleMap;
-  }, [speakerRoleMap]);
-
-  useEffect(() => {
-    nextVoiceIsStaffRef.current = nextVoiceIsStaff;
-  }, [nextVoiceIsStaff]);
-
-  useEffect(() => {
-    try {
-      localStorage.removeItem("API_AUTH_TOKEN");
-    } catch {}
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -499,7 +484,6 @@ export default function Page() {
     setCustomerHistory("");
     setCustomerHistoryCases([]);
     setHistoryMeta(null);
-    setIsLoadingCustomerHistory(false);
   };
 
   const profilePayload = (): Record<string, string> => {
@@ -570,7 +554,6 @@ export default function Page() {
       setSuggestionMeta({
         origin: "instant",
         latencyMs: performance.now() - turn.committedAt,
-        lineId: turn.scriptLineId,
       });
       noteCitations(prepared, turn.id);
     };
@@ -586,8 +569,6 @@ export default function Page() {
         session_id: sessionIdRef.current || undefined,
         customer_profile: Object.keys(profile).length ? profile : undefined,
         customer_history: cases.length ? cases : undefined,
-        scenario_id: scenarioRef.current?.id,
-        script_step: turn.scriptLineId,
       };
 
       let data: Record<string, unknown>;
@@ -640,7 +621,6 @@ export default function Page() {
         latencyMs: performance.now() - turn.committedAt,
         llmMs: timings.llm_ms,
         model: timings.model,
-        lineId: turn.scriptLineId,
       });
       noteCitations(list, turn.id);
     } catch (err) {
@@ -659,7 +639,6 @@ export default function Page() {
 
   const runHistoryLookup = async (args: { name?: string; nric_worker_permit_id?: string }) => {
     const reqId = ++lookupReqIdRef.current;
-    setIsLoadingCustomerHistory(true);
     setCustomerHistoryStatus("loading");
 
     try {
@@ -731,9 +710,6 @@ export default function Page() {
         normalizedStatus === "ok"
           ? {
               openCount,
-              companies: Array.isArray(body.companies)
-                ? body.companies.map(String)
-                : Array.from(new Set(cases.map((c) => c.company).filter(Boolean))),
               matchedOn,
             }
           : null
@@ -767,8 +743,6 @@ export default function Page() {
       console.error("[Frontend] Failed to obtain customer history:", err);
       setCustomerHistoryStatus("error");
       setCustomerHistory("Unable to obtain customer history at the moment.");
-    } finally {
-      if (reqId === lookupReqIdRef.current) setIsLoadingCustomerHistory(false);
     }
   };
 
@@ -1634,8 +1608,6 @@ export default function Page() {
           fresh: Boolean(body.fresh),
           steps: Number(body.steps ? Object.keys(body.steps).length : 0),
           total: Number(body.total || 0),
-          built_at: body.built_at,
-          model: body.model,
         });
       } catch {}
     },
@@ -1913,7 +1885,7 @@ export default function Page() {
             customerHistoryMessage={customerHistory}
             customerHistoryCases={customerHistoryCases}
             historyMeta={historyMeta}
-            isLoadingCustomerHistory={isLoadingCustomerHistory}
+            isLoadingCustomerHistory={customerHistoryStatus === "loading"}
           />
         </aside>
       </main>

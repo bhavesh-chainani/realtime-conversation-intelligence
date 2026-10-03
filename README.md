@@ -2,11 +2,9 @@
 
 A real-time legal call assistant system that provides live AI-powered suggestions to operators during active calls with clients. Built with a FastAPI backend and Next.js frontend, featuring real-time speech-to-text transcription via AssemblyAI and task-specific LLM routing through LiteLLM over an OpenAI-compatible API surface.
 
-App Screenshot
-
 ## ✨ Features
 
-- **Real-Time Transcription**: Live speech-to-text using AssemblyAI WebSocket API (frontend connects directly for lowest latency)
+- **Real-Time Transcription**: Live speech-to-text using the AssemblyAI streaming API
 - **Speaker Diarization**: NVIDIA **Nemotron 3 Diarization** decides who said each word (backend relay, `DIARIZATION_BACKEND=nemotron`); without it, AssemblyAI streaming speaker labels are used. Two voices on a single laptop mic map to **Staff** / **Customer**
 - **AI-Powered Suggestions**: Intelligent, context-aware recommendations for operators
 - **Legal Entity Integration**: Specialized for legal entity in singapore's legal assistance workflow
@@ -26,7 +24,7 @@ App Screenshot
 ### Prerequisites
 
 - **Python 3.11+** (check with `python3 --version`)
-- **Node.js 18+** and npm (check with `node --version` and `npm --version`)
+- **Node.js 20.9+** and npm (check with `node --version` and `npm --version`)
 - **AssemblyAI API Key** ([Get one here](https://www.assemblyai.com/))
 - **LiteLLM proxy URL, API key, and model names**
 
@@ -42,83 +40,26 @@ cd realtime-conversation-intelligence
 #### 2. Set Up Python Backend
 
 ```bash
-# Create virtual environment
 python3.11 -m venv realtime-venv
-
-# Activate virtual environment
-# On macOS/Linux:
-# Create virtual environment
-python3.11 -m venv realtime-venv
-
-# Activate virtual environment
-# On macOS/Linux:
-source realtime-venv/bin/activate
-# On Windows:
-# realtime-venv\Scripts\activate
-
-# Upgrade pip
+source realtime-venv/bin/activate        # Windows: realtime-venv\Scripts\activate
 pip install --upgrade pip
-
-# Install dependencies
 pip install -r requirements.txt
-# On Windows:
-# realtime-venv\Scripts\activate
-
-# Upgrade pip
-pip install --upgrade pip
-
-# Install dependencies
-pip install -r requirements.txt
+# Optional, for Nemotron speaker diarisation (see below):
+# pip install -r requirements.txt -r requirements-diarization.txt
 ```
 
 #### 3. Configure Environment Variables
 
-Create a `.env` file in the project root directory:
+Copy the template and fill in your credentials:
 
 ```bash
-# AssemblyAI for realtime transcription
-ASSEMBLYAI_API_KEY=your_assemblyai_api_key_here
-
-# LiteLLM / OpenAI-compatible proxy configuration for all LLM tasks
-LLM_API_KEY=your_litellm_proxy_key_here
-LLM_BASE_URL=http://your-litellm-host:4000
-LLM_TIMEOUT_SECONDS=20
-ROUTER_MODEL=gpt-4o-mini
-SUGGESTION_MODEL=claude-sonnet-5
-EXTRACTION_MODEL=claude-sonnet-5
-SQL_LOOKUP_MODEL=claude-sonnet-5
-SUGGESTION_TEMPERATURE=0.3
-MAX_SUGGESTIONS=2
-
-# API auth mode
-REQUIRE_API_AUTH=false
-API_AUTH_TOKEN=replace_with_long_random_value_when_enabled
-AUTH_JWKS_URL=
-AUTH_ISSUER=
-AUTH_AUDIENCE=
-
-# Restrict backend CORS origins (comma-separated)
-BACKEND_CORS_ORIGINS=http://localhost:3000
-
-# Usage guardrails
-RATE_LIMIT_PER_MINUTE=30
-DAILY_REQUEST_QUOTA=2000
-
-# Session persistence: sqlite (default local) | dynamodb (AWS) | none
-STORAGE_BACKEND=sqlite
-SQLITE_DB_PATH=data/sessions.db
-DYNAMODB_CONVERSATIONS_TABLE=
-AWS_REGION=us-east-1
-
-# Customer history lookup (read-only Postgres view)
-CUSTOMER_HISTORY_DATABASE_URL=
-CUSTOMER_HISTORY_VIEW=public.customer_history_view
-CUSTOMER_HISTORY_QUERY_TIMEOUT_MS=2500
-CUSTOMER_HISTORY_MAX_ROWS=10
+cp .env.example .env
 ```
 
-**Note**: Replace the example AssemblyAI and LiteLLM values with your real credentials and model aliases. In this project, LiteLLM is the intended LLM runtime contract, so `LLM_BASE_URL` and `LLM_API_KEY` should both be set.
-You can also copy `.env.example` to `.env` and fill values.
+At minimum set `ASSEMBLYAI_API_KEY`, `LLM_API_KEY` and `LLM_BASE_URL` (LiteLLM is the intended LLM runtime, so
+both LLM values are required) and the task model names your proxy exposes (`ROUTER_MODEL`, `SUGGESTION_MODEL`,
+`EXTRACTION_MODEL`). `.env.example` documents every other option: auth, CORS, rate limits, persistence, async
+jobs, customer-history lookup, observability, demo mode and diarisation.
 
 #### 4. Configure Suggestion Settings (Optional)
 
@@ -129,14 +70,19 @@ Edit `config.json` to customize fallback model-routing defaults when env vars ar
   "router_model": "gpt-4o-mini",
   "suggestion_model": "gpt-4o-mini",
   "extraction_model": "gpt-4o-mini",
-  "sql_lookup_model": "gpt-4o-mini",
   "suggestion_temperature": 0.3,
-  "max_suggestions": 2,
-  "assemblyai_keyterms": []
+  "max_suggestions": 1,
+  "assemblyai_keyterms": [],
+  "assemblyai_stream_params": {
+    "min_end_of_turn_silence_when_confident": 240,
+    "max_turn_silence": 1000
+  }
 }
 ```
 
 Optional `assemblyai_keyterms`: array of strings passed to AssemblyAI streaming v3 as the `keyterms_prompt` query parameter (JSON-encoded). This replaces the older `word_boost` style usage on streaming; start empty and add only terms the model often mishears (max 100; see [AssemblyAI keyterms prompting](https://www.assemblyai.com/docs/streaming/keyterms-prompting)).
+
+Optional `assemblyai_stream_params`: extra streaming query params (turn detection); shorter end-of-turn silence makes finished lines appear sooner. Optional `assemblyai_speech_model` sets the streaming `speech_model`.
 
 **Model routing**: task-specific env vars take precedence over `config.json`, which makes it easy to point the backend at LiteLLM aliases without editing code.
 
@@ -175,6 +121,10 @@ The backend will be available at `http://localhost:8000`
 - `POST /suggest` – AI suggestions endpoint (accepts conversation transcript + optional session id)
 - `POST /extract-customer-data` – Extract customer information (optional session id)
 - `POST /customer-history` – Read-only customer-history lookup using name and/or NRIC / Work Permit ID (optional session id)
+- `POST /call-summary` – Draft after-call notes (wrap-up card)
+- `GET /assemblyai-token` – How the browser starts live transcription: a short-lived AssemblyAI token, or a one-time ticket for the relay when Nemotron diarisation is on
+- `WS /ws/stt` – STT relay (AssemblyAI words + Nemotron speakers); see "Nemotron speaker diarisation"
+- `/demo/*` – Scripted-demo scenarios, warm cache, prewarm and preflight (only with `DEMO_MODE=true`; see [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md))
 
 **Tests & ops**: `pip install -r requirements-dev.txt && pytest` · load probe: `python scripts/load_smoke.py` · production checklist: [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md).
 
@@ -206,9 +156,9 @@ docker compose up --build
 
 1. **Open the Application**: Navigate to `http://localhost:3000` in your browser
 2. **Start Transcription**: Click "Start session" (browser will request microphone access)
-3. **Speak**: Staff and customer voices on the same laptop mic are labeled separately; use **Next voice is Staff/Customer** and **Swap roles** if needed
+3. **Speak**: Staff and customer voices on the same laptop mic are labeled separately; use **Next voice: Staff / Customer** and **Swap roles** if needed
 4. **View Suggestions**: AI-powered suggestions appear in real-time on the right side
-5. **Use customer lookup**: After extraction fills name or NRIC / Work Permit ID, click **Obtain customer info** to search the read-only history view
+5. **Use customer lookup**: After extraction fills name or NRIC / Work Permit ID, click **Look up** to search the read-only history view
 6. **Stop**: Click "Stop" to end the transcription session
 
 **How It Works**:
@@ -225,7 +175,7 @@ This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setu
 
 1. Staff opens the UI on their laptop and starts a session.
 2. Customer speaks in-person or via speakerphone into the same room/mic.
-3. Diarization separates speakers; the first new voice defaults to **Staff** (change with “Next voice is Customer” before that speaker appears).
+3. Diarization separates speakers; the first new voice defaults to **Staff** (change with **Next voice: Customer** before that speaker appears).
 4. If early labels are swapped, click **Swap roles** — no need to restart the session.
 
 ### Nemotron speaker diarisation (recommended)
@@ -290,10 +240,11 @@ capture|score|relay`.
 - Finalized labeled transcript turns are posted to `/suggest` endpoint
 - Backend processes conversation context through LiteLLM-routed models
 
-3. **AI Suggestions (Two-Agent Pipeline)**:
+3. **AI Suggestions** (`SUGGESTION_PIPELINE`):
 
-- **Router Agent**: Analyzes conversation and decides when suggestions are needed
-- **Suggestion Agent**: Generates actionable recommendations including:
+- `single` (default with `DEMO_MODE=true`): one merged LLM call decides whether to suggest and writes the suggestion (`suggestion_fast.py`), for the lowest latency
+- `router` (default otherwise): a **Router Agent** decides when suggestions are needed, then a **Suggestion Agent** generates them
+- Suggestions include:
   - Follow-up questions to gather essential information
   - Legal issue identification
   - Document requests
@@ -312,29 +263,32 @@ capture|score|relay`.
 
 ```
 realtime-conversation-intelligence/
-├── backend/                    # FastAPI backend
-│   ├── api.py                 # FastAPI application and routes
-│   ├── suggestions.py         # Two-agent AI suggestion endpoint
-│   ├── router_agent.py        # Router agent logic
-│   ├── suggestion_agent.py    # Suggestion agent logic
-│   ├── customer_data_extractor.py  # Customer data extraction
-│   ├── prompt_loader.py       # Prompt loading utility
-│   ├── config.py              # Environment and configuration
-│   ├── session_store.py       # SQLite + DynamoDB session persistence
-│   └── prompts/               # Editable prompt files
-│       ├── router_system_prompt.txt
-│       ├── router_user_prompt.txt
-│       ├── suggestion_system_prompt.txt
-│       ├── suggestion_user_prompt.txt
-│       └── fallback_suggestions.json
-├── frontend/                  # Next.js frontend
-│   ├── app/
-│   │   ├── page.tsx           # Main conversation UI
-│   │   └── layout.tsx          # Next.js layout
-│   └── package.json
-├── config.json                # Model defaults
-├── requirements.txt           # Python dependencies
-└── README.md                  # This file
+├── backend/                       # FastAPI backend
+│   ├── api.py                     # App, health/readiness, STT token endpoint
+│   ├── stt_relay.py               # /ws/stt: AssemblyAI words + Nemotron speakers
+│   ├── diarization/               # Nemotron streaming diariser, word-to-speaker merge
+│   ├── suggestions.py             # /suggest endpoint
+│   ├── suggestions_core.py        # Pipeline selection (single / router) and fallbacks
+│   ├── suggestion_fast.py         # Single-call pipeline
+│   ├── router_agent.py            # Router agent
+│   ├── suggestion_agent.py        # Suggestion agent
+│   ├── call_summary.py            # /call-summary (wrap-up notes)
+│   ├── customer_data_extractor.py # /extract-customer-data
+│   ├── customer_history.py        # /customer-history (read-only Postgres view)
+│   ├── demo_api.py, demo_cache.py # Scripted demo endpoints and warm cache
+│   ├── async_jobs_router.py, worker.py  # Optional async inference queue + worker
+│   ├── prompt_loader.py           # Prompt loading
+│   ├── config.py                  # Environment and configuration
+│   ├── session_store.py           # SQLite + DynamoDB session persistence
+│   └── prompts/                   # Editable prompt files
+├── frontend/app/                  # Next.js UI: page.tsx, components/, lib/ (with unit tests)
+├── demo/scripts/                  # Demo call scripts
+├── scripts/                       # Demo DB, demo audio, STT / LLM / diarisation benchmarks, GPU host setup
+├── tests/                         # Backend tests (pytest)
+├── docs/                          # Ops, production checklist, demo runbook and presenter script
+├── infra/aws/                     # App Runner manifests
+├── config.json                    # Model and STT defaults
+└── requirements*.txt              # Python dependencies (base, dev, diarisation)
 ```
 
 ## 🎨 Customization
@@ -352,6 +306,11 @@ All AI prompts are stored in separate files for easy customization. Edit the fil
 
 - `suggestion_system_prompt.txt` – System instructions for the suggestion agent
 - `suggestion_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` and `{max_suggestions}` placeholders)
+
+**Single-call pipeline and wrap-up notes**:
+
+- `suggestion_fast_system_prompt.txt`, `suggestion_fast_user_prompt.txt` – The merged decide-and-suggest call (`SUGGESTION_PIPELINE=single`)
+- `call_summary_system_prompt.txt` – After-call notes
 
 **Fallback Suggestions** (shown when the AI fails):
 
