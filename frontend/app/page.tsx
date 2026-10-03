@@ -22,6 +22,15 @@ import {
   type AlignState,
   type ScriptRole,
 } from "./lib/script-align.ts";
+import {
+  normalizeSpeakerLabel,
+  parsePendingTurn,
+  parseRelayInfo,
+  parseRelaySegments,
+  relayUrl,
+  type PendingTurn,
+  type RelaySegment,
+} from "./lib/stt-relay.ts";
 import { areSimilar } from "./lib/text-normalize.ts";
 import {
   isOpenCaseStatus,
@@ -54,6 +63,10 @@ type FinalTurnInput = {
   speakerLabel: string | null;
   wordLabels?: Array<string | null>;
   turnOrder?: number;
+  /** Position within a relay turn split by speaker; each part is its own transcript turn. */
+  segmentIndex?: number;
+  /** Relay turns arrive after the next speaker's live text has started: leave it on screen. */
+  keepLive?: boolean;
   source: "mic" | "autopilot";
 };
 
@@ -85,16 +98,6 @@ function newTurnId(): string {
     return crypto.randomUUID();
   }
   return `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function normalizeSpeakerLabel(raw: unknown): string | null {
-  if (raw == null) return null;
-  const label = String(raw).trim().toUpperCase();
-  // AssemblyAI marks words it has not attributed yet as "PENDING": not a third voice.
-  if (!label || label === "UNKNOWN" || label === "NULL" || label === "NONE" || label === "PENDING") {
-    return null;
-  }
-  return label;
 }
 
 function extractSpeakerLabel(msg: Record<string, unknown>): string | null {
@@ -212,6 +215,8 @@ export default function Page() {
   const [live, setLive] = useState("");
   const [speaking, setSpeaking] = useState(false);
   const [liveRole, setLiveRole] = useState<SpeakerRole>("unknown");
+  /** Finished turns the relay is still attributing to a speaker (Nemotron diarisation). */
+  const [pendingTurns, setPendingTurns] = useState<PendingTurn[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestionMeta, setSuggestionMeta] = useState<SuggestionMeta | null>(null);
   const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
@@ -297,6 +302,7 @@ export default function Page() {
   const wrapupReqIdRef = useRef(0);
   const callEndedRef = useRef(false);
   const lastPartialLabelRef = useRef<string | null>(null);
+  const pendingTurnsRef = useRef<PendingTurn[]>([]);
   const pauseToggleRef = useRef<() => void>(() => {});
   const sttDropCountRef = useRef(0);
   const sttTokenRef = useRef<{ key: string; payload: Record<string, unknown>; fetchedAt: number } | null>(null);
@@ -306,7 +312,7 @@ export default function Page() {
     const el = transcriptListRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [turns, live]);
+  }, [turns, live, pendingTurns]);
 
   useEffect(() => {
     speakerRoleMapRef.current = speakerRoleMap;
@@ -888,12 +894,36 @@ export default function Page() {
     if (!liveRef.current) setLiveRole(expected ?? "unknown");
   };
 
-  const ingestFinalTurn = (input: FinalTurnInput) => {
-    const text = input.text.trim();
+  const setPending = (next: PendingTurn[]) => {
+    pendingTurnsRef.current = next;
+    setPendingTurns(next);
+  };
+
+  /** The relay finished a turn and is identifying its speakers: move its text out of the live line. */
+  const ingestPendingTurn = (pending: PendingTurn) => {
     setSpeaking(false);
     setLive("");
     liveRef.current = "";
     setLiveRole("unknown");
+    if (pending.text) setPending([...pendingTurnsRef.current, pending]);
+  };
+
+  /** A relay turn arrived with its speakers: commit one transcript turn per speaker. */
+  const ingestRelayTurn = (turnOrder: number | undefined, segments: RelaySegment[]) => {
+    setPending(pendingTurnsRef.current.filter((p) => p.turnOrder !== turnOrder));
+    segments.forEach((seg, segmentIndex) =>
+      ingestFinalTurn({ ...seg, turnOrder, segmentIndex, keepLive: true, source: "mic" })
+    );
+  };
+
+  const ingestFinalTurn = (input: FinalTurnInput) => {
+    const text = input.text.trim();
+    if (!input.keepLive) {
+      setSpeaking(false);
+      setLive("");
+      liveRef.current = "";
+      setLiveRole("unknown");
+    }
     if (!text) return;
 
     // A re-sent version of the latest turn (formatted text, same turn_order) replaces it.
@@ -901,18 +931,20 @@ export default function Page() {
     let baseAlign = alignStateRef.current;
     const last = baseTurns[baseTurns.length - 1];
     const snapshot = lastFinalSnapshotRef.current;
+    const orderKey =
+      input.turnOrder !== undefined ? `order:${input.turnOrder}:${input.segmentIndex ?? 0}` : undefined;
     const isResend =
       !!snapshot &&
       !!last &&
-      (input.turnOrder !== undefined
-        ? snapshot.key === `order:${input.turnOrder}`
+      (orderKey !== undefined
+        ? snapshot.key === orderKey
         : input.source === "mic" && last.roleSource !== "manual" && areSimilar(text, last.text));
     if (isResend && snapshot) {
       baseTurns = snapshot.turns;
       baseAlign = snapshot.align;
     } else {
       lastFinalSnapshotRef.current = {
-        key: input.turnOrder !== undefined ? `order:${input.turnOrder}` : `turn:${baseTurns.length}`,
+        key: orderKey ?? `turn:${baseTurns.length}`,
         turns: baseTurns,
         align: baseAlign,
       };
@@ -1005,8 +1037,9 @@ export default function Page() {
     closeWs();
   };
 
-  const handlersRef = useRef({ ingestFinalTurn, ingestPartial, ingestSpeechStart, notifySttDrop });
-  handlersRef.current = { ingestFinalTurn, ingestPartial, ingestSpeechStart, notifySttDrop };
+  const handlers = { ingestFinalTurn, ingestPartial, ingestSpeechStart, ingestPendingTurn, ingestRelayTurn, notifySttDrop };
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
 
   // ---------------------------------------------------------------------------
   // Speaker controls
@@ -1117,6 +1150,7 @@ export default function Page() {
 
     setLive("");
     liveRef.current = "";
+    setPending([]);
     setSpeaking(false);
     setLiveRole("unknown");
     setIsListening(false);
@@ -1215,6 +1249,7 @@ export default function Page() {
       return out.buffer;
     }
 
+    let wsUrl = "";
     let streamingToken = "";
     let keytermsPrompt: string[] = [];
     let sttPrompt = "";
@@ -1223,6 +1258,9 @@ export default function Page() {
     try {
       const payload = await tokenPromise;
       if (myAttempt !== streamAttemptRef.current) return;
+      // Nemotron diarisation on: audio goes through the backend relay instead of straight to AssemblyAI.
+      const relay = parseRelayInfo(payload);
+      if (relay) wsUrl = relayUrl(backendUrl, relay, ctx.sampleRate || 48000);
       streamingToken = String(payload.token || "").trim();
       keytermsPrompt = Array.isArray(payload.keyterms_prompt)
         ? payload.keyterms_prompt.map((t: unknown) => String(t))
@@ -1234,7 +1272,7 @@ export default function Page() {
           Object.entries(payload.stream_params as Record<string, unknown>).map(([k, v]) => [k, String(v)])
         );
       }
-      if (!streamingToken) {
+      if (!wsUrl && !streamingToken) {
         alert("Backend returned empty streaming token.");
         closeWs();
         return;
@@ -1246,21 +1284,24 @@ export default function Page() {
       return;
     }
 
-    const params = new URLSearchParams({
-      sample_rate: String(ctx.sampleRate || 48000),
-      format_turns: "true",
-      speaker_labels: "true",
-      max_speakers: "2",
-      token: streamingToken,
-    });
-    if (keytermsPrompt.length > 0) {
-      params.set("keyterms_prompt", JSON.stringify(keytermsPrompt));
+    if (!wsUrl) {
+      const params = new URLSearchParams({
+        sample_rate: String(ctx.sampleRate || 48000),
+        format_turns: "true",
+        speaker_labels: "true",
+        max_speakers: "2",
+        token: streamingToken,
+      });
+      if (keytermsPrompt.length > 0) {
+        params.set("keyterms_prompt", JSON.stringify(keytermsPrompt));
+      }
+      if (sttPrompt) params.set("prompt", sttPrompt);
+      if (speechModel) params.set("speech_model", speechModel);
+      for (const [key, value] of Object.entries(streamParams)) params.set(key, value);
+      wsUrl = `wss://streaming.assemblyai.com/v3/ws?${params}`;
     }
-    if (sttPrompt) params.set("prompt", sttPrompt);
-    if (speechModel) params.set("speech_model", speechModel);
-    for (const [key, value] of Object.entries(streamParams)) params.set(key, value);
 
-    const ws = new WebSocket(`wss://streaming.assemblyai.com/v3/ws?${params}`);
+    const ws = new WebSocket(wsUrl);
     if (myAttempt !== streamAttemptRef.current) {
       try {
         ws.close();
@@ -1310,6 +1351,11 @@ export default function Page() {
           closeWs();
           return;
         }
+        const pending = parsePendingTurn(d);
+        if (pending) {
+          handlersRef.current.ingestPendingTurn(pending);
+          return;
+        }
         const text = String(d.transcript || d.text || "");
         if (!text) return;
 
@@ -1325,7 +1371,10 @@ export default function Page() {
         // With format_turns, the unformatted end-of-turn is followed by a formatted one: wait for it.
         const isFinal = endOfTurn && d.turn_is_formatted !== false;
 
-        if (isFinal) {
+        const relaySegments = isFinal ? parseRelaySegments(d) : null;
+        if (relaySegments) {
+          handlersRef.current.ingestRelayTurn(typeof d.turn_order === "number" ? d.turn_order : undefined, relaySegments);
+        } else if (isFinal) {
           handlersRef.current.ingestFinalTurn({
             text,
             speakerLabel,
@@ -1363,13 +1412,19 @@ export default function Page() {
 
   /** Stop the mic without losing the sentence that was still being transcribed. */
   function stopListening() {
-    const pending = liveRef.current.trim();
-    if (pending && wsRef.current) {
-      handlersRef.current.ingestFinalTurn({
-        text: pending,
-        speakerLabel: lastPartialLabelRef.current,
-        source: "mic",
-      });
+    if (wsRef.current) {
+      // Turns still waiting for speaker labels keep their provisional label.
+      for (const turn of pendingTurnsRef.current) {
+        handlersRef.current.ingestFinalTurn({ text: turn.text, speakerLabel: turn.speakerLabel, source: "mic" });
+      }
+      const live = liveRef.current.trim();
+      if (live) {
+        handlersRef.current.ingestFinalTurn({
+          text: live,
+          speakerLabel: lastPartialLabelRef.current,
+          source: "mic",
+        });
+      }
     }
     closeWs();
   }
@@ -1808,6 +1863,7 @@ export default function Page() {
         <TranscriptPanel
           turns={turns}
           live={live}
+          pending={pendingTurns}
           speaking={speaking}
           liveRole={liveRole}
           moments={moments}

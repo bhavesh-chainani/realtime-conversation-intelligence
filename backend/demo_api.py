@@ -21,6 +21,7 @@ from .demo_cache import (
     list_scenarios,
     load_scenario,
 )
+from .diarization import nemotron
 from .llm import (
     get_async_llm_client,
     get_extraction_model,
@@ -159,6 +160,9 @@ async def preflight(
 ) -> dict[str, Any]:
     async def stt() -> dict[str, Any]:
         started = time.perf_counter()
+        if cfg.DIARIZATION_BACKEND == "nemotron" and nemotron.get_diarizer() is None:
+            error = nemotron.load_error() or "loading"
+            return {"ok": False, "ms": 0, "error": f"Nemotron diarizer not ready: {error}"}
         try:
             await create_streaming_token(expires_in_seconds=60)
             return {"ok": True, "ms": _ms(started)}

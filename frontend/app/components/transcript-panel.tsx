@@ -1,10 +1,13 @@
 import { Fragment, type RefObject } from "react";
 
+import type { PendingTurn } from "../lib/stt-relay.ts";
 import type { Moment, SpeakerRole, Turn } from "../lib/types.ts";
 
 type TranscriptPanelProps = {
   turns: Turn[];
   live: string;
+  /** Finished turns whose speakers are still being identified (Nemotron relay). */
+  pending: PendingTurn[];
   /** Speech detected but little or no text yet (u3 models stream few partials). */
   speaking: boolean;
   liveRole: SpeakerRole;
@@ -67,6 +70,7 @@ function MomentChip({ moment }: { moment: Moment }) {
 export function TranscriptPanel({
   turns,
   live,
+  pending,
   speaking,
   liveRole,
   moments,
@@ -164,7 +168,7 @@ export function TranscriptPanel({
 
       <div className="transcript-canvas">
         <div className="transcript-list" ref={transcriptListRef}>
-          {turns.length === 0 && !live && !speaking ? (
+          {turns.length === 0 && !live && !speaking && pending.length === 0 ? (
             <div className="empty-state empty-state--large">The conversation will appear here once the call starts.</div>
           ) : null}
 
@@ -196,6 +200,16 @@ export function TranscriptPanel({
                 <MomentChip key={m.id} moment={m} />
               ))}
             </Fragment>
+          ))}
+
+          {pending.map((turn, i) => (
+            <article key={`pending-${turn.turnOrder ?? i}`} className="turn-card turn-card--live turn-card--unknown">
+              <div className="turn-card__meta">
+                <span className="role-badge role-badge--unknown">…</span>
+                <span className="turn-card__speaker">identifying speaker</span>
+              </div>
+              <p className="turn-card__text turn-card__text--live">{turn.text}</p>
+            </article>
           ))}
 
           {live || speaking ? (

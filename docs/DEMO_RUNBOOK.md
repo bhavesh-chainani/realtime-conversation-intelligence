@@ -90,7 +90,7 @@ After L08, the presenters can ad-lib a closing (in Technical view the captions s
 **Close with End call** (top right). The call clock stops, and the right-hand panel switches to **Wrap-up notes**: issue, summary, linked cases, next steps and documents requested. Click **Copy to case notes** and say: *"That's the after-call work done."* A prepared version appears after about 1.3 s if the live one is slow. Press **Reset** for the next run.
 
 Talking points:
-- **Diarisation:** the script fixes the roles, and confident matches also teach the system which voice is which. Diarisation on its own makes mistakes from a single mic: in testing it gave Katherine's NRIC line to the operator's voice, and the script corrected it. A staff member can click any turn to flip it.
+- **Diarisation:** with Nemotron on (README, "Nemotron speaker diarisation"), every word is attributed to a voice and a line that mixes both speakers is split, so roles hold up even off-script. The script still fixes the roles when it matches, and a staff member can click any turn to flip it. Without Nemotron, AssemblyAI's labels are used: in testing they gave Katherine's NRIC line to the operator's voice, and the script corrected it.
 - **Latency:** if asked, press **T**. A "Prepared" card was computed in advance for this script line, and the live answer replaces it as soon as it arrives (usually about 2 s). The chip always says which one is on screen. The business view makes no timing claims.
 - **Grounding:** suggestions can only cite case IDs that really exist in the record. Others are discarded on the server. Before the NRIC is verified, no case details are shown.
 
@@ -99,6 +99,7 @@ Talking points:
 | Symptom | Action |
 |---|---|
 | A turn has the wrong speaker | Click the turn to flip it (or press **T** and use **Swap roles**). A flip also re-teaches the voice mapping. |
+| Turns sit on *identifying speaker* for several seconds | The diariser is behind (CPU, not GPU). They still arrive, with AssemblyAI labels after `DIARIZATION_MAX_WAIT_MS`. For the demo, run the backend on the GPU host. |
 | *Transcription disconnected · press Resume* appears in the conversation | Press **Resume** (or **P**), wait for the green **On call**, then repeat the last line. |
 | Transcription stalls or an error alert appears | In the dock, click **Stop mic**, press **D**, switch to **Autopilot**, then click **Continue**. Autopilot resumes at the current script line. |
 | The wrap-up can't be drafted | Prepared notes appear automatically for a completed script. Otherwise, take notes manually. |
@@ -122,7 +123,7 @@ Launch Chrome with the WAV as the microphone, then open `/?demo=1` and click **S
 --use-file-for-fake-audio-capture=data/demo_audio/katherine_liao_brightpath.wav%noloop
 ```
 
-This runs the real path end to end: AssemblyAI STT and diarisation, alignment, lookup and suggestions.
+This runs the real path end to end: STT and diarisation (through the Nemotron relay when the backend has `DIARIZATION_BACKEND=nemotron`), alignment, lookup and suggestions. Harder variants with ground truth: `--variant hard` or `--variant room` (see `scripts/bench_diarization.py`).
 
 ## 6. Tuning and diagnostics
 

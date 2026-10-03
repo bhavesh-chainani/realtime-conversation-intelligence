@@ -13,6 +13,11 @@ Two steps, two venvs (the API venv has no torch):
   diar-venv/bin/python scripts/bench_diarization.py score data/diar_eval/*.wav \
       [--configs low_latency,40x4] [--int8] [--show]
 
+End to end through the running backend relay (DIARIZATION_BACKEND=nemotron), as the browser does:
+
+  realtime-venv/bin/python scripts/bench_diarization.py relay data/diar_eval/*_hard.wav \
+      [--backend http://localhost:8000]
+
 Metrics (lower is better), each as % of scored words:
   word     per-word labels, roles assigned the way the app does it: first voice = staff
   turn     every word takes its turn's majority label (the app today, without a script)
@@ -29,6 +34,7 @@ import json
 import sys
 import time
 import urllib.parse
+import urllib.request
 import wave
 from pathlib import Path
 
@@ -49,28 +55,13 @@ TRUTH_REACH_MS = 600  # words this close to a line (but outside it) still belong
 async def capture_one(wav_path: Path) -> None:
     import websockets
 
-    from backend import config as cfg
-    from backend.assemblyai import create_streaming_token
-    from backend.demo_cache import scenario_stt_config
+    from backend.assemblyai import create_streaming_token, streaming_params, stt_session_config
 
     truth = json.loads(wav_path.with_suffix(".timeline.json").read_text())
-    keyterms, prompt = scenario_stt_config(truth["scenario"])
-    speech_model = cfg.ASSEMBLYAI_SPEECH_MODEL or cfg.DEMO_SPEECH_MODEL
     with wave.open(str(wav_path)) as wav:
         rate = wav.getframerate()
         pcm = wav.readframes(wav.getnframes())
-    params = {
-        "sample_rate": str(rate),
-        "format_turns": "true",
-        "speaker_labels": "true",
-        "max_speakers": "2",
-        "speech_model": speech_model,
-        **{k: str(v) for k, v in cfg.ASSEMBLYAI_STREAM_PARAMS.items()},
-    }
-    if keyterms:
-        params["keyterms_prompt"] = json.dumps(keyterms)
-    if prompt and speech_model.startswith("u3"):
-        params["prompt"] = prompt
+    params = streaming_params(rate, stt_session_config(truth["scenario"], demo=True))
     token = await create_streaming_token()
     url = "wss://streaming.assemblyai.com/v3/ws?" + urllib.parse.urlencode({**params, "token": token})
 
@@ -101,6 +92,94 @@ async def capture_one(wav_path: Path) -> None:
     out = wav_path.with_suffix(".aai.json")
     out.write_text(json.dumps({"params": params, "messages": messages}, indent=1))
     print(f"{wav_path.name}: {sum(1 for m in messages if m.get('type') == 'Turn')} Turn messages -> {out.name}")
+
+
+# ---------------------------------------------------------------------------
+# relay (realtime-venv, backend running with DIARIZATION_BACKEND=nemotron)
+# ---------------------------------------------------------------------------
+
+
+async def relay_one(wav_path: Path, backend: str) -> dict:
+    import websockets
+
+    truth = json.loads(wav_path.with_suffix(".timeline.json").read_text())
+    with urllib.request.urlopen(f"{backend}/assemblyai-token?scenario={truth['scenario']}") as resp:
+        payload = json.load(resp)
+    if "relay" not in payload:
+        raise SystemExit("Backend did not offer the relay: start it with DIARIZATION_BACKEND=nemotron")
+    with wave.open(str(wav_path)) as wav:
+        rate = wav.getframerate()
+        pcm = wav.readframes(wav.getnframes())
+    query = urllib.parse.urlencode({"ticket": payload["relay"]["ticket"], "sample_rate": rate})
+    url = backend.replace("http", "ws", 1) + payload["relay"]["path"] + "?" + query
+
+    finals: list[dict] = []
+    state = {"t0": None}
+    bytes_per_chunk = int(rate * CHUNK_MS / 1000) * 2
+    async with websockets.connect(url, max_size=None, open_timeout=60) as ws:
+
+        async def send() -> None:
+            state["t0"] = time.perf_counter()
+            for i in range(0, len(pcm), bytes_per_chunk):
+                await ws.send(pcm[i : i + bytes_per_chunk])
+                target = state["t0"] + (i // bytes_per_chunk + 1) * CHUNK_MS / 1000
+                await asyncio.sleep(max(0.0, target - time.perf_counter()))
+            await asyncio.sleep(1.0)
+            await ws.send(json.dumps({"type": "Terminate"}))  # the relay sends held turns, then Termination
+
+        async def receive() -> None:
+            try:
+                await collect()
+            except websockets.ConnectionClosed as exc:
+                print(f"{wav_path.name}: relay closed early ({exc})")
+
+        async def collect() -> None:
+            async for raw in ws:
+                msg = json.loads(raw)
+                if msg.get("type") == "Turn" and "segments" in msg:
+                    words = msg.get("words") or []
+                    last_end = max((w["end"] for w in words), default=0)
+                    msg["_delay_ms"] = (time.perf_counter() - state["t0"]) * 1000 - last_end
+                    finals.append(msg)
+                elif msg.get("type") == "Termination":
+                    return
+
+        await asyncio.gather(send(), receive(), return_exceptions=True)
+
+    words, labels, truths = [], [], []
+    for turn in finals:
+        for seg in turn["segments"]:
+            for w in seg["words"]:
+                role = truth_role(w, truth["segments"])
+                if role:
+                    words.append(w)
+                    labels.append(seg["speaker_label"])
+                    truths.append(role)
+    arrival = arrival_map(labels, truth["segments"][0]["role"])
+    delays = sorted(t["_delay_ms"] for t in finals)
+    return {
+        "file": wav_path.stem,
+        "turns": len(finals),
+        "segments": sum(len(t["segments"]) for t in finals),
+        "nemotron_turns": sum(1 for t in finals if t.get("diarization") == "nemotron"),
+        "word_err": error_rate(labels, truths, arrival),
+        "swap": any(oracle_map(labels, truths).get(k) != v for k, v in arrival.items()),
+        "delay_p50": delays[len(delays) // 2] if delays else None,
+        "delay_max": delays[-1] if delays else None,
+    }
+
+
+def relay(args: argparse.Namespace) -> None:
+    async def run_all() -> list:
+        return await asyncio.gather(*(relay_one(Path(w), args.backend) for w in args.wavs))
+
+    rows = asyncio.run(run_all())
+    print(f"\n{'file':<34} {'turns':>5} {'segs':>5} {'nemotron':>8} {'word%':>6} {'swap':>5} {'label delay p50/max':>20}")
+    for r in rows:
+        print(
+            f"{r['file']:<34} {r['turns']:>5} {r['segments']:>5} {r['nemotron_turns']:>8} {r['word_err']:>6.1f} "
+            f"{'YES' if r['swap'] else '-':>5} {r['delay_p50']:>9.0f} / {r['delay_max']:<6.0f}ms"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +359,14 @@ def main() -> None:
     sc.add_argument("--threads", type=int, default=4)
     sc.add_argument("--int8", action="store_true")
     sc.add_argument("--show", action="store_true", help="print every turn with misattributed words marked [x]")
+    rl = sub.add_parser("relay", help="stream WAVs through the running backend relay (realtime-venv)")
+    rl.add_argument("wavs", nargs="+")
+    rl.add_argument("--backend", default="http://localhost:8000")
     args = parser.parse_args()
 
-    if args.cmd == "capture":
+    if args.cmd == "relay":
+        relay(args)
+    elif args.cmd == "capture":
 
         async def run_all() -> None:
             await asyncio.gather(*(capture_one(Path(w)) for w in args.wavs))

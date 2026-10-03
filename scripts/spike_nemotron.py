@@ -18,13 +18,13 @@ Usage (separate venv, see the plan):
 from __future__ import annotations
 
 import argparse
+import resource
 import statistics
 import time
 import wave
 from pathlib import Path
 
 import numpy as np
-import psutil
 import torch
 from transformers import AutoModelForAudioFrameClassification, AutoProcessor
 
@@ -80,12 +80,14 @@ def stream(model, processor, audio: np.ndarray, mode: str) -> tuple[torch.Tensor
         chunk = audio[start:] if last else audio[start : start + size]
         inputs = processor(
             chunk, sampling_rate=SR, is_streaming=True, is_first_audio_chunk=first, is_last_audio_chunk=last
-        )
+        ).to(model.device)
         t0 = time.perf_counter()
         out = model(**inputs, speaker_cache=cache)
+        if model.device.type == "cuda":
+            torch.cuda.synchronize()
         timings.append(((mel_idx + step_mel) * fe.hop_length / SR, (time.perf_counter() - t0) * 1000))
         cache = out.speaker_cache
-        logits.append(out.logits)
+        logits.append(out.logits.cpu())
         if last:
             break
         mel_idx += step_mel
@@ -109,7 +111,7 @@ def summarise(name: str, processor, audio, logits, timings, offline_active) -> d
         "rtf": p50 / stride_ms,
         "agree_vs_offline": agree,
         "speakers": speakers,
-        "rss_mb": psutil.Process().memory_info().rss / 2**20,
+        "rss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,  # peak, Linux reports KiB
     }
     print(
         f"{name:<34} buf={row['latency_ms']:>5}ms step p50={p50:7.1f}ms p95={p95:7.1f}ms "
@@ -126,6 +128,7 @@ def main() -> None:
     parser.add_argument("--threads", default="4")
     parser.add_argument("--repeat", type=int, default=2, help="loop the audio so the cache reaches steady state")
     parser.add_argument("--model", default=str(LOCAL_MODEL) if LOCAL_MODEL.exists() else MODEL_ID)
+    parser.add_argument("--device", default="cpu", help="cpu or cuda")
     parser.add_argument("--fifo", type=int, default=None, help="override the streaming FIFO length (encoder frames)")
     parser.add_argument("--int8", action="store_true", help="also try int8 dynamic quantisation of Linear layers")
     parser.add_argument("--segments", action="store_true", help="print streaming segments for the first mode")
@@ -137,11 +140,11 @@ def main() -> None:
     print(f"audio: {len(one) / SR:.1f}s x{args.repeat} = {len(audio) / SR:.1f}s at 16 kHz")
 
     processor = AutoProcessor.from_pretrained(args.model)
-    model = AutoModelForAudioFrameClassification.from_pretrained(args.model).eval()
+    model = AutoModelForAudioFrameClassification.from_pretrained(args.model).eval().to(args.device)
     if args.fifo:
         model.config.streaming_config.fifo_length = args.fifo
     variants = [("fp32", model)]
-    if args.int8:
+    if args.int8 and args.device == "cpu":
         try:
             q = torch.ao.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
             variants.append(("int8", q))
@@ -151,8 +154,8 @@ def main() -> None:
     with torch.inference_mode():
         torch.set_num_threads(max(int(t) for t in args.threads.split(",")))
         t0 = time.perf_counter()
-        inputs = processor(one, sampling_rate=SR)
-        offline = model(**inputs).logits
+        inputs = processor(one, sampling_rate=SR).to(args.device)
+        offline = model(**inputs).logits.cpu()
         print(f"offline full-file pass: {(time.perf_counter() - t0) * 1000:.0f} ms for {len(one) / SR:.1f}s")
         offline_active = torch.cat([offline[0]] * args.repeat).sigmoid() > 0.5
 
@@ -174,6 +177,8 @@ def main() -> None:
         if r["mode"] == "low_latency" and r["threads"] == 4 and r["rtf"] <= 0.3 and r["step_p95_ms"] <= 250
     ]
     print("\nGATE (low_latency, 4 threads, RTF<=0.3, p95<=250ms):", "PASS" if ok else "FAIL")
+    if args.device != "cpu":
+        print("(on a GPU the thread count does not matter; read RTF and step p95 for low_latency)")
 
 
 if __name__ == "__main__":

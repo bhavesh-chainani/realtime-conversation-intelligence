@@ -5,8 +5,14 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
+COPY requirements.txt requirements-diarization.txt /app/
 RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r /app/requirements.txt
+# Nemotron diarisation for the STT relay (adds torch): --build-arg INSTALL_DIARIZATION=true, then run
+# with DIARIZATION_BACKEND=nemotron and the weights mounted at DIARIZATION_MODEL.
+ARG INSTALL_DIARIZATION=false
+RUN if [ "$INSTALL_DIARIZATION" = "true" ]; then \
+      pip install --no-cache-dir -r /app/requirements.txt -r /app/requirements-diarization.txt; \
+    fi
 
 COPY backend /app/backend
 COPY config.json /app/config.json

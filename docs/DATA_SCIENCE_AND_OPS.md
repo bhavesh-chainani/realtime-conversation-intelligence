@@ -22,7 +22,7 @@ with LLM calls routed through a **LiteLLM-hosted OpenAI-compatible proxy**, opti
 
 **Important boundary:** Permanent **AssemblyAI** and **LiteLLM** credentials stay on the server. The browser receives only a **short-lived streaming token** from `GET /assemblyai-token` (see [`backend/api.py`](../backend/api.py)).
 
-**Speaker roles:** The frontend enables AssemblyAI `speaker_labels=true` (`max_speakers=2`) on the streaming WebSocket, maps A/B labels to Staff/Customer (with operator lock + swap), and posts context like `Staff: …` / `Customer: …`. This is a **same-laptop single-mic** path (in-person or speakerphone), not dual-channel telephony.
+**Speaker roles:** With `DIARIZATION_BACKEND=nemotron`, the browser streams to the backend relay (`/ws/stt`), which sends the audio to AssemblyAI for words and to NVIDIA Nemotron 3 Diarization for per-word speakers, and splits turns at speaker changes (README, "Nemotron speaker diarisation"). Otherwise the frontend enables AssemblyAI `speaker_labels=true` (`max_speakers=2`) on its direct WebSocket. Either way the UI maps A/B labels to Staff/Customer (with operator lock + swap) and posts context like `Staff: …` / `Customer: …`. This is a **same-laptop single-mic** path (in-person or speakerphone), not dual-channel telephony.
 
 ---
 

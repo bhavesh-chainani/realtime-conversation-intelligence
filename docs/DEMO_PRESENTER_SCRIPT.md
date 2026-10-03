@@ -93,7 +93,7 @@ Press **Reset** before the next run.
 | Question | Short answer |
 |---|---|
 | Is it real-time? | Yes. Live transcription, and suggestions within a couple of seconds. Press **T** to show timings. |
-| How does it tell the speakers apart? | Voice diarisation, plus matching against the expected conversation in this demo. Staff can correct any line with one click. |
+| How does it tell the speakers apart? | NVIDIA's Nemotron diarisation model decides who said each word, and splits a line if both people spoke in it. In this demo it is also checked against the expected conversation. Staff can correct any line with one click. |
 | Where does the data come from? | A read-only lookup on the case system, triggered when the NRIC is heard. |
 | Could it make things up? | It can only cite case IDs that exist in the record, and case details stay hidden until identity is verified. |
 | Is anything pre-computed? | Each scripted line also has a prepared suggestion. It appears only if the live one is slow, and the live answer replaces it. **T** shows which one is on screen. |

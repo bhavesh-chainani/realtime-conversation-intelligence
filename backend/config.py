@@ -183,3 +183,33 @@ ASSEMBLYAI_STREAM_PARAMS = (
 )
 # Speech model used for scripted demo sessions; `prompt` (STT context) requires a u3 Pro model.
 DEMO_SPEECH_MODEL = (os.getenv("DEMO_SPEECH_MODEL") or "u3-rt-pro").strip()
+
+# Speaker diarisation. "assemblyai": the browser streams straight to AssemblyAI and uses its speaker
+# labels. "nemotron": the browser streams to the backend relay (/ws/stt), which sends the audio to
+# AssemblyAI for the words and to NVIDIA Nemotron 3 Diarization for who said each word
+# (install requirements-diarization.txt). If the model fails to load, the direct path is used.
+DIARIZATION_BACKEND = (os.getenv("DIARIZATION_BACKEND") or "assemblyai").strip().lower()
+_default_diar_model = _repo_root / "data" / "models" / "Nemotron-3-Diarization"
+DIARIZATION_MODEL = (
+    os.getenv("DIARIZATION_MODEL")
+    or (str(_default_diar_model) if _default_diar_model.exists() else "nvidia/Nemotron-3-Diarization")
+).strip()
+DIARIZATION_DEVICE = (os.getenv("DIARIZATION_DEVICE") or "cpu").strip().lower()
+_diar_on_gpu = DIARIZATION_DEVICE.startswith("cuda")
+# Streaming chunk: low_latency (1.04 s), very_low_latency (0.64 s), ultra_low_latency (0.32 s), or
+# "<chunk>x<right_context>" in 80 ms frames. A laptop CPU cannot keep up with 1.04 s; 40x4 (3.5 s) can.
+DIARIZATION_MODE = (os.getenv("DIARIZATION_MODE") or ("low_latency" if _diar_on_gpu else "40x4")).strip()
+DIARIZATION_INT8 = (os.getenv("DIARIZATION_INT8") or ("false" if _diar_on_gpu else "true")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DIARIZATION_THREADS = int((os.getenv("DIARIZATION_THREADS") or "4").strip())
+# Longest a finished turn waits for speaker labels before falling back to AssemblyAI's.
+DIARIZATION_MAX_WAIT_MS = int(
+    (os.getenv("DIARIZATION_MAX_WAIT_MS") or ("1500" if _diar_on_gpu else "6000")).strip()
+)
+# Signs the one-time tickets that let the browser open the relay WebSocket. Set it when running
+# more than one backend instance; otherwise a per-process random secret is fine.
+STT_TICKET_SECRET = (os.getenv("STT_TICKET_SECRET") or os.urandom(32).hex()).strip()

@@ -7,7 +7,7 @@ App Screenshot
 ## ✨ Features
 
 - **Real-Time Transcription**: Live speech-to-text using AssemblyAI WebSocket API (frontend connects directly for lowest latency)
-- **Speaker Diarization**: AssemblyAI streaming speaker labels (`speaker_labels`) map two voices to **Staff** / **Customer** on a single laptop mic
+- **Speaker Diarization**: NVIDIA **Nemotron 3 Diarization** decides who said each word (backend relay, `DIARIZATION_BACKEND=nemotron`); without it, AssemblyAI streaming speaker labels are used. Two voices on a single laptop mic map to **Staff** / **Customer**
 - **AI-Powered Suggestions**: Intelligent, context-aware recommendations for operators
 - **Legal Entity Integration**: Specialized for legal entity in singapore's legal assistance workflow
 - **Live Conversation Intelligence**: Real-time analysis of ongoing conversations
@@ -225,8 +225,43 @@ This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setu
 
 1. Staff opens the UI on their laptop and starts a session.
 2. Customer speaks in-person or via speakerphone into the same room/mic.
-3. AssemblyAI streaming diarization separates speakers; the first new voice defaults to **Staff** (change with “Next voice is Customer” before that speaker appears).
+3. Diarization separates speakers; the first new voice defaults to **Staff** (change with “Next voice is Customer” before that speaker appears).
 4. If early labels are swapped, click **Swap roles** — no need to restart the session.
+
+### Nemotron speaker diarisation (recommended)
+
+AssemblyAI's streaming labels are per turn, and with natural, quick turn-taking AssemblyAI often merges both
+speakers into one turn, so a whole line is shown under the wrong role. With `DIARIZATION_BACKEND=nemotron`
+the browser streams to the backend relay (`/ws/stt`), which sends the same audio to AssemblyAI (words) and to
+[Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (who spoke each word), and
+splits turns wherever the speaker changes. A finished turn shows as *identifying speaker* until its labels are
+in; if the diariser falls behind, the turn uses AssemblyAI's labels instead (`DIARIZATION_MAX_WAIT_MS`).
+
+Words with the wrong role, measured with `scripts/bench_diarization.py` on synthetic two-voice calls
+(similar voices, short gaps, backchannels; "room" adds reverb, noise and a distant customer):
+
+| Audio | AssemblyAI labels, as the app used them | Nemotron per word, turns split |
+|---|---|---|
+| easy (contrasting voices) | 2.2% | 0.0% |
+| hard | 27.5% | 0.0% |
+| room | 15.2% | 0.0% |
+
+**Run it on an NVIDIA GPU.** On a GPU the 1.04 s profile adds well under a second. A laptop CPU cannot keep
+up with it; `DIARIZATION_DEVICE=cpu` defaults to int8 and 3.2 s chunks, which works only while the CPU is not
+throttled, and turns then wait several seconds for their labels.
+
+```bash
+# On a Linux GPU machine (RTX 30-series or newer, or a cloud L4 / A10):
+scripts/setup_gpu_host.sh            # venv, CUDA torch, model weights, speed check
+DIARIZATION_BACKEND=nemotron DIARIZATION_DEVICE=cuda \
+  realtime-venv/bin/uvicorn backend.api:app --host 127.0.0.1 --port 8000
+# On the laptop: tunnel the backend, then run the frontend as usual
+ssh -N -L 8000:localhost:8000 <user>@<gpu-host>
+```
+
+`GET /ready` reports `"diarization": {"backend": "nemotron", "ready": true}`. To evaluate a change:
+`scripts/make_demo_audio.py --variant hard|room` (writes ground truth), `scripts/bench_diarization.py
+capture|score|relay`.
 
 **Persistence**:
 
@@ -244,8 +279,8 @@ This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setu
 
 1. **Real-Time Transcription (Frontend)**:
 
-- Frontend streams laptop-mic audio directly to AssemblyAI over WebSocket
-- Streaming diarization (`speaker_labels=true`, `max_speakers=2`) labels speakers A/B
+- Frontend streams laptop-mic audio directly to AssemblyAI over WebSocket, or, with Nemotron diarisation on, to the backend relay (`/ws/stt`), which forwards it to AssemblyAI and the diariser
+- Speakers are labelled A/B (Nemotron per word with turns split at speaker changes; otherwise AssemblyAI `speaker_labels=true`, `max_speakers=2`)
 - UI maps labels to **Staff** / **Customer** (lock next voice + Swap roles if inverted)
 - Partial text renders immediately; finals overwrite partials to avoid duplicates
 - Suggest/extract receive role-labeled context (`Staff: …` / `Customer: …`)

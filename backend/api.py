@@ -14,16 +14,19 @@ from .logging_config import setup_logging
 setup_logging()
 
 from . import config as cfg
-from .assemblyai import StreamingTokenError, create_streaming_token
+from .assemblyai import StreamingTokenError, create_streaming_token, ssl_context, stt_session_config
 from .async_jobs_router import router as async_jobs_router
 from .auth import enforce_usage_limits, require_api_auth
 from .config import ASYNC_JOBS_ENABLED, BACKEND_CORS_ORIGINS, DEMO_MODE
 from .call_summary import router as call_summary_router
 from .customer_data_extractor import router as customer_data_router
 from .customer_history import router as customer_history_router
+from .diarization import nemotron
 from .http_middleware import RequestContextMiddleware
 from .llm import llm_runtime_config
 from .sessions_api import router as sessions_router
+from .stt_relay import issue_ticket
+from .stt_relay import router as stt_relay_router
 from .suggestions import router as suggest_router
 
 logger = logging.getLogger(__name__)
@@ -32,12 +35,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     prewarm_task = None
+    # Load the CA bundle now, not when the first call connects (can take seconds).
+    tls_task = asyncio.create_task(ssl_context())
+    if cfg.DIARIZATION_BACKEND == "nemotron":
+        await asyncio.to_thread(nemotron.load_diarizer)
     if DEMO_MODE:
         from .demo_api import prewarm
 
         # Background so startup isn't blocked; opens LLM keep-alive connections early.
         prewarm_task = asyncio.create_task(prewarm())
     yield
+    tls_task.cancel()
     if prewarm_task and not prewarm_task.done():
         prewarm_task.cancel()
 
@@ -57,6 +65,7 @@ app.include_router(call_summary_router)
 app.include_router(customer_data_router)
 app.include_router(customer_history_router)
 app.include_router(sessions_router)
+app.include_router(stt_relay_router)
 if ASYNC_JOBS_ENABLED:
     app.include_router(async_jobs_router)
 if DEMO_MODE:
@@ -95,6 +104,7 @@ async def ready():
         "sql_lookup_model_configured": bool(llm_cfg["sql_lookup_model_configured"]),
         "customer_history_configured": customer_history_configured,
         "assemblyai_configured": bool(cfg.ASSEMBLYAI_API_KEY),
+        "diarization": diarization_status(),
         "version": cfg.APP_VERSION,
     }
     if cfg.GIT_SHA:
@@ -150,24 +160,34 @@ async def limits(_: str = Depends(require_api_auth)):
     }
 
 
+def diarization_status() -> dict:
+    """Which diariser live calls use, and whether it is loaded."""
+    if cfg.DIARIZATION_BACKEND != "nemotron":
+        return {"backend": "assemblyai", "ready": True}
+    out: dict = {"backend": "nemotron", "ready": nemotron.get_diarizer() is not None, "mode": cfg.DIARIZATION_MODE}
+    if nemotron.load_error():
+        out["error"] = nemotron.load_error()
+    return out
+
+
 @app.get("/assemblyai-token")
 async def assemblyai_token(
     scenario: str | None = None, _: str = Depends(enforce_usage_limits)
 ):
-    keyterms = list(cfg.ASSEMBLYAI_KEYTERMS)
-    prompt = ""
-    speech_model = cfg.ASSEMBLYAI_SPEECH_MODEL
-    if DEMO_MODE and scenario:
-        from .demo_cache import ScenarioNotFound, scenario_stt_config
+    """How the browser should start live transcription.
 
-        try:
-            keyterms, prompt = scenario_stt_config(scenario)
-        except ScenarioNotFound:
-            raise HTTPException(status_code=404, detail="Unknown scenario")
-        speech_model = speech_model or cfg.DEMO_SPEECH_MODEL
-    # AssemblyAI rejects the whole session if `prompt` is sent to a non-u3 model.
-    if not speech_model.startswith("u3"):
-        prompt = ""
+    With Nemotron diarisation loaded: a one-time ticket for the backend relay (/ws/stt).
+    Otherwise: a temporary AssemblyAI token plus session settings for the direct path.
+    """
+    from .demo_cache import ScenarioNotFound
+
+    try:
+        session = stt_session_config(scenario)
+    except ScenarioNotFound:
+        raise HTTPException(status_code=404, detail="Unknown scenario")
+
+    if cfg.DIARIZATION_BACKEND == "nemotron" and nemotron.get_diarizer() is not None:
+        return {"relay": {"path": "/ws/stt", "ticket": issue_ticket(scenario)}, "diarization": "nemotron"}
 
     try:
         token = await create_streaming_token()
@@ -183,14 +203,14 @@ async def assemblyai_token(
         )
 
     out: dict = {"token": token}
-    if keyterms:
-        out["keyterms_prompt"] = keyterms
-    if prompt:
-        out["prompt"] = prompt
-    if speech_model:
-        out["speech_model"] = speech_model
-    if cfg.ASSEMBLYAI_STREAM_PARAMS:
-        out["stream_params"] = dict(cfg.ASSEMBLYAI_STREAM_PARAMS)
+    if session["keyterms"]:
+        out["keyterms_prompt"] = session["keyterms"]
+    if session["prompt"]:
+        out["prompt"] = session["prompt"]
+    if session["speech_model"]:
+        out["speech_model"] = session["speech_model"]
+    if session["stream_params"]:
+        out["stream_params"] = session["stream_params"]
     return out
 
 
