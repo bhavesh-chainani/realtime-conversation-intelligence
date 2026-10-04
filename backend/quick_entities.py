@@ -112,3 +112,9 @@ def extract_nric_from_transcript(transcript: str) -> str | None:
         if found:
             return found
     return None
+
+
+def quick_patch(text: str) -> dict[str, str]:
+    """Identity fields heard in one line of customer speech, for the instant (pre-LLM) DB lookup."""
+    patch = {"nric_worker_permit_id": extract_nric(text), "name": extract_intro_name(text)}
+    return {k: v for k, v in patch.items() if v}

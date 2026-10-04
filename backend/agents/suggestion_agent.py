@@ -1,8 +1,8 @@
-"""Principal agent: reads the live transcript plus any customer record and suggests what Staff
-should say next, in one LLM round trip.
+"""Suggestion agent (the principal agent): reads the live transcript plus any customer record and
+suggests what Staff should say next, in one LLM round trip.
 
-The customer record (from the entity/DB lookup) is rendered into the prompt so suggestions can
-cite prior cases by ID; IDs that are not in the record are dropped.
+The customer record (from the entity agent's DB lookup) is rendered into the prompt so suggestions
+can cite prior cases by ID; IDs that are not in the record are dropped.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ import logging
 import time
 from typing import Any
 
-from . import config as cfg
-from .customer_history import format_customer_record, verified_case_ids
-from .llm import get_async_llm_client, get_suggestion_model, llm_extra_params, str_list, strip_code_fences
-from .prompt_loader import get_suggestion_system_prompt, get_suggestion_user_prompt
-from .text_guard import ForeignScriptError, contains_foreign_script
+from .. import config as cfg
+from ..customer_history import format_customer_record, verified_case_ids
+from ..llm import get_async_llm_client, get_suggestion_model, llm_extra_params, str_list, strip_code_fences
+from ..prompt_loader import fallback_suggestions, system_prompt, user_prompt
+from ..text_guard import ForeignScriptError, contains_foreign_script
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +80,14 @@ async def generate_suggestions(
         timeout=cfg.SUGGESTION_TIMEOUT_SECONDS,
         response_format={"type": "json_object"},
         messages=[
-            {"role": "system", "content": get_suggestion_system_prompt()},
+            {"role": "system", "content": system_prompt("suggestion")},
             {
                 "role": "user",
-                "content": get_suggestion_user_prompt(
-                    conversation_transcript, max_suggestions, customer_record
+                "content": user_prompt(
+                    "suggestion",
+                    conversation_transcript=conversation_transcript,
+                    max_suggestions=max_suggestions,
+                    customer_record=customer_record,
                 ),
             },
         ],
@@ -126,3 +129,36 @@ async def generate_suggestions(
         },
         "timings": {"llm_ms": round(llm_ms, 1), "model": model},
     }
+
+
+async def suggest_with_fallback(
+    conversation_transcript: str,
+    max_suggestions: int,
+    customer_profile: dict[str, Any] | None = None,
+    customer_cases: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Suggestions from the agent, or the static fallback (flagged `fallback`) if it fails."""
+    started = time.perf_counter()
+    try:
+        body = await generate_suggestions(
+            conversation_transcript,
+            max_suggestions=max_suggestions,
+            customer_profile=customer_profile,
+            customer_cases=customer_cases,
+        )
+    except Exception as exc:
+        logger.warning("Suggestion agent failed, using fallback: %s: %s", type(exc).__name__, exc)
+        body = {
+            "suggestions": fallback_suggestions()[:max_suggestions],
+            "error": str(exc) or type(exc).__name__,
+            "fallback": True,
+            "timings": {},
+        }
+    body["timings"]["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    logger.info(
+        "[suggestion] %s suggestions in %sms (cases=%s)",
+        len(body["suggestions"]),
+        body["timings"]["total_ms"],
+        len(customer_cases or []),
+    )
+    return body

@@ -4,7 +4,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from backend.suggestions import compute_suggestions
+from backend.agents.suggestion_agent import suggest_with_fallback
 from backend.text_guard import contains_foreign_script, has_foreign_script
 
 
@@ -40,8 +40,8 @@ def test_foreign_suggestion_is_rejected(monkeypatch):
         }
     )
     fake = _SequencedClient(reply)
-    monkeypatch.setattr("backend.suggestion_agent.get_async_llm_client", lambda: fake)
+    monkeypatch.setattr("backend.agents.suggestion_agent.get_async_llm_client", lambda: fake)
 
-    body = asyncio.run(compute_suggestions("Staff: Hi\nCustomer: My salary was cut."))
+    body = asyncio.run(suggest_with_fallback("Staff: Hi\nCustomer: My salary was cut.", 1))
 
     assert body["fallback"] is True

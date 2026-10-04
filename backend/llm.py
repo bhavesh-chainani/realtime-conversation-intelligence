@@ -1,4 +1,4 @@
-"""Shared LiteLLM/OpenAI-compatible client + model selection helpers."""
+"""The one LLM client (LiteLLM / OpenAI-compatible, async) and model selection helpers."""
 
 from __future__ import annotations
 
@@ -6,12 +6,10 @@ import asyncio
 from typing import Any
 
 import httpx
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 
 from . import config as cfg
 
-_client: OpenAI | None = None
-_client_signature: tuple[str, str, float, int] | None = None
 _async_client: AsyncOpenAI | None = None
 _async_client_signature: tuple[str, str, float, int, int] | None = None
 
@@ -78,26 +76,6 @@ def llm_is_configured() -> bool:
     return bool(llm_runtime_config()["llm_configured"])
 
 
-def get_llm_client() -> OpenAI | None:
-    """Create/cache one OpenAI-compatible client pointed at LiteLLM."""
-    global _client, _client_signature
-
-    api_key = resolve_llm_api_key()
-    base_url = resolve_llm_base_url()
-    if not api_key or not base_url:
-        return None
-
-    timeout = float(cfg.LLM_TIMEOUT_SECONDS)
-    max_retries = int(cfg.LLM_MAX_RETRIES)
-    signature = (api_key, base_url, timeout, max_retries)
-
-    if _client is None or _client_signature != signature:
-        _client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=max_retries)
-        _client_signature = signature
-
-    return _client
-
-
 def get_async_llm_client() -> AsyncOpenAI | None:
     """Create/cache a non-blocking client with long-lived keep-alive connections.
 
@@ -144,8 +122,6 @@ def llm_extra_params() -> dict[str, Any]:
 
 def reset_llm_client_cache() -> None:
     """Clear the cached clients. Useful in tests after monkeypatching config."""
-    global _client, _client_signature, _async_client, _async_client_signature
-    _client = None
-    _client_signature = None
+    global _async_client, _async_client_signature
     _async_client = None
     _async_client_signature = None

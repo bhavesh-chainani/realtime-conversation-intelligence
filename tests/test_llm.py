@@ -9,7 +9,7 @@ def test_llm_client_honors_litellm_base_url(monkeypatch):
     monkeypatch.setattr("backend.config.LLM_BASE_URL", "http://localhost:4000")
     monkeypatch.setattr("backend.config.LLM_TIMEOUT_SECONDS", 12.5)
 
-    client = llm.get_llm_client()
+    client = llm.get_async_llm_client()
 
     assert client is not None
     assert str(client.base_url).rstrip("/") == "http://localhost:4000"
@@ -23,7 +23,7 @@ def test_llm_requires_proxy_key_and_base_url(monkeypatch):
     assert llm.resolve_llm_api_key() == ""
     assert llm.resolve_llm_base_url() == ""
     assert llm.llm_is_configured() is False
-    assert llm.get_llm_client() is None
+    assert llm.get_async_llm_client() is None
 
 
 def test_runtime_models_are_task_specific(monkeypatch):

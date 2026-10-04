@@ -9,13 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import config as cfg
 from .assemblyai import ssl_context
-from .customer_data_extractor import router as customer_data_router
 from .customer_history import router as customer_history_router
 from .diarization import nemotron
 from .llm import llm_runtime_config
+from .orchestrator import router as assist_router
 from .stt_relay import issue_ticket
 from .stt_relay import router as stt_relay_router
-from .suggestions import router as suggest_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -40,8 +39,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-app.include_router(suggest_router)
-app.include_router(customer_data_router)
+app.include_router(assist_router)
 app.include_router(customer_history_router)
 app.include_router(stt_relay_router)
 

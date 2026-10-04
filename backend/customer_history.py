@@ -1,3 +1,5 @@
+"""Customer DB lookup (read-only Postgres view) and how the record is shown to the suggestion agent."""
+
 from __future__ import annotations
 
 import logging
@@ -8,6 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from . import config as cfg
+from .profile import next_lookup, records_prefill
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,14 @@ except Exception:  # pragma: no cover - import guard for optional dependency fai
 
 
 router = APIRouter()
+
+
+class CustomerCase(BaseModel):
+    case_id: str
+    company: str | None = None
+    type: str | None = None
+    status: str | None = None
+    summary: str | None = None
 
 
 NO_CUSTOMER_RECORD = "CUSTOMER RECORD: not yet retrieved. Do not mention or guess at prior cases."
@@ -338,4 +349,7 @@ customer_history_service = CustomerHistoryService()
 # Plain `def`: FastAPI runs it in the threadpool so blocking DB I/O never stalls the event loop.
 @router.post("/customer-history")
 def lookup_customer_history(req: CustomerHistoryLookupRequest) -> dict[str, Any]:
-    return customer_history_service.lookup(req.name, req.nric_worker_permit_id)
+    """Manual Look up from the caller card. Live calls look the caller up inside POST /assist."""
+    result = customer_history_service.lookup(req.name, req.nric_worker_permit_id)
+    searched = next_lookup(None, req.name or "", req.nric_worker_permit_id or "")
+    return {**result, "lookup_key": searched.key if searched else None, "prefill": records_prefill(result)}

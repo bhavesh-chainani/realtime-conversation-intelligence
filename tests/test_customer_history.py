@@ -64,6 +64,9 @@ def test_customer_history_endpoint_happy_path(client, monkeypatch):
     assert body["found"] is True
     assert body["customer"]["name"] == "Raja"
     assert len(body["cases"]) == 1
+    assert body["lookup_key"] == "id:S1234567A"
+    # Only an NRIC match prefills the caller card.
+    assert body["prefill"] == {"name": "Raja", "nric_worker_permit_id": "S1234567A"}
 
 
 def test_customer_history_endpoint_no_match(client, monkeypatch):
@@ -77,6 +80,8 @@ def test_customer_history_endpoint_no_match(client, monkeypatch):
     assert body["success"] is True
     assert body["found"] is False
     assert body["cases"] == []
+    assert body["lookup_key"] == "name:unknown person"
+    assert body["prefill"] is None
 
 
 def test_customer_history_service_requires_lookup_fields():

@@ -1,0 +1,66 @@
+[
+  {
+    "case": "empty field takes any source",
+    "values": {},
+    "sources": {},
+    "source": "ai",
+    "patch": { "name": "Katherine Liao", "address": "" },
+    "accepted": { "name": "Katherine Liao" }
+  },
+  {
+    "case": "staff edits always win",
+    "values": { "nric_worker_permit_id": "S1111111A" },
+    "sources": { "nric_worker_permit_id": "manual" },
+    "source": "records",
+    "patch": { "nric_worker_permit_id": "S1234567A" },
+    "accepted": {}
+  },
+  {
+    "case": "records beat heard and ai",
+    "values": { "name": "Katherine Liao" },
+    "sources": { "name": "records" },
+    "source": "heard",
+    "patch": { "name": "Catherine Liao" },
+    "accepted": {}
+  },
+  {
+    "case": "records replace heard",
+    "values": { "name": "Catherine Liao" },
+    "sources": { "name": "heard" },
+    "source": "records",
+    "patch": { "name": "Katherine Liao" },
+    "accepted": { "name": "Katherine Liao" }
+  },
+  {
+    "case": "ai may not reformat a heard NRIC",
+    "values": { "nric_worker_permit_id": "S1234567A" },
+    "sources": { "nric_worker_permit_id": "heard" },
+    "source": "ai",
+    "patch": { "nric_worker_permit_id": "S1234567B", "purpose_of_call": "Leave dispute" },
+    "accepted": { "purpose_of_call": "Leave dispute" }
+  },
+  {
+    "case": "ai may update other heard fields",
+    "values": { "name": "Katherine" },
+    "sources": { "name": "heard" },
+    "source": "ai",
+    "patch": { "name": "Katherine Liao" },
+    "accepted": { "name": "Katherine Liao" }
+  },
+  {
+    "case": "same value from the same source is not a change",
+    "values": { "address": "12 Tampines Street 45" },
+    "sources": { "address": "ai" },
+    "source": "ai",
+    "patch": { "address": " 12 Tampines Street 45 " },
+    "accepted": {}
+  },
+  {
+    "case": "unknown fields are ignored",
+    "values": {},
+    "sources": {},
+    "source": "heard",
+    "patch": { "employer": "Brightpath" },
+    "accepted": {}
+  }
+]
