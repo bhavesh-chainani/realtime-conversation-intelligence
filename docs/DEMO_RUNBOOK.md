@@ -125,7 +125,36 @@ Launch Chrome with the WAV as the microphone, then open `/?demo=1` and click **S
 
 This runs the real path end to end: STT and diarisation (through the Nemotron relay when the backend has `DIARIZATION_BACKEND=nemotron`), alignment, lookup and suggestions. Harder variants with ground truth: `--variant hard` or `--variant room` (see `scripts/bench_diarization.py`).
 
-## 6. Tuning and diagnostics
+## 6. GPU server (Nemotron diarisation)
+
+The backend runs on an AWS `g6.xlarge` (NVIDIA L4) in Sydney, so speaker labels are ready about 1.3 s after
+someone stops talking. It runs as services that start on boot (`scripts/install_gpu_services.sh`).
+
+**Before a session**
+1. AWS console (region **Asia Pacific (Sydney)**) → EC2 → Instances → select `rci-gpu` → **Instance state → Start**.
+   Wait for **2/2 checks passed** and copy the **Public IPv4 address** (it changes after every stop and start).
+2. Stop your local backend if it is on port 8000, then on the laptop:
+   `scripts/gpu_connect.sh <public-ip>`. It prints when the server will stop, then keeps the tunnel open.
+3. `cd frontend && npm run dev` and open the app as usual. Press **T**: turns show `diarised A/B`.
+
+**When it stops by itself**
+
+| Rule | When | Change it |
+|---|---|---|
+| Idle stop | After **45 minutes** without app use: no page load or live call reaching the backend, and no interactive login. An open tunnel alone does not count. | `IDLE_MINUTES` in `scripts/gpu_host.conf` on the server; applies within 5 minutes; `0` turns it off |
+| Nightly stop | Every day at **02:00 Singapore time** | `NIGHTLY_STOP` / `NIGHTLY_TZ`, then `sudo scripts/install_gpu_services.sh` |
+
+The idle clock restarts at every start, and is checked every 5 minutes, so an idle stop lands 45-50 minutes
+after the last use. A stop keeps the disk and the setup: the next session just starts it again. Running costs
+about US$1.05/hour; stopped, about US$10/month for the disk.
+
+**Check it:** `ssh -i ~/.ssh/rci-gpu.pem ubuntu@<public-ip> rci-autostop-status` shows the settings, how long it has
+been idle, the next nightly stop, and the last stops (full log: `/var/log/rci-autostop.log` on the server).
+`curl localhost:8000/ready` through the tunnel should show `"diarization": {"backend": "nemotron", "ready": true}`.
+
+**After a session:** Instance state → **Stop** (or let the idle stop do it). Do not **Terminate**: that deletes the setup.
+
+## 7. Tuning and diagnostics
 
 **Live transcription timing** (measured with `scripts/bench_stt.py` and in the browser, 2026-10-02):
 

@@ -205,9 +205,12 @@ throttled, and turns then wait several seconds for their labels.
 scripts/setup_gpu_host.sh            # venv, CUDA torch, model weights, speed check
 DIARIZATION_BACKEND=nemotron DIARIZATION_DEVICE=cuda \
   realtime-venv/bin/uvicorn backend.api:app --host 127.0.0.1 --port 8000
+sudo scripts/install_gpu_services.sh   # start on boot; idle and nightly auto-stop (scripts/gpu_host.conf)
 # On the laptop: tunnel the backend, then run the frontend as usual
-ssh -N -L 8000:localhost:8000 <user>@<gpu-host>
+scripts/gpu_connect.sh <gpu-host-ip>
 ```
+
+Day-to-day use of the AWS GPU server, including when it stops itself: [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md), section 6.
 
 `GET /ready` reports `"diarization": {"backend": "nemotron", "ready": true}`. To evaluate a change:
 `scripts/make_demo_audio.py --variant hard|room` (writes ground truth), `scripts/bench_diarization.py
