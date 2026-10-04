@@ -1,22 +1,17 @@
-"""AssemblyAI streaming: temporary tokens and the session settings shared by both STT paths."""
+"""AssemblyAI streaming: the word transcriber behind the STT relay (speakers come from Nemotron)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import ssl
-
-import httpx
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
+from urllib.parse import urlencode
 
 from . import config as cfg
 
-logger = logging.getLogger(__name__)
-
-
-class StreamingTokenError(Exception):
-    pass
-
+STREAMING_WS_URL = "wss://streaming.assemblyai.com/v3/ws"
 
 _ssl_context: ssl.SSLContext | None = None
 
@@ -30,53 +25,27 @@ async def ssl_context() -> ssl.SSLContext:
     return _ssl_context
 
 
-async def create_streaming_token(expires_in_seconds: int = 300) -> str:
-    if not cfg.ASSEMBLYAI_API_KEY:
-        raise StreamingTokenError("AssemblyAI API key not configured")
-
-    async with httpx.AsyncClient(timeout=10.0, verify=await ssl_context()) as client:
-        resp = await client.get(
-            "https://streaming.assemblyai.com/v3/token",
-            params={"expires_in_seconds": expires_in_seconds},
-            headers={"Authorization": cfg.ASSEMBLYAI_API_KEY},
-        )
-    if resp.status_code >= 400:
-        logger.error(
-            "Failed to create AssemblyAI temporary token: status=%s body=%s",
-            resp.status_code,
-            resp.text[:300],
-        )
-        raise StreamingTokenError("Failed to generate streaming token")
-
-    token = resp.json().get("token")
-    if not token:
-        raise StreamingTokenError("Token missing from AssemblyAI response")
-    return token
-
-
-STREAMING_WS_URL = "wss://streaming.assemblyai.com/v3/ws"
-
-
-def stt_session_config() -> dict:
-    """Keyterms, speech model and stream params for a session."""
-    return {
-        "keyterms": list(cfg.ASSEMBLYAI_KEYTERMS),
-        "speech_model": cfg.ASSEMBLYAI_SPEECH_MODEL,
-        "stream_params": dict(cfg.ASSEMBLYAI_STREAM_PARAMS),
-    }
-
-
-def streaming_params(sample_rate: int, session: dict) -> dict[str, str]:
-    """Query params for the v3 streaming WebSocket (same settings as the browser's direct path)."""
-    params = {
-        "sample_rate": str(sample_rate),
-        "format_turns": "true",
-        "speaker_labels": "true",
-        "max_speakers": "2",
-    }
-    if session["keyterms"]:
-        params["keyterms_prompt"] = json.dumps(session["keyterms"])
-    if session["speech_model"]:
-        params["speech_model"] = session["speech_model"]
-    params.update({k: str(v) for k, v in session["stream_params"].items()})
+def streaming_params(sample_rate: int) -> dict[str, str]:
+    """Query params for the v3 streaming WebSocket."""
+    params = {"sample_rate": str(sample_rate), "format_turns": "true"}
+    if cfg.ASSEMBLYAI_KEYTERMS:
+        params["keyterms_prompt"] = json.dumps(cfg.ASSEMBLYAI_KEYTERMS)
+    if cfg.ASSEMBLYAI_SPEECH_MODEL:
+        params["speech_model"] = cfg.ASSEMBLYAI_SPEECH_MODEL
+    params.update(cfg.ASSEMBLYAI_STREAM_PARAMS)
     return params
+
+
+@asynccontextmanager
+async def connect(sample_rate: int) -> AsyncIterator[Any]:
+    """Server-side streaming session, authenticated with the API key (never sent to the browser)."""
+    from websockets.asyncio.client import connect as ws_connect
+
+    async with ws_connect(
+        f"{STREAMING_WS_URL}?{urlencode(streaming_params(sample_rate))}",
+        additional_headers={"Authorization": cfg.ASSEMBLYAI_API_KEY},
+        ssl=await ssl_context(),
+        max_size=None,
+        open_timeout=60,
+    ) as ws:
+        yield ws

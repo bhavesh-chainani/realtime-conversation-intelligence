@@ -107,11 +107,9 @@ ASSEMBLYAI_STREAM_PARAMS = (
     else {}
 )
 
-# Speaker diarisation. "assemblyai": the browser streams straight to AssemblyAI and uses its speaker
-# labels. "nemotron": the browser streams to the backend relay (/ws/stt), which sends the audio to
-# AssemblyAI for the words and to NVIDIA Nemotron 3 Diarization for who said each word
-# (install requirements-diarization.txt). If the model fails to load, the direct path is used.
-DIARIZATION_BACKEND = (os.getenv("DIARIZATION_BACKEND") or "assemblyai").strip().lower()
+# Speaker diarisation: the backend relay (/ws/stt) sends the call audio to AssemblyAI for the words
+# and to NVIDIA Nemotron 3 Diarization for who said each word (install requirements-diarization.txt).
+# If the model fails to load, turns arrive without speakers and the operator assigns roles.
 _default_diar_model = _repo_root / "data" / "models" / "Nemotron-3-Diarization"
 DIARIZATION_MODEL = (
     os.getenv("DIARIZATION_MODEL")
@@ -129,7 +127,7 @@ DIARIZATION_INT8 = (os.getenv("DIARIZATION_INT8") or ("false" if _diar_on_gpu el
     "on",
 }
 DIARIZATION_THREADS = int((os.getenv("DIARIZATION_THREADS") or "4").strip())
-# Longest a finished turn waits for speaker labels before falling back to AssemblyAI's.
+# Longest a finished turn waits for the diariser to catch up before it is sent anyway.
 DIARIZATION_MAX_WAIT_MS = int(
     (os.getenv("DIARIZATION_MAX_WAIT_MS") or ("1500" if _diar_on_gpu else "6000")).strip()
 )

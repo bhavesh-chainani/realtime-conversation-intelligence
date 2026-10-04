@@ -9,7 +9,6 @@ import { TranscriptPanel } from "./components/transcript-panel";
 import { nextLookup } from "./lib/lookup-guard.ts";
 import { extractIntroName, extractNric } from "./lib/quick-entities.ts";
 import {
-  normalizeSpeakerLabel,
   parsePendingTurn,
   parseRelayInfo,
   parseRelaySegments,
@@ -17,7 +16,6 @@ import {
   type PendingTurn,
   type RelaySegment,
 } from "./lib/stt-relay.ts";
-import { areSimilar } from "./lib/text-normalize.ts";
 import {
   isOpenCaseStatus,
   type CustomerData,
@@ -40,10 +38,7 @@ type SpeakerRoleMap = Record<string, KnownRole>;
 type FinalTurnInput = {
   text: string;
   speakerLabel: string | null;
-  wordLabels?: Array<string | null>;
   turnOrder?: number;
-  /** Position within a relay turn split by speaker; each part is its own transcript turn. */
-  segmentIndex?: number;
   /** Relay turns arrive after the next speaker's live text has started: leave it on screen. */
   keepLive?: boolean;
 };
@@ -52,8 +47,6 @@ type FinalTurnInput = {
 const SUGGESTION_DEBOUNCE_MS = 250;
 /** Max time a suggestion request waits for an in-flight history lookup. */
 const LOOKUP_WAIT_MS = 700;
-/** Streaming tokens are valid for 300 s; keep a spare one fresher than this for instant Start/Resume. */
-const STT_TOKEN_MAX_AGE_MS = 240_000;
 const TRANSCRIPT_WINDOW_TURNS = 16;
 /** Operators get one focused suggestion at a time. */
 const MAX_SUGGESTIONS = 1;
@@ -70,50 +63,6 @@ function newTurnId(): string {
     return crypto.randomUUID();
   }
   return `turn-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function extractSpeakerLabel(msg: Record<string, unknown>): string | null {
-  const direct = normalizeSpeakerLabel(msg.speaker_label ?? msg.speaker);
-  if (direct) return direct;
-
-  const words = msg.words;
-  if (!Array.isArray(words) || words.length === 0) return null;
-
-  const counts = new Map<string, number>();
-  for (const w of words) {
-    if (!w || typeof w !== "object") continue;
-    const word = w as Record<string, unknown>;
-    const isFinal =
-      word.word_is_final === true ||
-      String(word.word_is_final).toLowerCase() === "true" ||
-      word.end_of_word === true;
-    if (!isFinal && word.word_is_final !== undefined) continue;
-    const label = normalizeSpeakerLabel(word.speaker ?? word.speaker_label);
-    if (!label) continue;
-    counts.set(label, (counts.get(label) || 0) + 1);
-  }
-
-  let best: string | null = null;
-  let bestCount = 0;
-  for (const [label, count] of counts) {
-    if (count > bestCount) {
-      best = label;
-      bestCount = count;
-    }
-  }
-  return best;
-}
-
-/** Per-word diarization labels, only when they line up 1:1 with the transcript's words. */
-function extractWordLabels(msg: Record<string, unknown>, text: string): Array<string | null> | undefined {
-  const words = msg.words;
-  if (!Array.isArray(words)) return undefined;
-  const labels = words.map((w) =>
-    w && typeof w === "object"
-      ? normalizeSpeakerLabel((w as Record<string, unknown>).speaker ?? (w as Record<string, unknown>).speaker_label)
-      : null
-  );
-  return labels.length === text.split(/\s+/).filter(Boolean).length ? labels : undefined;
 }
 
 function roleDisplayName(role: SpeakerRole): string {
@@ -213,8 +162,6 @@ export default function Page() {
 
   // Conversation state mirrored in refs so async handlers never read stale values.
   const turnsRef = useRef<Turn[]>([]);
-  /** State before the latest final, so a re-sent (formatted) version can replace it. */
-  const lastFinalSnapshotRef = useRef<{ key: string; turns: Turn[] } | null>(null);
   const customerDataRef = useRef<CustomerData>(EMPTY_CUSTOMER);
   const fieldSourcesRef = useRef<Partial<Record<CustomerDataField, FieldSource>>>({});
   const historyCasesRef = useRef<CustomerHistoryCase[]>([]);
@@ -233,10 +180,8 @@ export default function Page() {
   const momentKeysRef = useRef<Set<string>>(new Set());
   const micTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callEndedRef = useRef(false);
-  const lastPartialLabelRef = useRef<string | null>(null);
   const pendingTurnsRef = useRef<PendingTurn[]>([]);
   const sttDropCountRef = useRef(0);
-  const sttTokenRef = useRef<{ payload: Record<string, unknown>; fetchedAt: number } | null>(null);
 
   useEffect(() => {
     const el = transcriptListRef.current;
@@ -594,12 +539,11 @@ export default function Page() {
     return resolved.role === "unknown" ? null : resolved.role;
   };
 
-  const ingestPartial = (text: string, speakerLabel: string | null) => {
+  /** Partial text has no speaker yet: Nemotron labels a turn once it is finished. */
+  const ingestPartial = (text: string) => {
     const trimmed = text.trim();
     setLive(trimmed);
     liveRef.current = trimmed;
-    lastPartialLabelRef.current = speakerLabel;
-    setLiveRole(labelRoleFor(speakerLabel) ?? "unknown");
   };
 
   const ingestSpeechStart = () => {
@@ -624,9 +568,7 @@ export default function Page() {
   /** A relay turn arrived with its speakers: commit one transcript turn per speaker. */
   const ingestRelayTurn = (turnOrder: number | undefined, segments: RelaySegment[]) => {
     setPending(pendingTurnsRef.current.filter((p) => p.turnOrder !== turnOrder));
-    segments.forEach((seg, segmentIndex) =>
-      ingestFinalTurn({ ...seg, turnOrder, segmentIndex, keepLive: true })
-    );
+    segments.forEach((seg) => ingestFinalTurn({ ...seg, turnOrder, keepLive: true }));
   };
 
   const ingestFinalTurn = (input: FinalTurnInput) => {
@@ -639,22 +581,6 @@ export default function Page() {
     }
     if (!text) return;
 
-    // A re-sent version of the latest turn (formatted text, same turn_order) replaces it.
-    let baseTurns = turnsRef.current;
-    const last = baseTurns[baseTurns.length - 1];
-    const snapshot = lastFinalSnapshotRef.current;
-    const orderKey =
-      input.turnOrder !== undefined ? `order:${input.turnOrder}:${input.segmentIndex ?? 0}` : undefined;
-    const isResend =
-      !!snapshot &&
-      !!last &&
-      (orderKey !== undefined ? snapshot.key === orderKey : last.roleSource !== "manual" && areSimilar(text, last.text));
-    if (isResend && snapshot) {
-      baseTurns = snapshot.turns;
-    } else {
-      lastFinalSnapshotRef.current = { key: orderKey ?? `turn:${baseTurns.length}`, turns: baseTurns };
-    }
-
     const turn: Turn = {
       id: newTurnId(),
       text,
@@ -664,7 +590,7 @@ export default function Page() {
       turnOrder: input.turnOrder,
       committedAt: performance.now(),
     };
-    commitTurns([...baseTurns, turn]);
+    commitTurns([...turnsRef.current, turn]);
 
     // Unlabelled turns may be the customer too, so they also trigger guidance.
     if (turn.role !== "staff") handleCustomerTurn(turn);
@@ -726,7 +652,7 @@ export default function Page() {
   };
 
   // ---------------------------------------------------------------------------
-  // Microphone streaming (AssemblyAI v3)
+  // Microphone streaming (backend relay: AssemblyAI words + Nemotron speakers)
   // ---------------------------------------------------------------------------
 
   function closeWs() {
@@ -784,31 +710,10 @@ export default function Page() {
     setIsConnecting(false);
   }
 
-  async function fetchSttToken(): Promise<Record<string, unknown>> {
-    const res = await fetch(`${backendUrl}/assemblyai-token`);
-    if (!res.ok) throw new Error(`token status ${res.status}`);
+  async function fetchSttSession(): Promise<Record<string, unknown>> {
+    const res = await fetch(`${backendUrl}/stt/session`);
+    if (!res.ok) throw new Error(`STT session status ${res.status}`);
     return (await res.json()) as Record<string, unknown>;
-  }
-
-  /** Keep a spare single-use token ready so Start/Resume skips a ~1 s round trip. */
-  async function prefetchSttToken() {
-    const cached = sttTokenRef.current;
-    if (cached && Date.now() - cached.fetchedAt < STT_TOKEN_MAX_AGE_MS) return;
-    try {
-      const payload = await fetchSttToken();
-      sttTokenRef.current = { payload, fetchedAt: Date.now() };
-    } catch {
-      sttTokenRef.current = null;
-    }
-  }
-
-  async function takeSttToken(): Promise<Record<string, unknown>> {
-    const cached = sttTokenRef.current;
-    sttTokenRef.current = null;
-    if (cached && Date.now() - cached.fetchedAt < STT_TOKEN_MAX_AGE_MS) {
-      return cached.payload;
-    }
-    return fetchSttToken();
   }
 
   async function openWs() {
@@ -816,16 +721,15 @@ export default function Page() {
     startCall();
     setIsConnecting(true);
     const myAttempt = streamAttemptRef.current;
-    // Token and microphone in parallel: the token round trip used to add ~1 s before listening.
-    const tokenPromise = takeSttToken();
-    tokenPromise.catch(() => {});
+    // Session ticket and microphone in parallel.
+    const sessionPromise = fetchSttSession();
+    sessionPromise.catch(() => {});
 
     // A new stream may assign A/B differently: forget the old label map.
     setRoleMap({});
     nextVoiceIsStaffRef.current = true;
     setNextVoiceIsStaff(true);
     setLiveRole("unknown");
-    lastFinalSnapshotRef.current = null;
 
     const media = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (myAttempt !== streamAttemptRef.current) {
@@ -869,55 +773,16 @@ export default function Page() {
     }
 
     let wsUrl = "";
-    let streamingToken = "";
-    let keytermsPrompt: string[] = [];
-    let sttPrompt = "";
-    let speechModel = "";
-    let streamParams: Record<string, string> = {};
     try {
-      const payload = await tokenPromise;
+      const relay = parseRelayInfo(await sessionPromise);
       if (myAttempt !== streamAttemptRef.current) return;
-      // Nemotron diarisation on: audio goes through the backend relay instead of straight to AssemblyAI.
-      const relay = parseRelayInfo(payload);
-      if (relay) wsUrl = relayUrl(backendUrl, relay, ctx.sampleRate || 48000);
-      streamingToken = String(payload.token || "").trim();
-      keytermsPrompt = Array.isArray(payload.keyterms_prompt)
-        ? payload.keyterms_prompt.map((t: unknown) => String(t))
-        : [];
-      sttPrompt = typeof payload.prompt === "string" ? payload.prompt : "";
-      speechModel = typeof payload.speech_model === "string" ? payload.speech_model : "";
-      if (payload.stream_params && typeof payload.stream_params === "object") {
-        streamParams = Object.fromEntries(
-          Object.entries(payload.stream_params as Record<string, unknown>).map(([k, v]) => [k, String(v)])
-        );
-      }
-      if (!wsUrl && !streamingToken) {
-        alert("Backend returned empty streaming token.");
-        closeWs();
-        return;
-      }
+      if (!relay) throw new Error("empty STT session");
+      wsUrl = relayUrl(backendUrl, relay, ctx.sampleRate || 48000);
     } catch (err) {
-      console.error("[Frontend] Failed to obtain streaming token:", err);
-      alert("Unable to obtain streaming token. Check backend.");
+      console.error("[Frontend] Failed to start transcription:", err);
+      alert("Unable to start transcription. Check the backend.");
       closeWs();
       return;
-    }
-
-    if (!wsUrl) {
-      const params = new URLSearchParams({
-        sample_rate: String(ctx.sampleRate || 48000),
-        format_turns: "true",
-        speaker_labels: "true",
-        max_speakers: "2",
-        token: streamingToken,
-      });
-      if (keytermsPrompt.length > 0) {
-        params.set("keyterms_prompt", JSON.stringify(keytermsPrompt));
-      }
-      if (sttPrompt) params.set("prompt", sttPrompt);
-      if (speechModel) params.set("speech_model", speechModel);
-      for (const [key, value] of Object.entries(streamParams)) params.set(key, value);
-      wsUrl = `wss://streaming.assemblyai.com/v3/ws?${params}`;
     }
 
     const ws = new WebSocket(wsUrl);
@@ -932,7 +797,6 @@ export default function Page() {
     ws.onopen = () => {
       setIsConnecting(false);
       setIsListening(true);
-      void prefetchSttToken(); // ready for the next Resume
     };
     // closeWs() detaches this handler first, so reaching it means the connection was lost.
     ws.onclose = (evt) => {
@@ -959,10 +823,6 @@ export default function Page() {
           handlersRef.current.ingestSpeechStart();
           return;
         }
-        if (d.type === "Begin") {
-          console.info("[STT] Session started", d);
-          return;
-        }
         if (d.type === "Error" || d.error) {
           // Fail loudly: a silent STT failure looks like a frozen call.
           console.error("[STT] Error", d);
@@ -975,33 +835,12 @@ export default function Page() {
           handlersRef.current.ingestPendingTurn(pending);
           return;
         }
-        const text = String(d.transcript || d.text || "");
-        if (!text) return;
-
-        const speakerLabel = extractSpeakerLabel(d);
-        const mt = String(d.message_type || "").toLowerCase();
-        const tt = String(d.type || "").toLowerCase();
-        const endOfTurn =
-          d.end_of_turn === true ||
-          String(d.end_of_turn).toLowerCase() === "true" ||
-          tt.includes("final") ||
-          mt.includes("final") ||
-          mt === "transcript_complete";
-        // With format_turns, the unformatted end-of-turn is followed by a formatted one: wait for it.
-        const isFinal = endOfTurn && d.turn_is_formatted !== false;
-
-        const relaySegments = isFinal ? parseRelaySegments(d) : null;
-        if (relaySegments) {
-          handlersRef.current.ingestRelayTurn(typeof d.turn_order === "number" ? d.turn_order : undefined, relaySegments);
-        } else if (isFinal) {
-          handlersRef.current.ingestFinalTurn({
-            text,
-            speakerLabel,
-            wordLabels: extractWordLabels(d, text),
-            turnOrder: typeof d.turn_order === "number" ? d.turn_order : undefined,
-          });
+        if (d.type !== "Turn") return;
+        const segments = parseRelaySegments(d);
+        if (segments) {
+          handlersRef.current.ingestRelayTurn(typeof d.turn_order === "number" ? d.turn_order : undefined, segments);
         } else {
-          handlersRef.current.ingestPartial(text, speakerLabel);
+          handlersRef.current.ingestPartial(String(d.transcript || ""));
         }
       } catch (err) {
         console.error("[Frontend] WebSocket message error:", err);
@@ -1023,16 +862,13 @@ export default function Page() {
   /** Stop the mic without losing the sentence that was still being transcribed. */
   function stopListening() {
     if (wsRef.current) {
-      // Turns still waiting for speaker labels keep their provisional label.
+      // Turns still waiting for speaker labels are kept without one.
       for (const turn of pendingTurnsRef.current) {
-        handlersRef.current.ingestFinalTurn({ text: turn.text, speakerLabel: turn.speakerLabel });
+        handlersRef.current.ingestFinalTurn({ text: turn.text, speakerLabel: null });
       }
       const live = liveRef.current.trim();
       if (live) {
-        handlersRef.current.ingestFinalTurn({
-          text: live,
-          speakerLabel: lastPartialLabelRef.current,
-        });
+        handlersRef.current.ingestFinalTurn({ text: live, speakerLabel: null });
       }
     }
     closeWs();
@@ -1064,7 +900,6 @@ export default function Page() {
     extractReqIdRef.current += 1;
 
     commitTurns([]);
-    lastFinalSnapshotRef.current = null;
     setRoleMap({});
     nextVoiceIsStaffRef.current = true;
     setNextVoiceIsStaff(true);

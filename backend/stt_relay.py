@@ -4,13 +4,14 @@ The browser sends raw Int16 PCM to /ws/stt. Every byte goes to both AssemblyAI a
 diariser, so AssemblyAI word times and diariser frames share one clock (the stream start).
 Messages back to the browser are AssemblyAI-shaped:
 
-- partial `Turn` messages pass straight through (speaker label mapped to the Nemotron names)
+- partial `Turn` messages pass straight through, without speakers
 - a finished turn is announced at once as `PendingTurn`, then held until the diariser has
   covered its last word (or `DIARIZATION_MAX_WAIT_MS` passes), then sent as a final `Turn`
-  whose `segments` split it wherever the speaker changes, with `diarization` set to
-  "nemotron", or "assemblyai" if it fell back to AssemblyAI's own labels
+  whose `segments` split it wherever the speaker changes. `diarization` says how complete
+  the labels are: "nemotron" (fully covered), "partial" (the diariser was still behind) or
+  "none" (no diariser loaded: every speaker is null and the operator assigns roles)
 
-Speaker labels are "A", "B", ... in order of first arrival, as with AssemblyAI.
+Speaker labels are "A", "B", ... in Nemotron's order of first arrival.
 """
 
 from __future__ import annotations
@@ -23,13 +24,13 @@ import json
 import logging
 import secrets
 import time
-from contextlib import asynccontextmanager, suppress
-from typing import Any, AsyncIterator
+from contextlib import suppress
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from . import config as cfg
-from .assemblyai import STREAMING_WS_URL, ssl_context, stt_session_config, streaming_params
+from . import assemblyai
 from .diarization.merge import majority, smooth, split_by_speaker, word_speakers
 from .diarization.nemotron import get_diarizer
 
@@ -38,7 +39,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 TICKET_TTL_SECONDS = 300
-NO_LABEL = {"", "PENDING", "UNKNOWN", "NONE", "NULL"}
 # Diariser coverage needed past a turn's last word before its labels are trusted.
 END_MARGIN_MS = 50
 
@@ -85,32 +85,6 @@ def redeem_ticket(ticket: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def aai_label(raw: Any) -> str | None:
-    label = str(raw or "").strip().upper()
-    return None if label in NO_LABEL else label
-
-
-class LabelMap:
-    """Maps AssemblyAI labels onto Nemotron's, learned from words both have labelled, so a
-    turn that falls back to AssemblyAI labels still uses the names the operator has mapped."""
-
-    def __init__(self) -> None:
-        self.votes: dict[str, dict[str, int]] = {}
-
-    def learn(self, aai: list[str | None], nemo: list[str | None]) -> None:
-        for a, n in zip(aai, nemo):
-            if a and n:
-                counts = self.votes.setdefault(a, {})
-                counts[n] = counts.get(n, 0) + 1
-
-    def map(self, raw: Any) -> str | None:
-        label = aai_label(raw)
-        if label is None:
-            return None
-        counts = self.votes.get(label)
-        return max(counts, key=counts.__getitem__) if counts else label
-
-
 def _labelled_turn(msg: dict, labels: list[str | None], source: str) -> dict:
     words = [{**w, "speaker": label} for w, label in zip(msg.get("words") or [], labels)]
     if words:
@@ -123,39 +97,21 @@ def _labelled_turn(msg: dict, labels: list[str | None], source: str) -> dict:
     return {**msg, "words": words, "speaker_label": majority(labels), "segments": segments, "diarization": source}
 
 
-def diarize_turn(msg: dict, probs: list[list[float]], label_map: LabelMap) -> dict:
+def diarize_turn(msg: dict, probs: list[list[float]], source: str = "nemotron") -> dict:
+    """Label each word with its Nemotron speaker. Words past the diariser's coverage take the
+    nearest active frame, or None."""
     words = msg.get("words") or []
     labels = [None if s is None else chr(ord("A") + s) for s in smooth(word_speakers(words, probs))]
-    label_map.learn([aai_label(w.get("speaker")) for w in words], labels)
-    return _labelled_turn(msg, labels, "nemotron")
+    return _labelled_turn(msg, labels, source)
 
 
-def fallback_turn(msg: dict, label_map: LabelMap) -> dict:
-    turn_label = label_map.map(msg.get("speaker_label"))
-    labels = [label_map.map(w.get("speaker")) or turn_label for w in msg.get("words") or []]
-    return _labelled_turn(msg, labels, "assemblyai")
+def unlabelled_turn(msg: dict) -> dict:
+    return _labelled_turn(msg, [None] * len(msg.get("words") or []), "none")
 
 
 # ---------------------------------------------------------------------------
 # Relay
 # ---------------------------------------------------------------------------
-
-
-@asynccontextmanager
-async def connect_assemblyai(params: dict[str, str]) -> AsyncIterator[Any]:
-    """Server-side AssemblyAI session, authenticated with the API key (never sent to the browser)."""
-    from urllib.parse import urlencode
-
-    from websockets.asyncio.client import connect
-
-    async with connect(
-        f"{STREAMING_WS_URL}?{urlencode(params)}",
-        additional_headers={"Authorization": cfg.ASSEMBLYAI_API_KEY},
-        ssl=await ssl_context(),
-        max_size=None,
-        open_timeout=60,
-    ) as ws:
-        yield ws
 
 
 def _origin_allowed(origin: str | None) -> bool:
@@ -166,13 +122,12 @@ class Relay:
     def __init__(self, browser: WebSocket, aai: Any, diar: Any | None, max_wait_ms: int):
         self.browser, self.aai, self.diar = browser, aai, diar
         self.max_wait = max_wait_ms / 1000
-        self.labels = LabelMap()
-        # turn_order -> latest formatted final; AssemblyAI re-sends a turn once its speaker label is ready.
+        # turn_order -> latest formatted final, in case AssemblyAI re-sends a turn.
         self.held: dict[Any, dict] = {}
         self.queue: asyncio.Queue[tuple[Any, float]] = asyncio.Queue()
         self.sent: set[Any] = set()
         self.unsent = 0  # turns announced as pending and not yet sent final
-        self.stats = {"nemotron": 0, "assemblyai": 0}
+        self.stats = {"nemotron": 0, "partial": 0, "none": 0}
 
     async def run(self) -> None:
         upstream, downstream = asyncio.create_task(self._upstream()), asyncio.create_task(self._downstream())
@@ -233,7 +188,7 @@ class Relay:
                 await self.browser.send_json(msg)
                 continue
             if not msg.get("end_of_turn"):
-                await self.browser.send_json({**msg, "speaker_label": self.labels.map(msg.get("speaker_label"))})
+                await self.browser.send_json(msg)
                 continue
             if msg.get("turn_is_formatted") is False:
                 continue  # the formatted version follows
@@ -247,12 +202,7 @@ class Relay:
             self.unsent += 1
             self.queue.put_nowait((order, time.monotonic()))
             await self.browser.send_json(
-                {
-                    "type": "PendingTurn",
-                    "turn_order": msg.get("turn_order"),
-                    "transcript": msg.get("transcript", ""),
-                    "speaker_label": self.labels.map(msg.get("speaker_label")),
-                }
+                {"type": "PendingTurn", "turn_order": msg.get("turn_order"), "transcript": msg.get("transcript", "")}
             )
         await self.browser.close(code=1011, reason="AssemblyAI closed the stream")
         return False
@@ -272,13 +222,15 @@ class Relay:
                 await asyncio.sleep(0.05)
             msg = self.held.pop(order)
             self.sent.add(order)
-            if diar is not None and not diar.failed and diar.processed_until_ms >= need_ms:
-                out = diarize_turn(msg, diar.probs, self.labels)
+            if diar is None or diar.failed:
+                out = unlabelled_turn(msg)
+            elif diar.processed_until_ms >= need_ms:
+                out = diarize_turn(msg, diar.probs)
             else:
-                out = fallback_turn(msg, self.labels)
+                out = diarize_turn(msg, diar.probs, source="partial")
                 logger.warning(
-                    "Turn %s used AssemblyAI speaker labels (diariser at %s ms, needed %s ms)",
-                    msg.get("turn_order"), diar.processed_until_ms if diar else None, need_ms,
+                    "Turn %s sent before the diariser caught up (at %s ms, needed %s ms)",
+                    msg.get("turn_order"), diar.processed_until_ms, need_ms,
                 )
             self.stats[out["diarization"]] += 1
             await self.browser.send_json(out)
@@ -301,7 +253,7 @@ async def stt_relay(ws: WebSocket, ticket: str = "", sample_rate: int = 48000) -
     diarizer = get_diarizer()
     diar = diarizer.new_session(sample_rate) if diarizer else None
     try:
-        async with connect_assemblyai(streaming_params(sample_rate, stt_session_config())) as aai:
+        async with assemblyai.connect(sample_rate) as aai:
             await Relay(ws, aai, diar, cfg.DIARIZATION_MAX_WAIT_MS).run()
     except Exception as exc:
         logger.exception("STT relay failed")

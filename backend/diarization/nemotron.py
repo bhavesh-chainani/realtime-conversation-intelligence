@@ -168,7 +168,7 @@ _diarizer: NemotronDiarizer | None = None
 
 
 def get_diarizer() -> NemotronDiarizer | None:
-    """The loaded model, or None when diarisation is off or the model failed to load."""
+    """The loaded model, or None when it is not loaded (yet) or failed to load."""
     return _diarizer if _diarizer is not None and _diarizer.ready else None
 
 
@@ -186,5 +186,5 @@ def load_diarizer() -> NemotronDiarizer:
         _diarizer.load()
     except Exception as exc:
         _diarizer.error = str(exc)[:300]
-        logger.exception("Nemotron diarizer failed to load; using AssemblyAI speaker labels")
+        logger.exception("Nemotron diarizer failed to load; turns will arrive without speakers")
     return _diarizer

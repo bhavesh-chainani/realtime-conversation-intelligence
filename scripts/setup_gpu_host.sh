@@ -35,7 +35,7 @@ snapshot_download('nvidia/Nemotron-3-Diarization', local_dir='data/models/Nemotr
 cat <<'EOF'
 
 == Done. Start the backend (keep it bound to localhost; reach it over SSH):
-  DIARIZATION_BACKEND=nemotron DIARIZATION_DEVICE=cuda \
+  DIARIZATION_DEVICE=cuda \
     realtime-venv/bin/uvicorn backend.api:app --host 127.0.0.1 --port 8000
 
 On the laptop running the frontend:

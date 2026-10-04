@@ -10,8 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 from . import config as cfg
-from .assemblyai import StreamingTokenError, create_streaming_token, ssl_context, stt_session_config
-from .config import BACKEND_CORS_ORIGINS
+from .assemblyai import ssl_context
 from .customer_data_extractor import router as customer_data_router
 from .customer_history import router as customer_history_router
 from .diarization import nemotron
@@ -27,8 +26,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     # Load the CA bundle now, not when the first call connects (can take seconds).
     tls_task = asyncio.create_task(ssl_context())
-    if cfg.DIARIZATION_BACKEND == "nemotron":
-        await asyncio.to_thread(nemotron.load_diarizer)
+    # A failed load is logged and reported by /ready; calls then arrive without speakers.
+    await asyncio.to_thread(nemotron.load_diarizer)
     yield
     tls_task.cancel()
 
@@ -36,7 +35,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=BACKEND_CORS_ORIGINS,
+    allow_origins=cfg.BACKEND_CORS_ORIGINS,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
@@ -54,69 +53,27 @@ async def health():
 
 @app.get("/ready")
 async def ready():
-    """What is configured and loaded."""
-    llm_cfg = llm_runtime_config()
-    customer_history_configured = bool(cfg.CUSTOMER_HISTORY_DATABASE_URL)
-    detail = {
-        "ready": True,
-        "llm_configured": bool(llm_cfg["llm_configured"]),
-        "llm_api_key_loaded": bool(llm_cfg["llm_api_key_loaded"]),
-        "llm_base_url_configured": bool(llm_cfg["llm_base_url_configured"]),
-        "router_model_configured": bool(llm_cfg["router_model_configured"]),
-        "suggestion_model_configured": bool(llm_cfg["suggestion_model_configured"]),
-        "extraction_model_configured": bool(llm_cfg["extraction_model_configured"]),
-        "customer_history_configured": customer_history_configured,
-        "assemblyai_configured": bool(cfg.ASSEMBLYAI_API_KEY),
-        "diarization": diarization_status(),
-    }
-    return detail
-
-
-def diarization_status() -> dict:
-    """Which diariser live calls use, and whether it is loaded."""
-    if cfg.DIARIZATION_BACKEND != "nemotron":
-        return {"backend": "assemblyai", "ready": True}
-    out: dict = {"backend": "nemotron", "ready": nemotron.get_diarizer() is not None, "mode": cfg.DIARIZATION_MODE}
+    """What is configured and loaded. `ready` means a live call can be transcribed and assisted."""
+    llm_configured = bool(llm_runtime_config()["llm_configured"])
+    transcription_configured = bool(cfg.ASSEMBLYAI_API_KEY)
+    diarization: dict = {"ready": nemotron.get_diarizer() is not None, "mode": cfg.DIARIZATION_MODE}
     if nemotron.load_error():
-        out["error"] = nemotron.load_error()
-    return out
+        diarization["error"] = nemotron.load_error()
+    return {
+        "ready": llm_configured and transcription_configured,
+        "llm_configured": llm_configured,
+        "transcription_configured": transcription_configured,
+        "diarization": diarization,
+        "customer_db_configured": bool(cfg.CUSTOMER_HISTORY_DATABASE_URL),
+    }
 
 
-@app.get("/assemblyai-token")
-async def assemblyai_token():
-    """How the browser should start live transcription.
-
-    With Nemotron diarisation loaded: a one-time ticket for the backend relay (/ws/stt).
-    Otherwise: a temporary AssemblyAI token plus session settings for the direct path.
-    """
-    session = stt_session_config()
-
-    if cfg.DIARIZATION_BACKEND == "nemotron" and nemotron.get_diarizer() is not None:
-        return {"relay": {"path": "/ws/stt", "ticket": issue_ticket()}, "diarization": "nemotron"}
-
-    try:
-        token = await create_streaming_token()
-    except StreamingTokenError as exc:
-        status = 500 if "not configured" in str(exc) else 502
-        raise HTTPException(status_code=status, detail=str(exc))
-    except Exception as exc:
-        logger.exception(
-            "Unexpected error generating AssemblyAI temporary token: %s", exc
-        )
-        raise HTTPException(
-            status_code=502, detail="Unable to generate streaming token"
-        )
-
-    out: dict = {"token": token}
-    if session["keyterms"]:
-        out["keyterms_prompt"] = session["keyterms"]
-    if session["prompt"]:
-        out["prompt"] = session["prompt"]
-    if session["speech_model"]:
-        out["speech_model"] = session["speech_model"]
-    if session["stream_params"]:
-        out["stream_params"] = session["stream_params"]
-    return out
+@app.get("/stt/session")
+async def stt_session():
+    """A one-time ticket for the live transcription relay (/ws/stt)."""
+    if not cfg.ASSEMBLYAI_API_KEY:
+        raise HTTPException(status_code=503, detail="Transcription not configured: set ASSEMBLYAI_API_KEY")
+    return {"path": "/ws/stt", "ticket": issue_ticket()}
 
 
 if __name__ == "__main__":

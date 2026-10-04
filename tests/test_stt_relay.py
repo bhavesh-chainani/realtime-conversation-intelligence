@@ -9,7 +9,7 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from backend import stt_relay
-from backend.stt_relay import LabelMap, TicketError, diarize_turn, fallback_turn, issue_ticket, redeem_ticket
+from backend.stt_relay import TicketError, diarize_turn, issue_ticket, redeem_ticket, unlabelled_turn
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "aai_turn_merged_speakers.json").read_text())
 ROLE_CHANNEL = {"staff": 0, "customer": 1}  # staff speaks first, so Nemotron's arrival order puts them on 0
@@ -46,7 +46,7 @@ def test_tampered_or_expired_ticket_rejected(monkeypatch):
 
 
 def test_merged_assemblyai_turn_is_split_by_speaker():
-    out = diarize_turn(FIXTURE["turn"], truth_probs(), LabelMap())
+    out = diarize_turn(FIXTURE["turn"], truth_probs())
     assert out["diarization"] == "nemotron"
     assert [(s["speaker_label"], s["transcript"]) for s in out["segments"]] == [
         ("A", "This is Bhavesh. May I have your name and NRIC, please?"),
@@ -56,14 +56,12 @@ def test_merged_assemblyai_turn_is_split_by_speaker():
     assert all(w["speaker"] in {"A", "B"} for w in out["words"])
 
 
-def test_fallback_uses_assemblyai_labels_in_learned_names():
-    labels = LabelMap()
-    labels.learn(["B", "B", "A"], ["A", "A", "B"])  # AssemblyAI named the voices the other way round
-    out = fallback_turn(FIXTURE["turn"], labels)
-    assert out["diarization"] == "assemblyai"
-    # PENDING words take the turn's label (AssemblyAI B -> Nemotron A)
-    assert {w["speaker"] for w in out["words"]} <= {"A", "B"}
-    assert out["speaker_label"] == "A"
+def test_turn_without_diariser_has_no_speakers():
+    out = unlabelled_turn(FIXTURE["turn"])
+    assert out["diarization"] == "none"
+    assert out["speaker_label"] is None
+    assert {w["speaker"] for w in out["words"]} == {None}
+    assert len(out["segments"]) == 1 and out["segments"][0]["speaker_label"] is None
 
 
 # --- relay session ---------------------------------------------------------
@@ -116,27 +114,28 @@ class FakeDiarizer:
 
 
 def aai_messages() -> list[dict]:
-    turn = FIXTURE["turn"]
-    unlabelled = {k: v for k, v in turn.items() if k != "speaker_label"}
+    # Without speaker_labels AssemblyAI sends no speakers; strip the fixture's to match.
+    turn = {k: v for k, v in FIXTURE["turn"].items() if k != "speaker_label"}
+    turn["words"] = [{k: v for k, v in w.items() if k != "speaker"} for w in turn["words"]]
     return [
         {"type": "Begin", "id": "s1"},
-        {"type": "Turn", "turn_order": 1, "end_of_turn": False, "transcript": "This is", "speaker_label": "B", "words": []},
-        {**unlabelled, "turn_is_formatted": False},
-        unlabelled,
-        turn,  # AssemblyAI re-sends the formatted turn once its speaker label is ready
+        {"type": "Turn", "turn_order": 1, "end_of_turn": False, "transcript": "This is", "words": []},
+        {**turn, "turn_is_formatted": False},
+        turn,
+        turn,  # a re-sent final is dropped
     ]
 
 
-def run_session(client, monkeypatch, session: FakeSession) -> tuple[list[dict], FakeAssemblyAI]:
+def run_session(client, monkeypatch, session: FakeSession | None) -> tuple[list[dict], FakeAssemblyAI]:
     fake = FakeAssemblyAI(aai_messages())
 
     @asynccontextmanager
-    async def connect(params):
-        assert params["sample_rate"] == "48000" and params["speaker_labels"] == "true"
+    async def connect(sample_rate):
+        assert sample_rate == 48000
         yield fake
 
-    monkeypatch.setattr(stt_relay, "connect_assemblyai", connect)
-    monkeypatch.setattr(stt_relay, "get_diarizer", lambda: FakeDiarizer(session))
+    monkeypatch.setattr(stt_relay.assemblyai, "connect", connect)
+    monkeypatch.setattr(stt_relay, "get_diarizer", lambda: FakeDiarizer(session) if session else None)
     received = []
     with client.websocket_connect(f"/ws/stt?ticket={issue_ticket()}&sample_rate=48000") as ws:
         while True:
@@ -163,10 +162,18 @@ def test_relay_holds_final_turn_then_sends_speaker_segments(client, monkeypatch)
     assert b"\x01\x00" * 800 in fake.received and session.fed == 1600
 
 
-def test_relay_falls_back_when_diariser_lags(client, monkeypatch):
+def test_relay_sends_partial_labels_when_diariser_lags(client, monkeypatch):
     monkeypatch.setattr(stt_relay.cfg, "DIARIZATION_MAX_WAIT_MS", 100)
-    received, _ = run_session(client, monkeypatch, FakeSession([]))
-    assert received[-1]["diarization"] == "assemblyai"
+    received, _ = run_session(client, monkeypatch, FakeSession(truth_probs()[:1000]))
+    final = received[-1]
+    assert final["diarization"] == "partial"
+    assert final["segments"][0]["speaker_label"] == "A"  # the words the diariser did hear
+
+
+def test_relay_without_diariser_sends_unlabelled_turns(client, monkeypatch):
+    received, _ = run_session(client, monkeypatch, None)
+    assert received[-1]["diarization"] == "none"
+    assert received[-1]["speaker_label"] is None
 
 
 def test_terminate_still_delivers_turns_waiting_for_labels(client, monkeypatch):
@@ -174,10 +181,10 @@ def test_terminate_still_delivers_turns_waiting_for_labels(client, monkeypatch):
     fake = FakeAssemblyAI(aai_messages())
 
     @asynccontextmanager
-    async def connect(params):
+    async def connect(sample_rate):
         yield fake
 
-    monkeypatch.setattr(stt_relay, "connect_assemblyai", connect)
+    monkeypatch.setattr(stt_relay.assemblyai, "connect", connect)
     monkeypatch.setattr(stt_relay, "get_diarizer", lambda: FakeDiarizer(FakeSession([])))
     with client.websocket_connect(f"/ws/stt?ticket={issue_ticket()}") as ws:
         while ws.receive_json()["type"] != "PendingTurn":

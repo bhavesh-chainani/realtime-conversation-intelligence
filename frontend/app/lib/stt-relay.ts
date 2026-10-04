@@ -1,28 +1,23 @@
-// Messages from the backend STT relay (/ws/stt): AssemblyAI turns re-labelled by Nemotron diarisation.
+// Messages from the backend STT relay (/ws/stt): AssemblyAI words, speakers from Nemotron diarisation.
 
+/** Where to connect, from GET /stt/session. */
 export type RelayInfo = { path: string; ticket: string };
 
 /** A finished turn whose speakers are still being identified. */
-export type PendingTurn = { turnOrder: number | undefined; text: string; speakerLabel: string | null };
+export type PendingTurn = { turnOrder: number | undefined; text: string };
 
-/** One speaker's part of a finished turn. */
-export type RelaySegment = { text: string; speakerLabel: string | null; wordLabels?: Array<string | null> };
+/** One speaker's part of a finished turn (speaker null when the diariser did not hear it). */
+export type RelaySegment = { text: string; speakerLabel: string | null };
 
 export function normalizeSpeakerLabel(raw: unknown): string | null {
   if (raw == null) return null;
   const label = String(raw).trim().toUpperCase();
-  // AssemblyAI marks words it has not attributed yet as "PENDING": not a third voice.
-  if (!label || label === "UNKNOWN" || label === "NULL" || label === "NONE" || label === "PENDING") {
-    return null;
-  }
-  return label;
+  return label && label !== "UNKNOWN" && label !== "NULL" && label !== "NONE" ? label : null;
 }
 
-/** The relay to use, when the token endpoint offered one (Nemotron diarisation is on). */
 export function parseRelayInfo(payload: Record<string, unknown>): RelayInfo | null {
-  const relay = payload.relay as Record<string, unknown> | undefined;
-  if (!relay || typeof relay.path !== "string" || typeof relay.ticket !== "string") return null;
-  return { path: relay.path, ticket: relay.ticket };
+  if (typeof payload.path !== "string" || typeof payload.ticket !== "string") return null;
+  return { path: payload.path, ticket: payload.ticket };
 }
 
 export function relayUrl(backendUrl: string, relay: RelayInfo, sampleRate: number): string {
@@ -36,7 +31,6 @@ export function parsePendingTurn(msg: Record<string, unknown>): PendingTurn | nu
   return {
     turnOrder: typeof msg.turn_order === "number" ? msg.turn_order : undefined,
     text: String(msg.transcript || "").trim(),
-    speakerLabel: normalizeSpeakerLabel(msg.speaker_label),
   };
 }
 
@@ -46,12 +40,7 @@ export function parseRelaySegments(msg: Record<string, unknown>): RelaySegment[]
   return msg.segments
     .map((raw) => {
       const seg = raw as Record<string, unknown>;
-      const words = Array.isArray(seg.words) ? (seg.words as Array<Record<string, unknown>>) : [];
-      return {
-        text: String(seg.transcript || "").trim(),
-        speakerLabel: normalizeSpeakerLabel(seg.speaker_label),
-        wordLabels: words.length ? words.map((w) => normalizeSpeakerLabel(w.speaker)) : undefined,
-      };
+      return { text: String(seg.transcript || "").trim(), speakerLabel: normalizeSpeakerLabel(seg.speaker_label) };
     })
     .filter((seg) => seg.text);
 }
