@@ -50,9 +50,7 @@ class _FakeService:
 
 
 def test_customer_history_endpoint_happy_path(client, monkeypatch):
-    monkeypatch.setattr(
-        "backend.customer_history.customer_history_service", _FakeService()
-    )
+    monkeypatch.setattr("backend.customer_history.customer_history_service", _FakeService())
 
     r = client.post(
         "/customer-history",
@@ -69,9 +67,7 @@ def test_customer_history_endpoint_happy_path(client, monkeypatch):
 
 
 def test_customer_history_endpoint_no_match(client, monkeypatch):
-    monkeypatch.setattr(
-        "backend.customer_history.customer_history_service", _FakeService()
-    )
+    monkeypatch.setattr("backend.customer_history.customer_history_service", _FakeService())
 
     r = client.post("/customer-history", json={"name": "Unknown Person"})
 

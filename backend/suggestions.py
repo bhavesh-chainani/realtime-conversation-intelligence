@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -28,13 +28,11 @@ class CustomerCase(BaseModel):
 
 class SuggestRequest(BaseModel):
     context: str
-    max_suggestions: int | None = Field(
-        None, description="Defaults to MAX_SUGGESTIONS from config"
-    )
-    customer_profile: Dict[str, Any] | None = Field(
+    max_suggestions: int | None = Field(None, description="Defaults to MAX_SUGGESTIONS from config")
+    customer_profile: dict[str, Any] | None = Field(
         None, description="Verified/extracted customer fields to ground suggestions"
     )
-    customer_history: List[CustomerCase] | None = Field(
+    customer_history: list[CustomerCase] | None = Field(
         None, description="Prior cases from the customer history lookup"
     )
 
@@ -42,9 +40,9 @@ class SuggestRequest(BaseModel):
 async def compute_suggestions(
     context: str,
     max_suggestions: int = 2,
-    customer_profile: Optional[Dict[str, Any]] = None,
-    customer_cases: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    customer_profile: dict[str, Any] | None = None,
+    customer_cases: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Suggestions from the principal agent, or the static fallback if it fails."""
     started = time.perf_counter()
     try:
@@ -73,7 +71,7 @@ async def compute_suggestions(
 
 
 @router.post("/suggest")
-async def suggest(req: SuggestRequest) -> Dict[str, Any]:
+async def suggest(req: SuggestRequest) -> dict[str, Any]:
     return await compute_suggestions(
         req.context,
         req.max_suggestions or cfg.SUGGESTION_MAX,

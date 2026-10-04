@@ -95,7 +95,12 @@ export function SessionHeader({
         </span>
 
         {canPause ? (
-          <button type="button" className="btn btn--secondary btn--sm" onClick={onPause} title="Stop listening, keep everything on screen">
+          <button
+            type="button"
+            className="btn btn--secondary btn--sm"
+            onClick={onPause}
+            title="Stop listening, keep everything on screen"
+          >
             Pause
           </button>
         ) : null}

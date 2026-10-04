@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 from urllib.parse import urlencode
 
 from . import config as cfg

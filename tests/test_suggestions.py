@@ -53,7 +53,10 @@ def _model_reply(linked: list[str]) -> str:
                     "confidence": 0.9,
                     "linked_records": linked,
                     "source": "history",
-                    "details": {"possibleConversation": "I'll add this to your open case.", "priority": "high"},
+                    "details": {
+                        "possibleConversation": "I'll add this to your open case.",
+                        "priority": "high",
+                    },
                 }
             ],
         }
@@ -102,7 +105,9 @@ def test_name_only_match_is_flagged_unverified(monkeypatch):
     fake = _FakeAsyncClient(_model_reply(["CASE-2026-03117"]))
     _use(monkeypatch, fake)
 
-    body = asyncio.run(generate_suggestions(TRANSCRIPT, customer_profile={"record_match": "name"}, customer_cases=CASES))
+    body = asyncio.run(
+        generate_suggestions(TRANSCRIPT, customer_profile={"record_match": "name"}, customer_cases=CASES)
+    )
 
     assert "NAME ONLY" in fake.user_prompt()
     assert body["suggestions"][0]["linked_records"] == []
@@ -141,7 +146,9 @@ def test_invalid_json_returns_flagged_fallback(monkeypatch):
 def test_suggest_without_history_drops_case_ids(client, monkeypatch):
     _use(monkeypatch, _FakeAsyncClient(_model_reply(["CASE-1"])))
 
-    r = client.post("/suggest", json={"context": "Staff: Hello\nCustomer: My salary was cut.", "max_suggestions": 2})
+    r = client.post(
+        "/suggest", json={"context": "Staff: Hello\nCustomer: My salary was cut.", "max_suggestions": 2}
+    )
 
     assert r.status_code == 200
     body = r.json()
@@ -162,7 +169,13 @@ def test_suggest_passes_customer_history_into_prompt(client, monkeypatch):
             "context": "Staff: Hello\nCustomer: My salary was cut.",
             "customer_profile": {"name": "Katherine Liao", "nric_worker_permit_id": "S1234567A"},
             "customer_history": [
-                {"case_id": "CASE-1", "company": "Brightpath", "type": "Leave", "status": "Open", "summary": "x"}
+                {
+                    "case_id": "CASE-1",
+                    "company": "Brightpath",
+                    "type": "Leave",
+                    "status": "Open",
+                    "summary": "x",
+                }
             ],
         },
     )

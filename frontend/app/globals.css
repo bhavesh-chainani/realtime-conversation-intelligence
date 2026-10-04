@@ -494,7 +494,10 @@ select {
   background: var(--surface-strong);
   color: var(--text);
   padding: 14px 16px;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
 }
 
 .field-input:hover,
@@ -657,7 +660,9 @@ select {
 
 .turn-card--clickable {
   cursor: pointer;
-  transition: box-shadow 0.18s ease, transform 0.18s ease;
+  transition:
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
 
 .turn-card--clickable:hover {

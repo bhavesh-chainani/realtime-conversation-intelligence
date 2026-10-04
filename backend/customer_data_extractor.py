@@ -105,9 +105,7 @@ Return a JSON object with the extracted information. If any field is not mention
             )
 
         try:
-            user_prompt = self.USER_PROMPT_TEMPLATE.format(
-                conversation_transcript=conversation_transcript
-            )
+            user_prompt = self.USER_PROMPT_TEMPLATE.format(conversation_transcript=conversation_transcript)
             logger.info(
                 "[Customer Data Extractor] Extracting data from transcript (%s chars)",
                 len(conversation_transcript),
@@ -130,9 +128,7 @@ Return a JSON object with the extracted information. If any field is not mention
                 **llm_extra_params(),
             )
             llm_ms = round((time.perf_counter() - started) * 1000, 1)
-            content = strip_code_fences(
-                (response.choices[0].message.content or "").strip()
-            )
+            content = strip_code_fences((response.choices[0].message.content or "").strip())
             extracted_data = json.loads(content)
             normalized = self._normalize_payload(extracted_data)
             normalized["nric_worker_permit_id"] = self._reconcile_id(
@@ -179,10 +175,7 @@ Return a JSON object with the extracted information. If any field is not mention
 
     def _normalize_payload(self, payload: Any) -> dict[str, str | None]:
         raw = payload if isinstance(payload, dict) else {}
-        return {
-            field: self._normalize_value(field, raw.get(field))
-            for field in EXTRACTION_FIELDS
-        }
+        return {field: self._normalize_value(field, raw.get(field)) for field in EXTRACTION_FIELDS}
 
     def _normalize_value(self, field: str, value: Any) -> str | None:
         if value is None:
@@ -221,9 +214,7 @@ Return a JSON object with the extracted information. If any field is not mention
             "missing_fields": missing_fields,
             "captured_count": len(captured_fields),
             "total_fields": len(EXTRACTION_FIELDS),
-            "history_lookup_ready": bool(
-                data.get("name") or data.get("nric_worker_permit_id")
-            ),
+            "history_lookup_ready": bool(data.get("name") or data.get("nric_worker_permit_id")),
         }
 
     def _message_for_status(self, status: str) -> str:
@@ -261,7 +252,6 @@ Return a JSON object with the extracted information. If any field is not mention
             message=message,
             error=error,
         )
-
 
 
 extractor = CustomerDataExtractor()

@@ -1,13 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import {
-  normalizeSpeakerLabel,
-  parsePendingTurn,
-  parseRelayInfo,
-  parseRelaySegments,
-  relayUrl,
-} from "./stt-relay.ts";
+import { normalizeSpeakerLabel, parsePendingTurn, parseRelayInfo, parseRelaySegments, relayUrl } from "./stt-relay.ts";
 
 test("empty labels are not speakers", () => {
   assert.equal(normalizeSpeakerLabel(" unknown "), null);
@@ -19,8 +13,14 @@ test("session payload becomes a relay URL", () => {
   assert.equal(parseRelayInfo({ token: "abc" }), null);
   const relay = parseRelayInfo({ path: "/ws/stt", ticket: "t.sig" });
   assert.deepEqual(relay, { path: "/ws/stt", ticket: "t.sig" });
-  assert.equal(relayUrl("https://api.example.com/", relay!, 48000), "wss://api.example.com/ws/stt?ticket=t.sig&sample_rate=48000");
-  assert.equal(relayUrl("http://localhost:8000", relay!, 44100), "ws://localhost:8000/ws/stt?ticket=t.sig&sample_rate=44100");
+  assert.equal(
+    relayUrl("https://api.example.com/", relay!, 48000),
+    "wss://api.example.com/ws/stt?ticket=t.sig&sample_rate=48000"
+  );
+  assert.equal(
+    relayUrl("http://localhost:8000", relay!, 44100),
+    "ws://localhost:8000/ws/stt?ticket=t.sig&sample_rate=44100"
+  );
 });
 
 test("pending turn carries its text", () => {

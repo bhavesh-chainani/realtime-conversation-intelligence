@@ -5,11 +5,11 @@ from __future__ import annotations
 import copy
 import json
 import pathlib
-from typing import Any, Dict, List
+from typing import Any
 
 PROMPTS_DIR = pathlib.Path(__file__).parent / "prompts"
 
-_cache: Dict[str, Any] = {}
+_cache: dict[str, Any] = {}
 
 
 def load_prompt(filename: str) -> str:
@@ -30,7 +30,9 @@ def get_suggestion_system_prompt() -> str:
     return load_prompt("suggestion_system_prompt.txt")
 
 
-def get_suggestion_user_prompt(conversation_transcript: str, max_suggestions: int, customer_record: str) -> str:
+def get_suggestion_user_prompt(
+    conversation_transcript: str, max_suggestions: int, customer_record: str
+) -> str:
     return load_prompt("suggestion_user_prompt.txt").format(
         conversation_transcript=conversation_transcript,
         max_suggestions=max_suggestions,
@@ -38,5 +40,5 @@ def get_suggestion_user_prompt(conversation_transcript: str, max_suggestions: in
     )
 
 
-def get_fallback_suggestions() -> List[Dict[str, Any]]:
+def get_fallback_suggestions() -> list[dict[str, Any]]:
     return load_json_prompt("fallback_suggestions.json")

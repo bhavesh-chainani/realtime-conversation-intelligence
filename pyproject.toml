@@ -1,0 +1,66 @@
+[project]
+name = "realtime-conversation-intelligence"
+version = "0.2.0"
+description = "Live call assistant: AssemblyAI transcription, Nemotron diarisation, customer-DB-grounded suggestions."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.115.2",
+  "uvicorn[standard]==0.23.2",
+  "websockets>=13",          # websockets.asyncio client for the AssemblyAI stream
+  "openai>=1.55.3",
+  "httpx==0.27.2",
+  "pydantic==2.9.2",
+  "python-dotenv==1.0.1",
+  "psycopg[binary]>=3.2.0",
+]
+
+[project.optional-dependencies]
+# Nemotron 3 Diarization. PyPI torch wheels include CUDA; on a CPU-only machine add
+# --extra-index-url https://download.pytorch.org/whl/cpu for much smaller wheels.
+diarization = [
+  "torch>=2.6",
+  "transformers==5.18.0",
+  "librosa>=0.10",
+  "soxr",                    # streaming resample to 16 kHz
+  "numpy>=2.0",
+]
+dev = [
+  "pytest>=8.0.0",
+  "pgserver",                # scripts/demo_db.py: embedded Postgres with the demo customer records
+  "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[tool.setuptools.package-data]
+backend = ["prompts/**/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = [
+  # Starlette's TestClient uses an anyio alias newer anyio deprecates; not our code.
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+extend-exclude = ["frontend", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+  "E501",   # long lines are left to the formatter
+  "B008",   # FastAPI Depends() in defaults
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["backend"]

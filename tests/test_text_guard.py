@@ -34,7 +34,10 @@ class _SequencedClient:
 
 def test_foreign_suggestion_is_rejected(monkeypatch):
     reply = json.dumps(
-        {"should_suggest": True, "suggestions": [{"topic": "Ask بشأن payslip", "details": {"possibleConversation": "x"}}]}
+        {
+            "should_suggest": True,
+            "suggestions": [{"topic": "Ask بشأن payslip", "details": {"possibleConversation": "x"}}],
+        }
     )
     fake = _SequencedClient(reply)
     monkeypatch.setattr("backend.suggestion_agent.get_async_llm_client", lambda: fake)

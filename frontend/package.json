@@ -6,7 +6,9 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
-    "test": "node --experimental-strip-types --no-warnings --test \"app/lib/*.test.ts\""
+    "test": "node --experimental-strip-types --no-warnings --test \"app/lib/*.test.ts\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "next": "^16.2.10",
@@ -16,6 +18,7 @@
   "devDependencies": {
     "@types/node": "20.11.30",
     "@types/react": "18.2.66",
+    "prettier": "^3.9.9",
     "typescript": "5.4.5"
   }
 }

@@ -57,13 +57,7 @@ export type CustomerHistoryCase = {
 };
 
 export type CustomerHistoryStatus =
-  | "idle"
-  | "loading"
-  | "invalid_input"
-  | "not_configured"
-  | "not_found"
-  | "ok"
-  | "error";
+  "idle" | "loading" | "invalid_input" | "not_configured" | "not_found" | "ok" | "error";
 
 export type HistoryMeta = {
   openCount: number;

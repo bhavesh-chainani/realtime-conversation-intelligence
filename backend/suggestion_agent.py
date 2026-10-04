@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from . import config as cfg
 from .customer_history import format_customer_record, verified_case_ids
@@ -21,7 +21,7 @@ from .text_guard import ForeignScriptError, contains_foreign_script
 logger = logging.getLogger(__name__)
 
 
-def validate_suggestion(suggestion: Any) -> Optional[Dict[str, Any]]:
+def validate_suggestion(suggestion: Any) -> dict[str, Any] | None:
     """Normalise one model-produced suggestion into the shape the UI expects."""
     if not isinstance(suggestion, dict):
         return None
@@ -31,13 +31,11 @@ def validate_suggestion(suggestion: Any) -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         confidence = 0.7
 
-    validated: Dict[str, Any] = {
+    validated: dict[str, Any] = {
         "type": suggestion.get("type", "General Suggestion"),
         "topic": suggestion.get(
             "topic",
-            suggestion.get(
-                "text", "Follow up with the caller to gather more information."
-            ),
+            suggestion.get("text", "Follow up with the caller to gather more information."),
         ),
         "confidence": confidence,
         "details": suggestion.get("details", {}),
@@ -46,9 +44,7 @@ def validate_suggestion(suggestion: Any) -> Optional[Dict[str, Any]]:
         validated["details"] = {}
     details = validated["details"]
 
-    details.setdefault(
-        "possibleConversation", "Could you provide more details about your situation?"
-    )
+    details.setdefault("possibleConversation", "Could you provide more details about your situation?")
     details.setdefault("priority", suggestion.get("priority", "medium"))
 
     linked = suggestion.get("linked_records")
@@ -63,9 +59,9 @@ def validate_suggestion(suggestion: Any) -> Optional[Dict[str, Any]]:
 async def generate_suggestions(
     conversation_transcript: str,
     max_suggestions: int = 2,
-    customer_profile: Optional[Dict[str, Any]] = None,
-    customer_cases: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    customer_profile: dict[str, Any] | None = None,
+    customer_cases: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Return {suggestions, decision, timings}. Raises on LLM/parse failure."""
     max_suggestions = max(1, min(5, int(max_suggestions or 2)))
     customer_record = format_customer_record(customer_profile, customer_cases)
@@ -100,7 +96,7 @@ async def generate_suggestions(
     if not isinstance(parsed, dict):
         raise ValueError("Model did not return a JSON object")
 
-    suggestions: List[Dict[str, Any]] = []
+    suggestions: list[dict[str, Any]] = []
     dropped_foreign = 0
     raw_items = parsed.get("suggestions")
     for item in (raw_items if isinstance(raw_items, list) else [])[:max_suggestions]:

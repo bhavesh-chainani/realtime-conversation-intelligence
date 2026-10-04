@@ -51,15 +51,7 @@ const HISTORY_TONES: Record<CustomerHistoryStatus, string> = {
   error: "error",
 };
 
-function FieldLabel({
-  htmlFor,
-  source,
-  children,
-}: {
-  htmlFor: string;
-  source?: FieldSource;
-  children: ReactNode;
-}) {
+function FieldLabel({ htmlFor, source, children }: { htmlFor: string; source?: FieldSource; children: ReactNode }) {
   return (
     <label className="field-label field-label--with-source" htmlFor={htmlFor}>
       <span>{children}</span>
@@ -80,8 +72,7 @@ export function CustomerPanel({
   historyMeta,
   isLoadingCustomerHistory,
 }: CustomerPanelProps) {
-  const canLookup =
-    customerData.name.trim().length > 0 || customerData.nric_worker_permit_id.trim().length > 0;
+  const canLookup = customerData.name.trim().length > 0 || customerData.nric_worker_permit_id.trim().length > 0;
 
   const historyBadge = HISTORY_BADGES[customerHistoryStatus];
   const historyTone = HISTORY_TONES[customerHistoryStatus];

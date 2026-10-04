@@ -38,7 +38,7 @@ def word_speakers(
         hi = max(lo + 1, math.ceil(word["end"] / frame_ms))
         window = probs[lo:hi]
         if window:
-            means = [sum(col) / len(window) for col in zip(*window)]
+            means = [sum(col) / len(window) for col in zip(*window, strict=False)]
             ranked = sorted(range(len(means)), key=means.__getitem__, reverse=True)
             best = ranked[0]
             if means[best] >= min_prob:
@@ -49,7 +49,9 @@ def word_speakers(
     return out
 
 
-def _nearest_active(probs: list[list[float]], lo: int, hi: int, reach: int, threshold: float = 0.5) -> int | None:
+def _nearest_active(
+    probs: list[list[float]], lo: int, hi: int, reach: int, threshold: float = 0.5
+) -> int | None:
     for dist in range(1, reach + 1):
         for idx in (lo - dist, hi - 1 + dist):
             if 0 <= idx < len(probs):
@@ -81,7 +83,7 @@ def smooth(labels: list[WordSpeaker], min_margin: float = 0.25) -> list[int | No
 def split_by_speaker(words: list[dict], speakers: list[int | None]) -> list[dict]:
     """Contiguous runs of one speaker: [{"speaker", "words", "text"}], in order."""
     segments: list[dict] = []
-    for word, speaker in zip(words, speakers):
+    for word, speaker in zip(words, speakers, strict=False):
         if segments and segments[-1]["speaker"] == speaker:
             segments[-1]["words"].append(word)
         else:

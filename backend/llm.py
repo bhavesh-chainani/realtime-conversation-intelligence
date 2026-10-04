@@ -52,10 +52,7 @@ def llm_runtime_config() -> dict[str, Any]:
         "extraction_model": extraction_model,
         "extraction_model_configured": bool(extraction_model),
         "llm_configured": (
-            api_key_loaded
-            and base_url_configured
-            and bool(suggestion_model)
-            and bool(extraction_model)
+            api_key_loaded and base_url_configured and bool(suggestion_model) and bool(extraction_model)
         ),
     }
 
@@ -95,9 +92,7 @@ def get_llm_client() -> OpenAI | None:
     signature = (api_key, base_url, timeout, max_retries)
 
     if _client is None or _client_signature != signature:
-        _client = OpenAI(
-            api_key=api_key, base_url=base_url, timeout=timeout, max_retries=max_retries
-        )
+        _client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=max_retries)
         _client_signature = signature
 
     return _client

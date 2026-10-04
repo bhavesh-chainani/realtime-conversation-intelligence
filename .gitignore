@@ -16,6 +16,8 @@ frontend/yarn-error.log*
 cache/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+*.egg-info/
 frontend/.turbo/
 frontend/.vercel/
 frontend/.cache/
@@ -23,11 +25,8 @@ frontend/.cache/
 # Temp files
 temp/
 
-#Virtual environment
-realtime-venv/
-diar-venv/
+# Virtual environment
 .venv/
-venv/
 
 # Node modules and build
 frontend/dist/

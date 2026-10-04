@@ -52,7 +52,11 @@ class NemotronDiarizer:
         self.ready = True
         logger.info(
             "Nemotron diarizer ready: %s on %s, mode=%s (%d ms buffer), int8=%s, %.1fs",
-            self.model_name, self.device, self.mode, processor.streaming_latency_ms, self.int8,
+            self.model_name,
+            self.device,
+            self.mode,
+            processor.streaming_latency_ms,
+            self.int8,
             time.perf_counter() - started,
         )
 
@@ -65,13 +69,17 @@ class NemotronDiarizer:
         import torch
 
         inputs = self._processor(
-            audio, sampling_rate=SAMPLE_RATE, is_streaming=True, is_first_audio_chunk=first, is_last_audio_chunk=last
+            audio,
+            sampling_rate=SAMPLE_RATE,
+            is_streaming=True,
+            is_first_audio_chunk=first,
+            is_last_audio_chunk=last,
         ).to(self.device)
         with torch.inference_mode():
             out = self._model(**inputs, speaker_cache=cache)
         return out.logits[0].sigmoid().float().cpu().tolist(), out.speaker_cache
 
-    def new_session(self, sample_rate: int) -> "NemotronSession":
+    def new_session(self, sample_rate: int) -> NemotronSession:
         return NemotronSession(self, sample_rate)
 
 
@@ -85,7 +93,9 @@ class NemotronSession:
         self._np = np
         self._engine = engine
         self._resampler = (
-            soxr.ResampleStream(sample_rate, SAMPLE_RATE, 1, dtype="float32") if sample_rate != SAMPLE_RATE else None
+            soxr.ResampleStream(sample_rate, SAMPLE_RATE, 1, dtype="float32")
+            if sample_rate != SAMPLE_RATE
+            else None
         )
         self._lock = threading.Lock()
         self._audio = np.zeros(0, dtype=np.float32)  # 16 kHz samples from `_offset` on
@@ -180,7 +190,11 @@ def load_diarizer() -> NemotronDiarizer:
     """Load the configured model (blocking; run in a thread at startup)."""
     global _diarizer
     _diarizer = NemotronDiarizer(
-        cfg.DIARIZATION_MODEL, cfg.DIARIZATION_DEVICE, cfg.DIARIZATION_MODE, cfg.DIARIZATION_INT8, cfg.DIARIZATION_THREADS
+        cfg.DIARIZATION_MODEL,
+        cfg.DIARIZATION_DEVICE,
+        cfg.DIARIZATION_MODE,
+        cfg.DIARIZATION_INT8,
+        cfg.DIARIZATION_THREADS,
     )
     try:
         _diarizer.load()

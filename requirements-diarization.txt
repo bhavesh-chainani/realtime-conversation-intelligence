@@ -1,9 +1,0 @@
-# Nemotron 3 Diarization for the live STT relay. Install together with
-# requirements.txt so its pins hold. Model weights: scripts/setup_gpu_host.sh, or set DIARIZATION_MODEL.
-#   GPU: pip install -r requirements.txt -r requirements-diarization.txt   (PyPI torch wheels include CUDA)
-#   CPU: add --extra-index-url https://download.pytorch.org/whl/cpu (smaller wheels)
-torch>=2.6
-transformers==5.18.0
-librosa>=0.10
-soxr  # streaming resample to 16 kHz (also pulled in by librosa)
-numpy>=2.0

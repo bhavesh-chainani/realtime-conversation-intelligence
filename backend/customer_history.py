@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -24,20 +24,18 @@ except Exception:  # pragma: no cover - import guard for optional dependency fai
 router = APIRouter()
 
 
-NO_CUSTOMER_RECORD = (
-    "CUSTOMER RECORD: not yet retrieved. Do not mention or guess at prior cases."
-)
+NO_CUSTOMER_RECORD = "CUSTOMER RECORD: not yet retrieved. Do not mention or guess at prior cases."
 
 # Statuses that mean a case needs no further action; anything else counts as open.
 CLOSED_CASE_STATUSES = {"resolved", "closed", "approved", "withdrawn", "completed"}
 
 
-def is_open_case_status(status: Optional[str]) -> bool:
+def is_open_case_status(status: str | None) -> bool:
     return (status or "").strip().lower() not in CLOSED_CASE_STATUSES
 
 
 def verified_case_ids(
-    customer_profile: Optional[Dict[str, Any]], customer_cases: Optional[List[Dict[str, Any]]]
+    customer_profile: dict[str, Any] | None, customer_cases: list[dict[str, Any]] | None
 ) -> set[str]:
     """Case IDs the model may cite. A name-only match is unverified, so none until the NRIC matches."""
     if (customer_profile or {}).get("record_match") == "name":
@@ -49,9 +47,7 @@ def verified_case_ids(
     }
 
 
-def format_customer_record(
-    profile: Optional[Dict[str, Any]], cases: Optional[List[Dict[str, Any]]]
-) -> str:
+def format_customer_record(profile: dict[str, Any] | None, cases: list[dict[str, Any]] | None) -> str:
     """Render verified customer data + prior cases as a compact prompt block."""
     profile = profile or {}
     cases = [c for c in (cases or []) if isinstance(c, dict) and c.get("case_id")]
@@ -108,9 +104,7 @@ class CustomerHistoryService:
     def is_configured(self) -> bool:
         return bool(cfg.CUSTOMER_HISTORY_DATABASE_URL and cfg.CUSTOMER_HISTORY_VIEW and psycopg)
 
-    def lookup(
-        self, name: str | None, nric_worker_permit_id: str | None
-    ) -> dict[str, Any]:
+    def lookup(self, name: str | None, nric_worker_permit_id: str | None) -> dict[str, Any]:
         clean_name = self._clean_value(name)
         clean_id = self._clean_value(nric_worker_permit_id)
 
@@ -168,10 +162,10 @@ class CustomerHistoryService:
                 )
 
             customer_name = self._first_non_empty(
-                *((row.get("customer_name") for row in rows)), fallback=clean_name
+                *(row.get("customer_name") for row in rows), fallback=clean_name
             )
             customer_id = self._first_non_empty(
-                *((row.get("nric_worker_permit_id") for row in rows)), fallback=clean_id
+                *(row.get("nric_worker_permit_id") for row in rows), fallback=clean_id
             )
             summary = self._build_summary(customer_name, customer_id, matched_on, cases)
             customer: dict[str, Any] = {
@@ -179,9 +173,7 @@ class CustomerHistoryService:
                 "nric_worker_permit_id": customer_id or None,
             }
             for column in self._extra_columns():
-                customer[column] = self._first_non_empty(
-                    *(row.get(column) for row in rows)
-                ) or None
+                customer[column] = self._first_non_empty(*(row.get(column) for row in rows)) or None
 
             return self._response(
                 status="ok",
@@ -211,9 +203,7 @@ class CustomerHistoryService:
                 error=str(exc),
             )
 
-    def _query_rows(
-        self, clean_id: str, clean_name: str
-    ) -> tuple[list[dict[str, Any]], str]:
+    def _query_rows(self, clean_id: str, clean_name: str) -> tuple[list[dict[str, Any]], str]:
         relation = self._relation_sql(cfg.CUSTOMER_HISTORY_VIEW)
         max_rows = max(1, int(cfg.CUSTOMER_HISTORY_MAX_ROWS))
         columns = sql.SQL(", ").join(
@@ -278,18 +268,12 @@ class CustomerHistoryService:
             cfg.CUSTOMER_HISTORY_DATABASE_URL,
             autocommit=True,
             row_factory=dict_row,
-            options=(
-                f"-c default_transaction_read_only=on -c statement_timeout={timeout_ms}"
-            ),
+            options=(f"-c default_transaction_read_only=on -c statement_timeout={timeout_ms}"),
         )
 
     def _extra_columns(self) -> list[str]:
         """Validated optional columns (e.g. address) configured for this deployment."""
-        return [
-            col
-            for col in cfg.CUSTOMER_HISTORY_EXTRA_COLUMNS
-            if self._relation_pattern.match(col)
-        ]
+        return [col for col in cfg.CUSTOMER_HISTORY_EXTRA_COLUMNS if self._relation_pattern.match(col)]
 
     def _relation_sql(self, relation: str):
         if sql is None:
@@ -297,9 +281,7 @@ class CustomerHistoryService:
 
         parts = [part.strip() for part in relation.split(".") if part.strip()]
         if not parts or any(not self._relation_pattern.match(part) for part in parts):
-            raise ValueError(
-                "CUSTOMER_HISTORY_VIEW must be a simple schema-qualified identifier"
-            )
+            raise ValueError("CUSTOMER_HISTORY_VIEW must be a simple schema-qualified identifier")
         return sql.SQL(".").join(sql.Identifier(part) for part in parts)
 
     def _response(self, **payload: Any) -> dict[str, Any]:

@@ -61,9 +61,9 @@ Requirements:
 - A LiteLLM (OpenAI-compatible) proxy URL and key
 
 ```bash
-python3.11 -m venv realtime-venv && source realtime-venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
-pip install -r requirements-diarization.txt   # Nemotron (torch, transformers); see "GPU host" below
+python3 -m venv .venv && source .venv/bin/activate
+# dev = tests, lint, demo DB; diarization = Nemotron (torch, transformers). CPU-only machine: smaller torch wheels
+pip install -e ".[dev,diarization]" --extra-index-url https://download.pytorch.org/whl/cpu
 cp .env.example .env                          # set ASSEMBLYAI_API_KEY, LLM_API_KEY, LLM_BASE_URL
 (cd frontend && npm install)
 ```
@@ -100,11 +100,8 @@ Open the app, click **Start session**, and speak with two voices into the mic:
 
 ## Configuration
 
-- **`.env`** (template: `.env.example`): credentials, models, diariser device and mode, the customer DB, CORS.
-- **`config.json`**: model defaults and AssemblyAI settings.
-  - `assemblyai_speech_model` is `u3-rt-pro`, because the standard model mishears spoken NRICs.
-  - `assemblyai_keyterms` holds extra terms the model should listen for.
-  - `assemblyai_stream_params` holds end-of-turn timing.
+- **`.env`** holds every setting; defaults and comments live in `backend/config.py`. AssemblyAI uses
+  `u3-rt-pro` by default because the standard model mishears spoken NRICs.
 - **`backend/prompts/`**: the principal agent's system and user prompts, and the fallback suggestions.
 
 ## GPU host (Nemotron)

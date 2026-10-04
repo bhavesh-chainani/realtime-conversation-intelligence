@@ -11,11 +11,7 @@ class _FakeCompletionClient:
         self.chat = SimpleNamespace(
             completions=SimpleNamespace(
                 create=lambda **_: SimpleNamespace(
-                    choices=[
-                        SimpleNamespace(
-                            message=SimpleNamespace(content=content)
-                        )
-                    ]
+                    choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
                 )
             )
         )
@@ -91,9 +87,7 @@ def test_extractor_returns_error_for_invalid_json(monkeypatch):
         lambda: _FakeCompletionClient("not json"),
     )
 
-    body = asyncio.run(
-        extractor.extract("Customer: My name is Raja. Customer: I need help with my case.")
-    )
+    body = asyncio.run(extractor.extract("Customer: My name is Raja. Customer: I need help with my case."))
 
     assert body["success"] is False
     assert body["status"] == "error"

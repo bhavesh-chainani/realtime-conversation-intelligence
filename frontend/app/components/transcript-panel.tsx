@@ -120,7 +120,9 @@ export function TranscriptPanel({
       <div className="transcript-canvas">
         <div className="transcript-list" ref={transcriptListRef}>
           {turns.length === 0 && !live && !speaking && pending.length === 0 ? (
-            <div className="empty-state empty-state--large">The conversation will appear here once the call starts.</div>
+            <div className="empty-state empty-state--large">
+              The conversation will appear here once the call starts.
+            </div>
           ) : null}
 
           {turns.map((turn) => (
@@ -132,12 +134,8 @@ export function TranscriptPanel({
             >
               <div className="turn-card__meta">
                 <span className={`role-badge role-badge--${turn.role}`}>{roleDisplayName(turn.role)}</span>
-                {turn.speakerLabel ? (
-                  <span className="turn-card__speaker">Speaker {turn.speakerLabel}</span>
-                ) : null}
-                <span className={`turn-card__source turn-card__source--${turn.roleSource}`}>
-                  {attribution(turn)}
-                </span>
+                {turn.speakerLabel ? <span className="turn-card__speaker">Speaker {turn.speakerLabel}</span> : null}
+                <span className={`turn-card__source turn-card__source--${turn.roleSource}`}>{attribution(turn)}</span>
               </div>
               <p className="turn-card__text">{turn.text}</p>
             </article>

@@ -128,8 +128,7 @@ export default function Page() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestionMeta, setSuggestionMeta] = useState<SuggestionMeta | null>(null);
   const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
-  const [customerHistoryStatus, setCustomerHistoryStatus] =
-    useState<CustomerHistoryStatus>("idle");
+  const [customerHistoryStatus, setCustomerHistoryStatus] = useState<CustomerHistoryStatus>("idle");
   const [customerHistory, setCustomerHistory] = useState("");
   const [customerHistoryCases, setCustomerHistoryCases] = useState<CustomerHistoryCase[]>([]);
   const [historyMeta, setHistoryMeta] = useState<HistoryMeta | null>(null);
@@ -282,9 +281,7 @@ export default function Page() {
       const data = (await res.json()) as Record<string, unknown>;
       if (reqId !== suggestReqIdRef.current) return;
 
-      const list = Array.isArray(data.suggestions)
-        ? (data.suggestions as Suggestion[]).slice(0, MAX_SUGGESTIONS)
-        : [];
+      const list = Array.isArray(data.suggestions) ? (data.suggestions as Suggestion[]).slice(0, MAX_SUGGESTIONS) : [];
       const timings = (data.timings || {}) as { llm_ms?: number; model?: string };
       if (data.fallback) {
         if (list.length) {
@@ -325,7 +322,7 @@ export default function Page() {
         body: JSON.stringify({
           name: args.name || undefined,
           nric_worker_permit_id: args.nric_worker_permit_id || undefined,
-          }),
+        }),
       });
       const body = await res.json();
       if (reqId !== lookupReqIdRef.current) return;
@@ -435,8 +432,7 @@ export default function Page() {
       const data = (await res.json()) as Record<string, unknown>;
       if (reqId !== extractReqIdRef.current) return;
 
-      const rawData =
-        data.data && typeof data.data === "object" ? (data.data as Record<string, unknown>) : null;
+      const rawData = data.data && typeof data.data === "object" ? (data.data as Record<string, unknown>) : null;
       if (Boolean(data.success) && rawData) {
         const patch: Partial<CustomerData> = {};
         (Object.keys(EMPTY_CUSTOMER) as CustomerDataField[]).forEach((field) => {
@@ -529,7 +525,7 @@ export default function Page() {
       setSpeaking(false);
       setLive("");
       liveRef.current = "";
-      }
+    }
     if (!text) return;
 
     const turn: Turn = {
@@ -554,7 +550,14 @@ export default function Page() {
     closeWs();
   };
 
-  const handlers = { ingestFinalTurn, ingestPartial, ingestSpeechStart, ingestPendingTurn, ingestRelayTurn, notifySttDrop };
+  const handlers = {
+    ingestFinalTurn,
+    ingestPartial,
+    ingestSpeechStart,
+    ingestPendingTurn,
+    ingestRelayTurn,
+    notifySttDrop,
+  };
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
 
@@ -684,8 +687,7 @@ export default function Page() {
     }
     mediaRef.current = media;
 
-    const AudioContextCls =
-      (window as any).AudioContext || (window as any).webkitAudioContext;
+    const AudioContextCls = (window as any).AudioContext || (window as any).webkitAudioContext;
     const ctx = new AudioContextCls();
     audioCtxRef.current = ctx;
     const source = ctx.createMediaStreamSource(media);
@@ -906,10 +908,7 @@ export default function Page() {
   const hasRoleMapping = Object.keys(speakerRoleMap).length > 0;
 
   const callActive = callStartedAt !== null && callEndedAt === null;
-  const citedIds = useMemo(
-    () => new Set(suggestions.flatMap((s) => s.linked_records || [])),
-    [suggestions]
-  );
+  const citedIds = useMemo(() => new Set(suggestions.flatMap((s) => s.linked_records || [])), [suggestions]);
 
   return (
     <div className="shell shell--workspace">
@@ -973,7 +972,6 @@ export default function Page() {
           />
         </aside>
       </main>
-
     </div>
   );
 }

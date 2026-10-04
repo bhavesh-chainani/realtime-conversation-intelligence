@@ -7,8 +7,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-
 from . import config as cfg
 from .assemblyai import ssl_context
 from .customer_data_extractor import router as customer_data_router
@@ -18,6 +16,8 @@ from .llm import llm_runtime_config
 from .stt_relay import issue_ticket
 from .stt_relay import router as stt_relay_router
 from .suggestions import router as suggest_router
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 logger = logging.getLogger(__name__)
 

@@ -1,2 +1,0 @@
-pytest>=8.0.0
-pgserver  # scripts/demo_db.py: embedded Postgres with the demo customer records

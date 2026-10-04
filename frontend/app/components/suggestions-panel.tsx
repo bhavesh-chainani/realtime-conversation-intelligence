@@ -1,9 +1,4 @@
-import {
-  isOpenCaseStatus,
-  type CustomerHistoryCase,
-  type Suggestion,
-  type SuggestionMeta,
-} from "../lib/types.ts";
+import { isOpenCaseStatus, type CustomerHistoryCase, type Suggestion, type SuggestionMeta } from "../lib/types.ts";
 
 type SuggestionsPanelProps = {
   suggestions: Suggestion[];

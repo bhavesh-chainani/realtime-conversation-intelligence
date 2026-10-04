@@ -29,8 +29,8 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import config as cfg
 from . import assemblyai
+from . import config as cfg
 from .diarization.merge import majority, smooth, split_by_speaker, word_speakers
 from .diarization.nemotron import get_diarizer
 
@@ -86,7 +86,7 @@ def redeem_ticket(ticket: str) -> None:
 
 
 def _labelled_turn(msg: dict, labels: list[str | None], source: str) -> dict:
-    words = [{**w, "speaker": label} for w, label in zip(msg.get("words") or [], labels)]
+    words = [{**w, "speaker": label} for w, label in zip(msg.get("words") or [], labels, strict=False)]
     if words:
         segments = [
             {"speaker_label": seg["speaker"], "transcript": seg["text"], "words": seg["words"]}
@@ -94,7 +94,13 @@ def _labelled_turn(msg: dict, labels: list[str | None], source: str) -> dict:
         ]
     else:
         segments = [{"speaker_label": None, "transcript": msg.get("transcript", ""), "words": []}]
-    return {**msg, "words": words, "speaker_label": majority(labels), "segments": segments, "diarization": source}
+    return {
+        **msg,
+        "words": words,
+        "speaker_label": majority(labels),
+        "segments": segments,
+        "diarization": source,
+    }
 
 
 def diarize_turn(msg: dict, probs: list[list[float]], source: str = "nemotron") -> dict:
@@ -202,7 +208,11 @@ class Relay:
             self.unsent += 1
             self.queue.put_nowait((order, time.monotonic()))
             await self.browser.send_json(
-                {"type": "PendingTurn", "turn_order": msg.get("turn_order"), "transcript": msg.get("transcript", "")}
+                {
+                    "type": "PendingTurn",
+                    "turn_order": msg.get("turn_order"),
+                    "transcript": msg.get("transcript", ""),
+                }
             )
         await self.browser.close(code=1011, reason="AssemblyAI closed the stream")
         return False
@@ -230,7 +240,9 @@ class Relay:
                 out = diarize_turn(msg, diar.probs, source="partial")
                 logger.warning(
                     "Turn %s sent before the diariser caught up (at %s ms, needed %s ms)",
-                    msg.get("turn_order"), diar.processed_until_ms, need_ms,
+                    msg.get("turn_order"),
+                    diar.processed_until_ms,
+                    need_ms,
                 )
             self.stats[out["diarization"]] += 1
             await self.browser.send_json(out)

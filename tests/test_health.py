@@ -11,7 +11,13 @@ def test_health(client):
 
 def test_ready_reports_each_component(client):
     body = client.get("/ready").json()
-    assert set(body) >= {"ready", "llm_configured", "transcription_configured", "diarization", "customer_db_configured"}
+    assert set(body) >= {
+        "ready",
+        "llm_configured",
+        "transcription_configured",
+        "diarization",
+        "customer_db_configured",
+    }
     assert "ready" in body["diarization"]
 
 
