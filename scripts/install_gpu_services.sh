@@ -32,7 +32,7 @@ Type=oneshot
 RemainAfterExit=yes
 User=$RUN_AS
 WorkingDirectory=$REPO
-ExecStart=$REPO/realtime-venv/bin/python scripts/demo_db.py
+ExecStart=$REPO/.venv/bin/python scripts/demo_db.py
 
 [Install]
 WantedBy=multi-user.target
@@ -49,7 +49,7 @@ User=$RUN_AS
 WorkingDirectory=$REPO
 # The PyTorch wheel bundles its own CUDA/cuDNN; the AMI's system copies must not shadow them.
 Environment=LD_LIBRARY_PATH=
-ExecStart=$REPO/realtime-venv/bin/uvicorn backend.api:app --host 127.0.0.1 --port 8000
+ExecStart=$REPO/.venv/bin/uvicorn backend.api:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5
 
