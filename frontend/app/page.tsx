@@ -200,17 +200,7 @@ export default function Page() {
     (typeof window !== "undefined"
       ? localStorage.getItem("BACKEND_URL") || "http://localhost:8000"
       : "http://localhost:8000");
-  const cognitoDomain = process.env.NEXT_PUBLIC_COGNITO_DOMAIN || "";
-  const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || "";
-  const cognitoRedirectUri =
-    process.env.NEXT_PUBLIC_COGNITO_REDIRECT_URI || "http://localhost:3000";
-  const cognitoLogoutUri =
-    process.env.NEXT_PUBLIC_COGNITO_LOGOUT_URI || "http://localhost:3000";
-  const cognitoResponseType = process.env.NEXT_PUBLIC_COGNITO_RESPONSE_TYPE || "token";
-  const cognitoScope = process.env.NEXT_PUBLIC_COGNITO_SCOPE || "openid email profile";
-  const useAsyncInferenceJobs = process.env.NEXT_PUBLIC_USE_ASYNC_JOBS === "true";
 
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [live, setLive] = useState("");
   const [speaking, setSpeaking] = useState(false);
@@ -231,7 +221,6 @@ export default function Page() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [speakerRoleMap, setSpeakerRoleMap] = useState<SpeakerRoleMap>({});
   const [nextVoiceIsStaff, setNextVoiceIsStaff] = useState(true);
-  const [resetNonce, setResetNonce] = useState(0);
 
   // Demo mode
   const [demoEnabled, setDemoEnabled] = useState(false);
@@ -268,7 +257,6 @@ export default function Page() {
   const speakerRoleMapRef = useRef<SpeakerRoleMap>({});
   const nextVoiceIsStaffRef = useRef(true);
   const transcriptListRef = useRef<HTMLDivElement>(null);
-  const sessionIdRef = useRef<string | null>(null);
   const debugRef = useRef(false);
 
   // Conversation state mirrored in refs so async handlers never read stale values.
@@ -323,119 +311,8 @@ export default function Page() {
     } catch {}
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const hash = window.location.hash.startsWith("#")
-        ? window.location.hash.slice(1)
-        : "";
-      if (hash) {
-        const params = new URLSearchParams(hash);
-        const accessToken = params.get("access_token") || "";
-        if (accessToken) {
-          localStorage.setItem("AUTH_ACCESS_TOKEN", accessToken);
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }
-      }
-      const storedToken =
-        localStorage.getItem("AUTH_ACCESS_TOKEN") ||
-        localStorage.getItem("access_token") ||
-        localStorage.getItem("id_token") ||
-        "";
-      setIsAuthenticated(Boolean(storedToken.trim()));
-    } catch {
-      setIsAuthenticated(false);
-    }
-  }, []);
-
   const transcriptText = useMemo(() => formatLabeledTranscript(turns), [turns]);
   const hasTranscript = transcriptText.trim().length >= 10;
-
-  const getAuthHeaders = (): Record<string, string> => {
-    const headers: Record<string, string> = {};
-    try {
-      const storedToken =
-        localStorage.getItem("AUTH_ACCESS_TOKEN") ||
-        localStorage.getItem("access_token") ||
-        localStorage.getItem("id_token") ||
-        "";
-      if (storedToken.trim()) {
-        headers.Authorization = `Bearer ${storedToken.trim()}`;
-      }
-    } catch {}
-    return headers;
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function createSession() {
-      sessionIdRef.current = null;
-      try {
-        const res = await fetch(`${backendUrl}/sessions/`, {
-          method: "POST",
-          headers: { ...getAuthHeaders() },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const sid = typeof data.session_id === "string" ? data.session_id : "";
-        if (!cancelled && sid) sessionIdRef.current = sid;
-      } catch {
-        // optional
-      }
-    }
-
-    createSession();
-    return () => {
-      cancelled = true;
-    };
-  }, [backendUrl, isAuthenticated, resetNonce]);
-
-  async function pollInferenceJob(jobId: string): Promise<Record<string, unknown>> {
-    const deadline = Date.now() + 120_000;
-    while (Date.now() < deadline) {
-      const res = await fetch(`${backendUrl}/queue/jobs/${encodeURIComponent(jobId)}`, {
-        headers: { ...getAuthHeaders() },
-      });
-      if (!res.ok) throw new Error(`job status ${res.status}`);
-      const d = (await res.json()) as Record<string, unknown>;
-      if (d.status === "completed" && d.result && typeof d.result === "object") {
-        return d.result as Record<string, unknown>;
-      }
-      if (d.status === "failed") {
-        const err = typeof d.error === "string" ? d.error : "Inference job failed";
-        throw new Error(err);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-    throw new Error("Inference job timed out");
-  }
-
-  const loginWithCognito = () => {
-    if (!cognitoDomain || !cognitoClientId) return;
-    const base = cognitoDomain.startsWith("http") ? cognitoDomain : `https://${cognitoDomain}`;
-    const url = new URL("/login", base);
-    url.searchParams.set("client_id", cognitoClientId);
-    url.searchParams.set("response_type", cognitoResponseType);
-    url.searchParams.set("scope", cognitoScope);
-    url.searchParams.set("redirect_uri", cognitoRedirectUri);
-    window.location.href = url.toString();
-  };
-
-  const logout = () => {
-    try {
-      localStorage.removeItem("AUTH_ACCESS_TOKEN");
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("id_token");
-    } catch {}
-    setIsAuthenticated(false);
-    if (!cognitoDomain || !cognitoClientId) return;
-    const base = cognitoDomain.startsWith("http") ? cognitoDomain : `https://${cognitoDomain}`;
-    const url = new URL("/logout", base);
-    url.searchParams.set("client_id", cognitoClientId);
-    url.searchParams.set("logout_uri", cognitoLogoutUri);
-    window.location.href = url.toString();
-  };
 
   // ---------------------------------------------------------------------------
   // State helpers (keep refs and React state in step)
@@ -566,34 +443,18 @@ export default function Page() {
       const payload = {
         context,
         max_suggestions: MAX_SUGGESTIONS,
-        session_id: sessionIdRef.current || undefined,
         customer_profile: Object.keys(profile).length ? profile : undefined,
         customer_history: cases.length ? cases : undefined,
       };
 
-      let data: Record<string, unknown>;
-      if (useAsyncInferenceJobs) {
-        const er = await fetch(`${backendUrl}/queue/suggestions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        });
-        const ej = await er.json();
-        if (!er.ok || typeof ej.job_id !== "string") {
-          throw new Error(`Suggestion enqueue failed: ${er.status}`);
-        }
-        data = await pollInferenceJob(ej.job_id as string);
-      } else {
-        const res = await fetch(`${backendUrl}/suggest`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        });
-        if (!res.ok) throw new Error(`Suggestion request failed: ${res.status}`);
-        data = await res.json();
-      }
+      const res = await fetch(`${backendUrl}/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Suggestion request failed: ${res.status}`);
+      const data = (await res.json()) as Record<string, unknown>;
       if (reqId !== suggestReqIdRef.current) return;
 
       const list = Array.isArray(data.suggestions)
@@ -644,12 +505,11 @@ export default function Page() {
     try {
       const res = await fetch(`${backendUrl}/customer-history`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: args.name || undefined,
           nric_worker_permit_id: args.nric_worker_permit_id || undefined,
-          session_id: sessionIdRef.current || undefined,
-        }),
+          }),
       });
       const body = await res.json();
       if (reqId !== lookupReqIdRef.current) return;
@@ -765,32 +625,13 @@ export default function Page() {
     const reqId = ++extractReqIdRef.current;
 
     try {
-      let data: Record<string, unknown>;
-      const body = JSON.stringify({
-        conversation_transcript: context,
-        session_id: sessionIdRef.current || undefined,
+      const res = await fetch(`${backendUrl}/extract-customer-data`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_transcript: context }),
       });
-      if (useAsyncInferenceJobs) {
-        const er = await fetch(`${backendUrl}/queue/extract-customer-data`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body,
-        });
-        const ej = await er.json();
-        if (!er.ok || typeof ej.job_id !== "string") {
-          console.error("[Frontend] extract enqueue failed:", er.status);
-          return;
-        }
-        data = await pollInferenceJob(ej.job_id as string);
-      } else {
-        const res = await fetch(`${backendUrl}/extract-customer-data`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body,
-        });
-        if (!res.ok) return;
-        data = await res.json();
-      }
+      if (!res.ok) return;
+      const data = (await res.json()) as Record<string, unknown>;
       if (reqId !== extractReqIdRef.current) return;
 
       const rawData =
@@ -1135,9 +976,7 @@ export default function Page() {
 
   async function fetchSttToken(): Promise<Record<string, unknown>> {
     const key = sttTokenKey();
-    const res = await fetch(`${backendUrl}/assemblyai-token${key ? `?scenario=${encodeURIComponent(key)}` : ""}`, {
-      headers: getAuthHeaders(),
-    });
+    const res = await fetch(`${backendUrl}/assemblyai-token${key ? `?scenario=${encodeURIComponent(key)}` : ""}`);
     if (!res.ok) throw new Error(`token status ${res.status}`);
     return (await res.json()) as Record<string, unknown>;
   }
@@ -1371,7 +1210,7 @@ export default function Page() {
 
   async function prewarm() {
     try {
-      await fetch(`${backendUrl}/demo/prewarm`, { method: "POST", headers: getAuthHeaders() });
+      await fetch(`${backendUrl}/demo/prewarm`, { method: "POST" });
     } catch {}
   }
 
@@ -1481,13 +1320,12 @@ export default function Page() {
       const profile = profilePayload();
       const res = await fetch(`${backendUrl}/call-summary`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           context,
           customer_profile: Object.keys(profile).length ? profile : undefined,
           customer_history: cases.length ? cases : undefined,
-          session_id: sessionIdRef.current || undefined,
-        }),
+          }),
       });
       const data = res.ok ? await res.json() : null;
       if (reqId !== wrapupReqIdRef.current) return;
@@ -1590,16 +1428,12 @@ export default function Page() {
     callEndedRef.current = false;
     wrapupReqIdRef.current += 1;
     setWrapup({ status: "idle" });
-
-    setResetNonce((n) => n + 1);
   };
 
   const loadCache = useCallback(
     async (id: string) => {
       try {
-        const res = await fetch(`${backendUrl}/demo/cache/${encodeURIComponent(id)}`, {
-          headers: getAuthHeaders(),
-        });
+        const res = await fetch(`${backendUrl}/demo/cache/${encodeURIComponent(id)}`);
         if (!res.ok) return;
         const body = await res.json();
         cacheStepsRef.current = body.steps && typeof body.steps === "object" ? body.steps : {};
@@ -1621,7 +1455,7 @@ export default function Page() {
       setIsCheckingPreflight(true);
       try {
         const q = id ? `?scenario_id=${encodeURIComponent(id)}` : "";
-        const res = await fetch(`${backendUrl}/demo/preflight${q}`, { headers: getAuthHeaders() });
+        const res = await fetch(`${backendUrl}/demo/preflight${q}`);
         const body = res.ok ? await res.json() : null;
         if (reqId === preflightReqIdRef.current) setPreflight(body);
       } catch {
@@ -1639,7 +1473,6 @@ export default function Page() {
     try {
       await fetch(`${backendUrl}/demo/cache/${encodeURIComponent(scenarioId)}/build`, {
         method: "POST",
-        headers: getAuthHeaders(),
       });
       await loadCache(scenarioId);
       await runPreflight(scenarioId);
@@ -1654,7 +1487,7 @@ export default function Page() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${backendUrl}/demo/scenarios`, { headers: getAuthHeaders() });
+        const res = await fetch(`${backendUrl}/demo/scenarios`);
         if (!res.ok) return;
         const list = (await res.json()) as DemoScenarioSummary[];
         if (cancelled) return;
@@ -1695,9 +1528,7 @@ export default function Page() {
     }
     (async () => {
       try {
-        const res = await fetch(`${backendUrl}/demo/scenarios/${encodeURIComponent(scenarioId)}`, {
-          headers: getAuthHeaders(),
-        });
+        const res = await fetch(`${backendUrl}/demo/scenarios/${encodeURIComponent(scenarioId)}`);
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as DemoScenario;
         scenarioRef.current = data;
@@ -1820,11 +1651,7 @@ export default function Page() {
         canResume={callActive && !isLive}
         onPause={pauseCall}
         onResume={resumeCall}
-        isAuthenticated={isAuthenticated}
-        showAuthButton={Boolean(cognitoDomain && cognitoClientId)}
         showSessionControls={!demoEnabled}
-        onLogin={loginWithCognito}
-        onLogout={logout}
         onStart={() => {
           void openWs();
         }}

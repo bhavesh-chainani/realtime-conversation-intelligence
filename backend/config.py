@@ -13,12 +13,8 @@ LLM_API_KEY = (os.getenv("LLM_API_KEY") or "").strip()
 LLM_BASE_URL = (os.getenv("LLM_BASE_URL") or "").strip()
 LLM_TIMEOUT_SECONDS = float((os.getenv("LLM_TIMEOUT_SECONDS") or "20").strip())
 
-API_AUTH_TOKEN = (os.getenv("API_AUTH_TOKEN") or "").strip()
-AUTH_JWKS_URL = (os.getenv("AUTH_JWKS_URL") or "").strip()
-AUTH_ISSUER = (os.getenv("AUTH_ISSUER") or "").strip()
-AUTH_AUDIENCE = (os.getenv("AUTH_AUDIENCE") or "").strip()
-
-CONFIG_PATH = pathlib.Path(__file__).parent.parent / "config.json"
+_repo_root = pathlib.Path(__file__).parent.parent
+CONFIG_PATH = _repo_root / "config.json"
 
 
 def load_config_json():
@@ -56,42 +52,11 @@ BACKEND_CORS_ORIGINS = [
     )
     if origin.strip()
 ]
-REQUIRE_API_AUTH = (os.getenv("REQUIRE_API_AUTH") or "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-RATE_LIMIT_PER_MINUTE = int((os.getenv("RATE_LIMIT_PER_MINUTE") or "30").strip())
-DAILY_REQUEST_QUOTA = int((os.getenv("DAILY_REQUEST_QUOTA") or "2000").strip())
-
 # Streaming v3 uses query param `keyterms_prompt` (JSON array string), not legacy `word_boost`.
 _raw_keyterms = CONFIG.get("assemblyai_keyterms") or []
 if not isinstance(_raw_keyterms, list):
     _raw_keyterms = []
 ASSEMBLYAI_KEYTERMS = [str(x).strip() for x in _raw_keyterms if str(x).strip()][:100]
-
-# Session persistence: sqlite (local/default), dynamodb (AWS), none (disabled)
-_repo_root = pathlib.Path(__file__).parent.parent
-STORAGE_BACKEND = (os.getenv("STORAGE_BACKEND") or "sqlite").strip().lower()
-SQLITE_DB_PATH = pathlib.Path(
-    os.getenv("SQLITE_DB_PATH") or (_repo_root / "data" / "sessions.db")
-)
-DYNAMODB_CONVERSATIONS_TABLE = (os.getenv("DYNAMODB_CONVERSATIONS_TABLE") or "").strip()
-AWS_REGION = (os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "").strip()
-
-# Async inference jobs (Day 5)
-ASYNC_JOBS_ENABLED = (os.getenv("ASYNC_JOBS_ENABLED") or "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-INFERENCE_QUEUE_MODE = (
-    (os.getenv("INFERENCE_QUEUE_MODE") or "poll").strip().lower()
-)  # poll | sqs
-AWS_SQS_INFERENCE_QUEUE_URL = (os.getenv("AWS_SQS_INFERENCE_QUEUE_URL") or "").strip()
-JOB_STORE_BACKEND = (os.getenv("JOB_STORE_BACKEND") or "sqlite").strip().lower()
 
 # Customer history lookup: curated Postgres view, read-only only.
 CUSTOMER_HISTORY_DATABASE_URL = (
@@ -106,30 +71,6 @@ CUSTOMER_HISTORY_QUERY_TIMEOUT_MS = int(
 CUSTOMER_HISTORY_MAX_ROWS = int(
     (os.getenv("CUSTOMER_HISTORY_MAX_ROWS") or "10").strip()
 )
-
-# Day 6–8: observability & ops
-LOG_JSON = (os.getenv("LOG_JSON") or "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-LOG_LEVEL = (os.getenv("LOG_LEVEL") or "INFO").strip().upper()
-APP_VERSION = (os.getenv("APP_VERSION") or "dev").strip()
-GIT_SHA = (os.getenv("GIT_SHA") or "").strip()
-METRICS_ENABLED = (os.getenv("METRICS_ENABLED") or "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-STRICT_READINESS = (os.getenv("STRICT_READINESS") or "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-METRICS_TOKEN = (os.getenv("METRICS_TOKEN") or "").strip()
 
 # LLM latency controls
 LLM_MAX_RETRIES = int((os.getenv("LLM_MAX_RETRIES") or "2").strip())

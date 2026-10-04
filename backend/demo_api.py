@@ -7,11 +7,10 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from . import config as cfg
 from .assemblyai import StreamingTokenError, create_streaming_token
-from .auth import require_api_auth
 from .customer_history import customer_history_service
 from .demo_cache import (
     ScenarioNotFound,
@@ -123,18 +122,18 @@ def _scenario_or_404(scenario_id: str) -> dict[str, Any]:
 
 
 @router.get("/scenarios")
-async def scenarios(_: str = Depends(require_api_auth)) -> list[dict[str, Any]]:
+async def scenarios() -> list[dict[str, Any]]:
     return list_scenarios()
 
 
 @router.get("/scenarios/{scenario_id}")
-async def scenario(scenario_id: str, _: str = Depends(require_api_auth)) -> dict[str, Any]:
+async def scenario(scenario_id: str) -> dict[str, Any]:
     return _scenario_or_404(scenario_id)
 
 
 @router.get("/cache/{scenario_id}")
 async def get_scenario_cache(
-    scenario_id: str, _: str = Depends(require_api_auth)
+    scenario_id: str
 ) -> dict[str, Any]:
     _scenario_or_404(scenario_id)
     cache = get_cache(scenario_id) or {}
@@ -143,20 +142,20 @@ async def get_scenario_cache(
 
 @router.post("/cache/{scenario_id}/build")
 async def build_scenario_cache(
-    scenario_id: str, _: str = Depends(require_api_auth)
+    scenario_id: str
 ) -> dict[str, Any]:
     _scenario_or_404(scenario_id)
     return await build_cache(scenario_id)
 
 
 @router.post("/prewarm")
-async def prewarm_endpoint(_: str = Depends(require_api_auth)) -> dict[str, Any]:
+async def prewarm_endpoint() -> dict[str, Any]:
     return await prewarm()
 
 
 @router.get("/preflight")
 async def preflight(
-    scenario_id: str | None = None, _: str = Depends(require_api_auth)
+    scenario_id: str | None = None
 ) -> dict[str, Any]:
     async def stt() -> dict[str, Any]:
         started = time.perf_counter()

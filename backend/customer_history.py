@@ -4,12 +4,10 @@ import logging
 import re
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 from . import config as cfg
-from .auth import enforce_usage_limits
-from .persistence import persist_customer_history_lookup_event
 from .prompt_loader import is_open_case_status
 
 logger = logging.getLogger(__name__)
@@ -30,9 +28,6 @@ router = APIRouter()
 class CustomerHistoryLookupRequest(BaseModel):
     name: str | None = None
     nric_worker_permit_id: str | None = None
-    session_id: str | None = Field(
-        None, description="Persist to this session when valid and owned"
-    )
 
 
 class CustomerHistoryService:
@@ -290,19 +285,5 @@ customer_history_service = CustomerHistoryService()
 
 # Plain `def`: FastAPI runs it in the threadpool so blocking DB I/O never stalls the event loop.
 @router.post("/customer-history")
-def lookup_customer_history(
-    req: CustomerHistoryLookupRequest,
-    background_tasks: BackgroundTasks,
-    user_key: str = Depends(enforce_usage_limits),
-) -> dict[str, Any]:
-    result = customer_history_service.lookup(req.name, req.nric_worker_permit_id)
-    err = result.get("error") if isinstance(result.get("error"), str) else None
-    background_tasks.add_task(
-        persist_customer_history_lookup_event,
-        req.session_id,
-        user_key,
-        {"name": req.name, "nric_worker_permit_id": req.nric_worker_permit_id},
-        result,
-        error=err,
-    )
-    return result
+def lookup_customer_history(req: CustomerHistoryLookupRequest) -> dict[str, Any]:
+    return customer_history_service.lookup(req.name, req.nric_worker_permit_id)

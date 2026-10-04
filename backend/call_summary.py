@@ -7,11 +7,10 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 from . import config as cfg
-from .auth import enforce_usage_limits
 from .llm import get_async_llm_client, get_suggestion_model, llm_extra_params, str_list, strip_code_fences
 from .prompt_loader import format_customer_record, load_prompt, verified_case_ids
 from .suggestions import CustomerCase
@@ -122,13 +121,10 @@ class CallSummaryRequest(BaseModel):
     context: str
     customer_profile: Dict[str, Any] | None = None
     customer_history: List[CustomerCase] | None = None
-    session_id: str | None = Field(None, description="Reserved for persistence")
 
 
 @router.post("/call-summary")
-async def call_summary(
-    req: CallSummaryRequest, _: str = Depends(enforce_usage_limits)
-) -> Dict[str, Any]:
+async def call_summary(req: CallSummaryRequest) -> Dict[str, Any]:
     return await compute_call_summary(
         req.context,
         customer_profile=req.customer_profile,

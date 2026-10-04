@@ -17,12 +17,8 @@ type SessionHeaderProps = {
   canResume: boolean;
   onPause: () => void;
   onResume: () => void;
-  isAuthenticated: boolean;
-  showAuthButton: boolean;
   /** Hidden in demo mode, where the presenter dock owns start/stop. */
   showSessionControls: boolean;
-  onLogin: () => void;
-  onLogout: () => void;
   onStart: () => void;
   onStop: () => void;
 };
@@ -58,11 +54,7 @@ export function SessionHeader({
   canResume,
   onPause,
   onResume,
-  isAuthenticated,
-  showAuthButton,
   showSessionControls,
-  onLogin,
-  onLogout,
   onStart,
   onStop,
 }: SessionHeaderProps) {
@@ -117,18 +109,6 @@ export function SessionHeader({
           <button type="button" className="btn btn--danger btn--sm" onClick={onEndCall}>
             End call
           </button>
-        ) : null}
-
-        {showAuthButton ? (
-          isAuthenticated ? (
-            <button type="button" className="btn btn--ghost btn--sm" onClick={onLogout}>
-              Logout
-            </button>
-          ) : (
-            <button type="button" className="btn btn--ghost btn--sm" onClick={onLogin}>
-              Login
-            </button>
-          )
         ) : null}
 
         {showSessionControls ? (

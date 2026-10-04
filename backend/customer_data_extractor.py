@@ -7,13 +7,11 @@ import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter
+from pydantic import BaseModel
 
-from .auth import enforce_usage_limits
 from .config import SUGGESTION_TEMPERATURE
 from .llm import get_extraction_model, get_llm_client, llm_extra_params, strip_code_fences
-from .persistence import persist_customer_extract_event
 from .quick_entities import NRIC_PATTERN, extract_nric_from_transcript
 from .text_guard import has_foreign_script
 
@@ -46,9 +44,6 @@ PLACEHOLDER_VALUES = {
 
 class ExtractCustomerDataRequest(BaseModel):
     conversation_transcript: str
-    session_id: str | None = Field(
-        None, description="Persist to this session when valid and owned"
-    )
 
 
 class CustomerDataExtractor:
@@ -273,34 +268,10 @@ extractor = CustomerDataExtractor()
 
 
 @router.post("/extract-customer-data")
-async def extract_customer_data(
-    req: ExtractCustomerDataRequest,
-    background_tasks: BackgroundTasks,
-    user_key: str = Depends(enforce_usage_limits),
-) -> dict[str, Any]:
+async def extract_customer_data(req: ExtractCustomerDataRequest) -> dict[str, Any]:
     """Extract customer information from conversation transcript."""
     try:
-        body = await extractor.extract(req.conversation_transcript)
-        err = body.get("error") if isinstance(body.get("error"), str) else None
-        background_tasks.add_task(
-            persist_customer_extract_event,
-            req.session_id,
-            user_key,
-            req.conversation_transcript,
-            body,
-            error=err,
-        )
-        return body
+        return await extractor.extract(req.conversation_transcript)
     except Exception as exc:
         logger.error("[Customer Data Extractor] Endpoint error: %s", exc)
-        body = extractor._error_response(
-            "Customer data extraction failed.", error=str(exc)
-        )
-        persist_customer_extract_event(
-            req.session_id,
-            user_key,
-            req.conversation_transcript,
-            body,
-            error=str(exc),
-        )
-        return body
+        return extractor._error_response("Customer data extraction failed.", error=str(exc))
