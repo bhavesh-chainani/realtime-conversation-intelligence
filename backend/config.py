@@ -28,14 +28,8 @@ def load_config_json():
 CONFIG = load_config_json()
 
 # Per-task model settings with config.json fallback.
-ROUTER_MODEL = (
-    os.getenv("ROUTER_MODEL")
-    or CONFIG.get("router_model")
-    or CONFIG.get("suggestion_model")
-    or "gpt-4o-mini"
-)
 SUGGESTION_MODEL = (
-    os.getenv("SUGGESTION_MODEL") or CONFIG.get("suggestion_model") or ROUTER_MODEL
+    os.getenv("SUGGESTION_MODEL") or CONFIG.get("suggestion_model") or "gpt-4o-mini"
 )
 EXTRACTION_MODEL = (
     os.getenv("EXTRACTION_MODEL") or CONFIG.get("extraction_model") or SUGGESTION_MODEL
@@ -80,13 +74,6 @@ SUGGESTION_TIMEOUT_SECONDS = float(
     (os.getenv("SUGGESTION_TIMEOUT_SECONDS") or str(LLM_TIMEOUT_SECONDS)).strip()
 )
 SUGGESTION_MAX_TOKENS = int((os.getenv("SUGGESTION_MAX_TOKENS") or "900").strip())
-
-# single = one merged LLM call (fast); router = router agent + suggestion agent.
-SUGGESTION_PIPELINE = (
-    (os.getenv("SUGGESTION_PIPELINE") or "router")
-    .strip()
-    .lower()
-)
 
 # Optional extra columns selected from the customer history view (e.g. "address").
 CUSTOMER_HISTORY_EXTRA_COLUMNS = [

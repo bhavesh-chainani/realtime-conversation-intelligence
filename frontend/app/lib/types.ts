@@ -72,7 +72,7 @@ export type HistoryMeta = {
 
 const CLOSED_CASE_STATUSES = new Set(["resolved", "closed", "approved", "withdrawn", "completed"]);
 
-/** Mirrors backend prompt_loader.is_open_case_status. */
+/** Mirrors backend customer_history.is_open_case_status. */
 export function isOpenCaseStatus(status: string): boolean {
   return !CLOSED_CASE_STATUSES.has(status.trim().toLowerCase());
 }

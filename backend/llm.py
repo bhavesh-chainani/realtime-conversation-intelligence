@@ -30,12 +30,8 @@ def resolve_llm_base_url() -> str:
     return _clean(cfg.LLM_BASE_URL)
 
 
-def get_router_model() -> str:
-    return _clean(cfg.ROUTER_MODEL)
-
-
 def get_suggestion_model() -> str:
-    return _clean(cfg.SUGGESTION_MODEL) or get_router_model()
+    return _clean(cfg.SUGGESTION_MODEL)
 
 
 def get_extraction_model() -> str:
@@ -43,7 +39,6 @@ def get_extraction_model() -> str:
 
 
 def llm_runtime_config() -> dict[str, Any]:
-    router_model = get_router_model()
     suggestion_model = get_suggestion_model()
     extraction_model = get_extraction_model()
     api_key_loaded = bool(resolve_llm_api_key())
@@ -52,8 +47,6 @@ def llm_runtime_config() -> dict[str, Any]:
     return {
         "llm_api_key_loaded": api_key_loaded,
         "llm_base_url_configured": base_url_configured,
-        "router_model": router_model,
-        "router_model_configured": bool(router_model),
         "suggestion_model": suggestion_model,
         "suggestion_model_configured": bool(suggestion_model),
         "extraction_model": extraction_model,
@@ -61,7 +54,6 @@ def llm_runtime_config() -> dict[str, Any]:
         "llm_configured": (
             api_key_loaded
             and base_url_configured
-            and bool(router_model)
             and bool(suggestion_model)
             and bool(extraction_model)
         ),

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from . import config as cfg
-from .prompt_loader import is_open_case_status
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +22,77 @@ except Exception:  # pragma: no cover - import guard for optional dependency fai
 
 
 router = APIRouter()
+
+
+NO_CUSTOMER_RECORD = (
+    "CUSTOMER RECORD: not yet retrieved. Do not mention or guess at prior cases."
+)
+
+# Statuses that mean a case needs no further action; anything else counts as open.
+CLOSED_CASE_STATUSES = {"resolved", "closed", "approved", "withdrawn", "completed"}
+
+
+def is_open_case_status(status: Optional[str]) -> bool:
+    return (status or "").strip().lower() not in CLOSED_CASE_STATUSES
+
+
+def verified_case_ids(
+    customer_profile: Optional[Dict[str, Any]], customer_cases: Optional[List[Dict[str, Any]]]
+) -> set[str]:
+    """Case IDs the model may cite. A name-only match is unverified, so none until the NRIC matches."""
+    if (customer_profile or {}).get("record_match") == "name":
+        return set()
+    return {
+        str(c.get("case_id")).strip()
+        for c in (customer_cases or [])
+        if isinstance(c, dict) and c.get("case_id")
+    }
+
+
+def format_customer_record(
+    profile: Optional[Dict[str, Any]], cases: Optional[List[Dict[str, Any]]]
+) -> str:
+    """Render verified customer data + prior cases as a compact prompt block."""
+    profile = profile or {}
+    cases = [c for c in (cases or []) if isinstance(c, dict) and c.get("case_id")]
+    if not cases:
+        return NO_CUSTOMER_RECORD
+
+    ident = " | ".join(
+        f"{label}: {profile[key]}"
+        for key, label in (("name", "Name"), ("nric_worker_permit_id", "NRIC"))
+        if profile.get(key)
+    )
+    open_count = sum(1 for c in cases if is_open_case_status(c.get("status")))
+    if profile.get("record_match") == "name":
+        header = (
+            "CUSTOMER RECORD (possible match by NAME ONLY - identity NOT verified yet; "
+            "ask for NRIC / FIN before discussing any case details):"
+        )
+    else:
+        header = "CUSTOMER RECORD (verified from the case system, matched on NRIC):"
+    lines = [header]
+    if ident:
+        lines.append(ident)
+    lines.append(f"Prior cases ({len(cases)}; {open_count} open):")
+    for c in cases:
+        status = str(c.get("status") or "").strip()
+        status_label = f"{status.upper()} (open)" if is_open_case_status(status) else status
+        lines.append(
+            "- "
+            + " | ".join(
+                part
+                for part in (
+                    str(c.get("case_id") or "").strip(),
+                    str(c.get("company") or "").strip(),
+                    str(c.get("type") or "").strip(),
+                    status_label,
+                    str(c.get("summary") or "").strip(),
+                )
+                if part
+            )
+        )
+    return "\n".join(lines)
 
 
 class CustomerHistoryLookupRequest(BaseModel):

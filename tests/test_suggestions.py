@@ -1,11 +1,13 @@
+"""Principal agent (backend.suggestion_agent) and the POST /suggest endpoint."""
+
 from __future__ import annotations
 
 import asyncio
 import json
 from types import SimpleNamespace
 
-from backend import suggestions_core
-from backend.suggestion_fast import generate_fast
+from backend.suggestion_agent import generate_suggestions
+from backend.suggestions import compute_suggestions
 
 CASES = [
     {
@@ -32,9 +34,7 @@ class _FakeAsyncClient:
 
         async def create(**kwargs):
             self.calls.append(kwargs)
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
-            )
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
 
@@ -60,12 +60,19 @@ def _model_reply(linked: list[str]) -> str:
     )
 
 
+def _use(monkeypatch, fake: _FakeAsyncClient) -> None:
+    monkeypatch.setattr("backend.suggestion_agent.get_async_llm_client", lambda: fake)
+
+
+# --- agent -----------------------------------------------------------------
+
+
 def test_customer_record_is_rendered_into_prompt(monkeypatch):
     fake = _FakeAsyncClient(_model_reply(["CASE-2026-03117"]))
-    monkeypatch.setattr("backend.suggestion_fast.get_async_llm_client", lambda: fake)
+    _use(monkeypatch, fake)
 
     body = asyncio.run(
-        generate_fast(
+        generate_suggestions(
             TRANSCRIPT,
             customer_profile={"name": "Katherine Liao", "nric_worker_permit_id": "S1234567A"},
             customer_cases=CASES,
@@ -83,9 +90,9 @@ def test_customer_record_is_rendered_into_prompt(monkeypatch):
 
 def test_without_history_prompt_says_not_retrieved(monkeypatch):
     fake = _FakeAsyncClient(_model_reply([]))
-    monkeypatch.setattr("backend.suggestion_fast.get_async_llm_client", lambda: fake)
+    _use(monkeypatch, fake)
 
-    body = asyncio.run(generate_fast(TRANSCRIPT))
+    body = asyncio.run(generate_suggestions(TRANSCRIPT))
 
     assert "not yet retrieved" in fake.user_prompt()
     assert body["suggestions"][0]["source"] == "conversation"
@@ -93,45 +100,73 @@ def test_without_history_prompt_says_not_retrieved(monkeypatch):
 
 def test_name_only_match_is_flagged_unverified(monkeypatch):
     fake = _FakeAsyncClient(_model_reply(["CASE-2026-03117"]))
-    monkeypatch.setattr("backend.suggestion_fast.get_async_llm_client", lambda: fake)
+    _use(monkeypatch, fake)
 
-    body = asyncio.run(
-        generate_fast(TRANSCRIPT, customer_profile={"record_match": "name"}, customer_cases=CASES)
-    )
+    body = asyncio.run(generate_suggestions(TRANSCRIPT, customer_profile={"record_match": "name"}, customer_cases=CASES))
 
     assert "NAME ONLY" in fake.user_prompt()
     assert body["suggestions"][0]["linked_records"] == []
 
 
 def test_hallucinated_case_ids_are_dropped(monkeypatch):
-    fake = _FakeAsyncClient(_model_reply(["CASE-9999-00000", "CASE-2025-10421"]))
-    monkeypatch.setattr("backend.suggestion_fast.get_async_llm_client", lambda: fake)
+    _use(monkeypatch, _FakeAsyncClient(_model_reply(["CASE-9999-00000", "CASE-2025-10421"])))
 
-    body = asyncio.run(generate_fast(TRANSCRIPT, customer_cases=CASES))
+    body = asyncio.run(generate_suggestions(TRANSCRIPT, customer_cases=CASES))
 
     assert body["suggestions"][0]["linked_records"] == ["CASE-2025-10421"]
 
 
-def test_invalid_json_returns_flagged_fallback(monkeypatch):
-    fake = _FakeAsyncClient("not json at all")
-    monkeypatch.setattr("backend.suggestion_fast.get_async_llm_client", lambda: fake)
+def test_agent_can_decline_to_suggest(monkeypatch):
+    _use(monkeypatch, _FakeAsyncClient(json.dumps({"should_suggest": False, "suggestions": []})))
 
-    body = asyncio.run(
-        suggestions_core.compute_suggestions(TRANSCRIPT, max_suggestions=2, pipeline="single")
-    )
+    body = asyncio.run(generate_suggestions(TRANSCRIPT))
+
+    assert body["suggestions"] == [] and body["decision"]["should_suggest"] is False
+
+
+def test_invalid_json_returns_flagged_fallback(monkeypatch):
+    _use(monkeypatch, _FakeAsyncClient("not json at all"))
+
+    body = asyncio.run(compute_suggestions(TRANSCRIPT, max_suggestions=2))
 
     assert body["fallback"] is True
     assert body["error"]
     assert body["suggestions"]
-    assert body["timings"]["pipeline"] == "single"
-
-
-def test_single_pipeline_reports_total_timing(monkeypatch):
-    fake = _FakeAsyncClient(_model_reply([]))
-    monkeypatch.setattr("backend.suggestion_fast.get_async_llm_client", lambda: fake)
-
-    body = asyncio.run(suggestions_core.compute_suggestions(TRANSCRIPT, pipeline="single"))
-
-    assert "fallback" not in body
-    assert body["timings"]["pipeline"] == "single"
     assert body["timings"]["total_ms"] >= 0
+
+
+# --- endpoint --------------------------------------------------------------
+
+
+def test_suggest_without_history_drops_case_ids(client, monkeypatch):
+    _use(monkeypatch, _FakeAsyncClient(_model_reply(["CASE-1"])))
+
+    r = client.post("/suggest", json={"context": "Staff: Hello\nCustomer: My salary was cut.", "max_suggestions": 2})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["suggestions"]) == 1
+    assert "fallback" not in body
+    assert body["timings"]["total_ms"] >= 0
+    # No history sent, so the model's case ID cannot survive validation.
+    assert body["suggestions"][0]["linked_records"] == []
+
+
+def test_suggest_passes_customer_history_into_prompt(client, monkeypatch):
+    fake = _FakeAsyncClient(_model_reply(["CASE-1"]))
+    _use(monkeypatch, fake)
+
+    r = client.post(
+        "/suggest",
+        json={
+            "context": "Staff: Hello\nCustomer: My salary was cut.",
+            "customer_profile": {"name": "Katherine Liao", "nric_worker_permit_id": "S1234567A"},
+            "customer_history": [
+                {"case_id": "CASE-1", "company": "Brightpath", "type": "Leave", "status": "Open", "summary": "x"}
+            ],
+        },
+    )
+
+    assert r.status_code == 200
+    assert r.json()["suggestions"][0]["linked_records"] == ["CASE-1"]
+    assert "CASE-1 | Brightpath" in fake.user_prompt()

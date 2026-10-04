@@ -27,7 +27,6 @@ def test_llm_requires_proxy_key_and_base_url(monkeypatch):
 
 
 def test_runtime_models_are_task_specific(monkeypatch):
-    monkeypatch.setattr("backend.config.ROUTER_MODEL", "router-fast")
     monkeypatch.setattr("backend.config.SUGGESTION_MODEL", "suggest-smart")
     monkeypatch.setattr("backend.config.EXTRACTION_MODEL", "extract-json")
     monkeypatch.setattr("backend.config.LLM_API_KEY", "proxy-key")
@@ -35,7 +34,6 @@ def test_runtime_models_are_task_specific(monkeypatch):
 
     runtime = llm.llm_runtime_config()
 
-    assert runtime["router_model"] == "router-fast"
     assert runtime["suggestion_model"] == "suggest-smart"
     assert runtime["extraction_model"] == "extract-json"
     assert runtime["llm_configured"] is True

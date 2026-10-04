@@ -1,5 +1,4 @@
 {
-  "router_model": "gpt-4o-mini",
   "suggestion_model": "gpt-4o-mini",
   "extraction_model": "gpt-4o-mini",
   "suggestion_temperature": 0.3,

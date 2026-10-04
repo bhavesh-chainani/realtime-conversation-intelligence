@@ -1,21 +1,22 @@
-"""
-Suggestion Agent (Agent 2): Provides real-time suggestions for operators.
-This agent generates actionable suggestions when called by the router agent.
-Optimized for low latency and real-time interaction.
+"""Principal agent: reads the live transcript plus any customer record and suggests what Staff
+should say next, in one LLM round trip.
+
+The customer record (from the entity/DB lookup) is rendered into the prompt so suggestions can
+cite prior cases by ID; IDs that are not in the record are dropped.
 """
 
-import asyncio
+from __future__ import annotations
+
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
-from .config import SUGGESTION_MAX, SUGGESTION_TEMPERATURE
-from .llm import get_llm_client, get_suggestion_model, strip_code_fences
-from .prompt_loader import (
-    get_fallback_suggestions,
-    get_suggestion_system_prompt,
-    get_suggestion_user_prompt,
-)
+from . import config as cfg
+from .customer_history import format_customer_record, verified_case_ids
+from .llm import get_async_llm_client, get_suggestion_model, llm_extra_params, str_list, strip_code_fences
+from .prompt_loader import get_suggestion_system_prompt, get_suggestion_user_prompt
+from .text_guard import ForeignScriptError, contains_foreign_script
 
 logger = logging.getLogger(__name__)
 
@@ -59,78 +60,73 @@ def validate_suggestion(suggestion: Any) -> Optional[Dict[str, Any]]:
     return validated
 
 
-class SuggestionAgent:
-    """Agent that generates real-time suggestions for operators."""
+async def generate_suggestions(
+    conversation_transcript: str,
+    max_suggestions: int = 2,
+    customer_profile: Optional[Dict[str, Any]] = None,
+    customer_cases: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Return {suggestions, decision, timings}. Raises on LLM/parse failure."""
+    max_suggestions = max(1, min(5, int(max_suggestions or 2)))
+    customer_record = format_customer_record(customer_profile, customer_cases)
+    known_case_ids = verified_case_ids(customer_profile, customer_cases)
 
-    def __init__(self):
-        self.temperature = SUGGESTION_TEMPERATURE
-        self.max_suggestions = SUGGESTION_MAX
+    client = get_async_llm_client()
+    if not client:
+        raise ValueError("LLM client is not configured")
 
-    async def generate_suggestions(
-        self,
-        conversation_transcript: str,
-        max_suggestions: Optional[int] = None,
-        known_info: Optional[List[str]] = None,
-        missing_info: Optional[List[str]] = None,
-        customer_record: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Generate real-time suggestions for the operator.
-        Optimized for low latency - returns quickly with actionable suggestions.
+    model = get_suggestion_model()
+    started = time.perf_counter()
+    response = await client.chat.completions.create(
+        model=model,
+        temperature=cfg.SUGGESTION_TEMPERATURE,
+        max_completion_tokens=cfg.SUGGESTION_MAX_TOKENS,
+        timeout=cfg.SUGGESTION_TIMEOUT_SECONDS,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": get_suggestion_system_prompt()},
+            {
+                "role": "user",
+                "content": get_suggestion_user_prompt(
+                    conversation_transcript, max_suggestions, customer_record
+                ),
+            },
+        ],
+        **llm_extra_params(),
+    )
+    llm_ms = (time.perf_counter() - started) * 1000
 
-        Args:
-            conversation_transcript: The full conversation transcript
-            max_suggestions: Maximum number of suggestions to generate
-            known_info: List of information that has already been gathered (from router agent)
-            missing_info: List of information gaps that still need to be addressed (from router agent)
-        """
-        if not conversation_transcript or len(conversation_transcript.strip()) < 10:
-            return []
+    parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
+    if not isinstance(parsed, dict):
+        raise ValueError("Model did not return a JSON object")
 
-        max_suggestions = max(1, min(5, max_suggestions or self.max_suggestions))
+    suggestions: List[Dict[str, Any]] = []
+    dropped_foreign = 0
+    raw_items = parsed.get("suggestions")
+    for item in (raw_items if isinstance(raw_items, list) else [])[:max_suggestions]:
+        validated = validate_suggestion(item)
+        if validated is None:
+            continue
+        if contains_foreign_script(validated):
+            dropped_foreign += 1
+            continue
+        # Only keep case IDs that really exist in the record we sent.
+        linked = [cid for cid in validated.get("linked_records", []) if cid in known_case_ids]
+        validated["linked_records"] = linked
+        validated["source"] = "history" if linked else "conversation"
+        suggestions.append(validated)
 
-        # Load prompts from external files for easy customization
-        system_prompt = get_suggestion_system_prompt()
-        user_prompt = get_suggestion_user_prompt(
-            conversation_transcript,
-            max_suggestions,
-            known_info=known_info or [],
-            missing_info=missing_info or [],
-            customer_record=customer_record,
-        )
+    if dropped_foreign and not suggestions:
+        # Surface as a failure so the caller returns the fallback instead.
+        raise ForeignScriptError("Model output contained non-English text")
 
-        try:
-            client = get_llm_client()
-            if not client:
-                raise ValueError("LLM API key not configured")
-
-            response = await asyncio.to_thread(
-                client.chat.completions.create,
-                model=get_suggestion_model(),
-                temperature=self.temperature,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            )
-            parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
-            if not isinstance(parsed, list):
-                raise ValueError("Model did not return a JSON array")
-
-            validated_suggestions = []
-            for idx, suggestion in enumerate(parsed[:max_suggestions]):
-                validated = validate_suggestion(suggestion)
-                if validated is None:
-                    logger.warning(
-                        f"Skipping invalid suggestion at index {idx}: not a dict"
-                    )
-                    continue
-                validated_suggestions.append(validated)
-
-            return validated_suggestions
-
-        except Exception as e:
-            logger.error(f"Suggestion agent error: {e}")
-            # Return fallback suggestions from external file
-            fallback = get_fallback_suggestions()
-            return fallback[:1]  # Return first fallback suggestion
+    should_suggest = bool(parsed.get("should_suggest", True)) or bool(suggestions)
+    return {
+        "suggestions": suggestions if should_suggest else [],
+        "decision": {
+            "should_suggest": should_suggest,
+            "known_info": str_list(parsed.get("known_info")),
+            "missing_info": str_list(parsed.get("missing_info")),
+        },
+        "timings": {"llm_ms": round(llm_ms, 1), "model": model},
+    }
