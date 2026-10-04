@@ -12,7 +12,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 from . import config as cfg
 from .assemblyai import StreamingTokenError, create_streaming_token, ssl_context, stt_session_config
 from .config import BACKEND_CORS_ORIGINS
-from .call_summary import router as call_summary_router
 from .customer_data_extractor import router as customer_data_router
 from .customer_history import router as customer_history_router
 from .diarization import nemotron
@@ -43,7 +42,6 @@ app.add_middleware(
 )
 
 app.include_router(suggest_router)
-app.include_router(call_summary_router)
 app.include_router(customer_data_router)
 app.include_router(customer_history_router)
 app.include_router(stt_relay_router)

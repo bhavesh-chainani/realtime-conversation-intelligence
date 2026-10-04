@@ -25,8 +25,8 @@ function latencyLabel(meta: SuggestionMeta): string {
   return `Live · ${total}${llm}`;
 }
 
-/** Case chips with status; open cases are highlighted. Shared with the wrap-up card. */
-export function RecordChips({ ids, cases, label }: { ids: string[]; cases: CustomerHistoryCase[]; label: string }) {
+/** Case chips with status; open cases are highlighted. */
+function RecordChips({ ids, cases, label }: { ids: string[]; cases: CustomerHistoryCase[]; label: string }) {
   const caseById = new Map(cases.map((c) => [c.case_id, c]));
   const shown = ids.filter((id) => caseById.has(id) || cases.length === 0);
   if (shown.length === 0) return null;

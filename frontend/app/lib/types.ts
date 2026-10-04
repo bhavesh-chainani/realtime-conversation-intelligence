@@ -78,20 +78,5 @@ export function isOpenCaseStatus(status: string): boolean {
 }
 
 /** A narrated milestone shown inline in the transcript (identity verified, case linked, …). */
-export type MomentKind = "success" | "warning" | "info" | "link" | "wrapup";
+export type MomentKind = "success" | "warning" | "info" | "link";
 export type Moment = { id: string; afterTurnId: string | null; kind: MomentKind; text: string };
-
-export type Wrapup = {
-  summary: string;
-  issue?: string;
-  linked_records?: string[];
-  actions?: string[];
-  documents_requested?: string[];
-  follow_up?: string;
-};
-
-export type WrapupState = {
-  status: "idle" | "loading" | "ready" | "error";
-  data?: Wrapup;
-  latencyMs?: number;
-};

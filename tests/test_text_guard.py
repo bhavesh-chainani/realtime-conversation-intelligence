@@ -4,7 +4,6 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from backend.call_summary import compute_call_summary
 from backend.suggestions_core import compute_suggestions
 from backend.text_guard import contains_foreign_script, has_foreign_script
 
@@ -31,29 +30,6 @@ class _SequencedClient:
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
-
-
-def _notes(summary: str) -> str:
-    return json.dumps({"summary": summary, "issue": "Salary deduction", "actions": [], "documents_requested": []})
-
-
-def test_wrapup_retries_once_on_foreign_text(monkeypatch):
-    fake = _SequencedClient(_notes("Katherine called بشأن Brightpath."), _notes("Katherine called about Brightpath."))
-    monkeypatch.setattr("backend.call_summary.get_async_llm_client", lambda: fake)
-
-    body = asyncio.run(compute_call_summary("Staff: Hi\nCustomer: My salary was cut."))
-
-    assert fake.calls == 2
-    assert body["summary"] == "Katherine called about Brightpath."
-
-
-def test_wrapup_falls_back_when_retry_is_also_foreign(monkeypatch):
-    fake = _SequencedClient(_notes("بشأن"), _notes("بشأن again"))
-    monkeypatch.setattr("backend.call_summary.get_async_llm_client", lambda: fake)
-
-    body = asyncio.run(compute_call_summary("Staff: Hi\nCustomer: My salary was cut."))
-
-    assert body["fallback"] is True
 
 
 def test_foreign_suggestion_is_rejected(monkeypatch):

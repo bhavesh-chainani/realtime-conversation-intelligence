@@ -28,7 +28,6 @@ const MOMENT_ICONS: Record<Moment["kind"], string> = {
   warning: "!",
   info: "i",
   link: "↗",
-  wrapup: "✎",
 };
 
 function roleDisplayName(role: SpeakerRole): string {

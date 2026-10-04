@@ -6,7 +6,6 @@ import { CustomerPanel } from "./components/customer-panel";
 import { SessionHeader } from "./components/session-header";
 import { SuggestionsPanel } from "./components/suggestions-panel";
 import { TranscriptPanel } from "./components/transcript-panel";
-import { WrapupCard } from "./components/wrapup-card";
 import { nextLookup } from "./lib/lookup-guard.ts";
 import { extractIntroName, extractNric } from "./lib/quick-entities.ts";
 import {
@@ -33,8 +32,6 @@ import {
   type Suggestion,
   type SuggestionMeta,
   type Turn,
-  type Wrapup,
-  type WrapupState,
 } from "./lib/types.ts";
 
 type KnownRole = "staff" | "customer";
@@ -202,7 +199,6 @@ export default function Page() {
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [callEndedAt, setCallEndedAt] = useState<number | null>(null);
   const [micLevel, setMicLevel] = useState(0);
-  const [wrapup, setWrapup] = useState<WrapupState>({ status: "idle" });
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRef = useRef<MediaStream | null>(null);
@@ -236,7 +232,6 @@ export default function Page() {
 
   const momentKeysRef = useRef<Set<string>>(new Set());
   const micTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const wrapupReqIdRef = useRef(0);
   const callEndedRef = useRef(false);
   const lastPartialLabelRef = useRef<string | null>(null);
   const pendingTurnsRef = useRef<PendingTurn[]>([]);
@@ -1023,7 +1018,6 @@ export default function Page() {
     setCallStartedAt((prev) => prev ?? Date.now());
     setCallEndedAt(null);
     callEndedRef.current = false;
-    setWrapup({ status: "idle" });
   }
 
   /** Stop the mic without losing the sentence that was still being transcribed. */
@@ -1049,17 +1043,8 @@ export default function Page() {
     if (isListening) stopListening();
   }
 
-  /** Undo End call: back to the live view with the conversation intact (on hold). */
-  function backToCall() {
-    wrapupReqIdRef.current += 1;
-    callEndedRef.current = false;
-    setCallEndedAt(null);
-    setWrapup({ status: "idle" });
-    momentKeysRef.current.delete("wrapup");
-    setMoments((prev) => prev.filter((m) => m.id !== "wrapup"));
-  }
-
-  async function endCall() {
+  /** Stop listening and freeze the call clock; New call clears the workspace. */
+  function endCall() {
     closeWs();
     if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
     suggestTimerRef.current = null;
@@ -1068,42 +1053,6 @@ export default function Page() {
     setIsFetchingSuggestions(false);
     callEndedRef.current = true;
     setCallEndedAt(Date.now());
-
-    const context = formatLabeledTranscript(turnsRef.current);
-    if (context.trim().length < 10) {
-      setWrapup({ status: "error" });
-      return;
-    }
-    const reqId = ++wrapupReqIdRef.current;
-    const started = performance.now();
-    setWrapup({ status: "loading" });
-
-    const show = (data: Wrapup) => {
-      setWrapup({ status: "ready", data, latencyMs: performance.now() - started });
-      emitMoment("wrapup", "wrapup", "Wrap-up notes drafted");
-    };
-
-    try {
-      const cases = historyCasesRef.current;
-      const profile = profilePayload();
-      const res = await fetch(`${backendUrl}/call-summary`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          context,
-          customer_profile: Object.keys(profile).length ? profile : undefined,
-          customer_history: cases.length ? cases : undefined,
-          }),
-      });
-      const data = res.ok ? await res.json() : null;
-      if (reqId !== wrapupReqIdRef.current) return;
-      if (data && !data.fallback && data.summary) show(data as Wrapup);
-      else setWrapup({ status: "error" });
-    } catch (err) {
-      console.error("[Frontend] Failed to draft wrap-up:", err);
-      if (reqId !== wrapupReqIdRef.current) return;
-      setWrapup({ status: "error" });
-    }
   }
 
   const resetConversation = () => {
@@ -1140,8 +1089,6 @@ export default function Page() {
     setCallStartedAt(null);
     setCallEndedAt(null);
     callEndedRef.current = false;
-    wrapupReqIdRef.current += 1;
-    setWrapup({ status: "idle" });
   };
 
   useEffect(() => {
@@ -1194,7 +1141,7 @@ export default function Page() {
         endedAt={callEndedAt}
         micLevel={micLevel}
         canEndCall={callActive && turns.length > 0}
-        onEndCall={() => void endCall()}
+        onEndCall={endCall}
         canPause={callActive && isListening}
         canResume={callActive && !isListening}
         onPause={pauseCall}
@@ -1225,22 +1172,14 @@ export default function Page() {
         />
 
         <aside className="panel assistance-rail" aria-label="Operator assistance workspace">
-          {callEndedAt !== null ? (
-            <WrapupCard
-              state={wrapup}
-              cases={customerHistoryCases}
-              onBackToCall={backToCall}
-            />
-          ) : (
-            <SuggestionsPanel
-              suggestions={suggestions}
-              meta={suggestionMeta}
-              cases={customerHistoryCases}
-              hasTranscript={hasTranscript}
-              isLive={isListening}
-              isFetchingSuggestions={isFetchingSuggestions}
-            />
-          )}
+          <SuggestionsPanel
+            suggestions={suggestions}
+            meta={suggestionMeta}
+            cases={customerHistoryCases}
+            hasTranscript={hasTranscript}
+            isLive={isListening}
+            isFetchingSuggestions={isFetchingSuggestions}
+          />
 
           <CustomerPanel
             customerData={customerData}
