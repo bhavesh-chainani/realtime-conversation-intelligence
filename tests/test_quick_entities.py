@@ -31,7 +31,7 @@ def test_extract_nric_fin_and_non_matches():
 
 
 def test_extract_nric_does_not_enforce_checksum():
-    # S1234567A fails the official checksum but is the demo persona's ID.
+    # S1234567A fails the official checksum but is a seeded demo DB ID.
     assert extract_nric("S1234567A") == "S1234567A"
 
 

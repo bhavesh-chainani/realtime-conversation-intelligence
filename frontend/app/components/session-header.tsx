@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 type SessionHeaderProps = {
   isLive: boolean;
-  /** Mic starting up: tell presenters not to speak yet. */
+  /** Mic starting up: tell staff not to speak yet. */
   isConnecting: boolean;
   callerName: string | null;
   /** Date.now() when the call started / ended (null when not applicable). */

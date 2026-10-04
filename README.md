@@ -1,419 +1,144 @@
 # Real-Time Conversation Intelligence
 
-A real-time legal call assistant system that provides live AI-powered suggestions to operators during active calls with clients. Built with a FastAPI backend and Next.js frontend, featuring real-time speech-to-text transcription via AssemblyAI and task-specific LLM routing through LiteLLM over an OpenAI-compatible API surface.
+Live assistant for staff on legal-assistance calls. It transcribes the call, works out who is speaking,
+recognises the caller from their NRIC / FIN, pulls their prior cases from the customer database, and suggests
+what staff should say next, citing those cases.
 
-## ✨ Features
+## How it works
 
-- **Real-Time Transcription**: Live speech-to-text using the AssemblyAI streaming API
-- **Speaker Diarization**: NVIDIA **Nemotron 3 Diarization** decides who said each word (backend relay, `DIARIZATION_BACKEND=nemotron`); without it, AssemblyAI streaming speaker labels are used. Two voices on a single laptop mic map to **Staff** / **Customer**
-- **AI-Powered Suggestions**: Intelligent, context-aware recommendations for operators
-- **Legal Entity Integration**: Specialized for legal entity in singapore's legal assistance workflow
-- **Live Conversation Intelligence**: Real-time analysis of ongoing conversations
-- **Operator Support**: Actionable suggestions including follow-up questions, document requests, and issue identification
-- **Customer Data Extraction**: Automatically extracts structured information (name, NRIC, address, purpose) from conversations
-- **Customer History Lookup**: Uses extracted or manually corrected identity fields to retrieve prior case history from a read-only Postgres view
+```text
+Browser mic ──PCM──▶ WS /ws/stt (backend relay) ──▶ AssemblyAI streaming        → the words
+                                                └─▶ Nemotron 3 Diarization     → who said each word
+           ◀── finished turns, split wherever the speaker changes (A / B → Staff / Customer)
 
-### Documentation
+On each customer turn:
+  1. Entity / DB agent   instant NRIC + name regex (browser) and POST /extract-customer-data (LLM)
+                         → POST /customer-history: read-only Postgres view, NRIC match first, then name
+  2. Principal agent     POST /suggest with the transcript + the customer record
+                         → one suggestion; case IDs it cites must exist in the record
+```
 
-**[Data science, operations, and production readiness](docs/DATA_SCIENCE_AND_OPS.md)** — full runbook: architecture, env options, sync vs async, persistence, telemetry, and how to avoid “surprise drift” (versioning, eval, vendor drift). Shorter go-live list: [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md).
+- **Diarisation.** The relay sends the same audio to AssemblyAI (words and timestamps) and to
+  [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (speaker probabilities
+  every 10 ms). Each word gets the speaker active during it (`backend/diarization/merge.py`).
+  - A finished turn shows as *identifying speaker* until the diariser has covered its last word, or until
+    `DIARIZATION_MAX_WAIT_MS` passes.
+  - Without a loaded model, turns arrive unlabelled and staff assign roles in the UI (Next voice, Swap
+    roles, or click a turn).
+- **Identity.** Only an NRIC match counts as verified. A name-only match is shown as a *possible match*, and
+  the agent is told not to discuss those cases until the NRIC is confirmed.
+- **Orchestration.** The order of the two agents currently lives in the browser (`handleCustomerTurn` in
+  `frontend/app/page.tsx`).
 
-**[Live demo runbook](docs/DEMO_RUNBOOK.md)**: scripted two-person call (Katherine Liao / Brightpath) with script-guided diarisation, Autopilot fallback, warm suggestion cache, and DB-linked suggestions. Enable with `DEMO_MODE=true` and open `/?demo=1`.
+## Repository layout
 
-## 🚀 Quick Start
+```text
+backend/
+  api.py                      FastAPI app: /health, /ready, /stt/session, routers
+  stt_relay.py                WS /ws/stt: AssemblyAI words + Nemotron speakers
+  assemblyai.py               AssemblyAI streaming connection
+  diarization/                nemotron.py (model, per-call sessions), merge.py (word → speaker)
+  suggestion_agent.py         principal agent
+  suggestions.py              POST /suggest (agent + static fallback)
+  customer_data_extractor.py  entity agent: LLM extraction of name / NRIC / address / purpose
+  quick_entities.py           regex NRIC / name extraction (mirrors frontend/app/lib/quick-entities.ts)
+  customer_history.py         POST /customer-history + customer-record formatting for the prompt
+  prompts/                    suggestion prompts and fallback suggestions (editable without code changes)
+  llm.py, config.py, text_guard.py, prompt_loader.py
+frontend/app/                 Next.js UI: page.tsx, components/, lib/
+scripts/
+  demo_db.py                  embedded Postgres with demo customers and cases
+  setup_gpu_host.sh, install_gpu_services.sh, gpu_connect.sh, gpu_host.conf   GPU host for Nemotron
+tests/                        pytest suite
+```
 
-### Prerequisites
+## Setup
 
-- **Python 3.11+** (check with `python3 --version`)
-- **Node.js 20.9+** and npm (check with `node --version` and `npm --version`)
-- **AssemblyAI API Key** ([Get one here](https://www.assemblyai.com/))
-- **LiteLLM proxy URL, API key, and model names**
+Requirements:
 
-### Installation & Setup
-
-#### 1. Clone the Repository
+- Python 3.11+ and Node.js 22+ (the frontend tests use Node's built-in TypeScript stripping)
+- An AssemblyAI API key
+- A LiteLLM (OpenAI-compatible) proxy URL and key
 
 ```bash
-git clone https://github.com/yourusername/realtime-conversation-intelligence.git
-cd realtime-conversation-intelligence
+python3.11 -m venv realtime-venv && source realtime-venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+pip install -r requirements-diarization.txt   # Nemotron (torch, transformers); see "GPU host" below
+cp .env.example .env                          # set ASSEMBLYAI_API_KEY, LLM_API_KEY, LLM_BASE_URL
+(cd frontend && npm install)
 ```
 
-#### 2. Set Up Python Backend
+**Customer database.** `python scripts/demo_db.py` starts an embedded Postgres in `data/demo_pg` and seeds the
+demo customers. For example, Katherine Liao, S1234567A, has open and closed cases. The script prints the
+`CUSTOMER_HISTORY_DATABASE_URL` and `CUSTOMER_HISTORY_EXTRA_COLUMNS` values to put in `.env`. Re-run it after a
+reboot.
+
+## Run
 
 ```bash
-python3.11 -m venv realtime-venv
-source realtime-venv/bin/activate        # Windows: realtime-venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
-# Optional, for Nemotron speaker diarisation (see below):
-# pip install -r requirements.txt -r requirements-diarization.txt
+uvicorn backend.api:app --host 127.0.0.1 --port 8000    # loads Nemotron at startup
+cd frontend && npm run dev                              # http://localhost:3000
 ```
 
-#### 3. Configure Environment Variables
+Open the app, click **Start session**, and speak with two voices into the mic:
 
-Copy the template and fill in your credentials:
+- The first new voice is Staff by default. Change it with **Next voice**, or fix it later with **Swap roles**.
+- Say an NRIC ("my IC is S1234567A") and the caller card fills from the database.
+- The next suggestion cites the caller's cases.
 
-```bash
-cp .env.example .env
-```
+**Endpoints:**
 
-At minimum set `ASSEMBLYAI_API_KEY`, `LLM_API_KEY` and `LLM_BASE_URL` (LiteLLM is the intended LLM runtime, so
-both LLM values are required) and the task model names your proxy exposes (`ROUTER_MODEL`, `SUGGESTION_MODEL`,
-`EXTRACTION_MODEL`). `.env.example` documents every other option: auth, CORS, rate limits, persistence, async
-jobs, customer-history lookup, observability, demo mode and diarisation.
+| Endpoint | What it does |
+| --- | --- |
+| `GET /health` | Liveness |
+| `GET /ready` | Whether the LLM and transcription are configured, the diariser is loaded, and the customer DB is set |
+| `GET /stt/session` | One-time ticket for the relay |
+| `WS /ws/stt` | The relay |
+| `POST /suggest` | Principal agent |
+| `POST /extract-customer-data` | LLM entity extraction |
+| `POST /customer-history` | DB lookup by NRIC and/or name |
 
-#### 4. Configure Suggestion Settings (Optional)
+## Configuration
 
-Edit `config.json` to customize fallback model-routing defaults when env vars are not set:
+- **`.env`** (template: `.env.example`): credentials, models, diariser device and mode, the customer DB, CORS.
+- **`config.json`**: model defaults and AssemblyAI settings.
+  - `assemblyai_speech_model` is `u3-rt-pro`, because the standard model mishears spoken NRICs.
+  - `assemblyai_keyterms` holds extra terms the model should listen for.
+  - `assemblyai_stream_params` holds end-of-turn timing.
+- **`backend/prompts/`**: the principal agent's system and user prompts, and the fallback suggestions.
 
-```json
-{
-  "router_model": "gpt-4o-mini",
-  "suggestion_model": "gpt-4o-mini",
-  "extraction_model": "gpt-4o-mini",
-  "suggestion_temperature": 0.3,
-  "max_suggestions": 1,
-  "assemblyai_keyterms": [],
-  "assemblyai_stream_params": {
-    "min_end_of_turn_silence_when_confident": 240,
-    "max_turn_silence": 1000
-  }
-}
-```
+## GPU host (Nemotron)
 
-Optional `assemblyai_keyterms`: array of strings passed to AssemblyAI streaming v3 as the `keyterms_prompt` query parameter (JSON-encoded). This replaces the older `word_boost` style usage on streaming; start empty and add only terms the model often mishears (max 100; see [AssemblyAI keyterms prompting](https://www.assemblyai.com/docs/streaming/keyterms-prompting)).
-
-Optional `assemblyai_stream_params`: extra streaming query params (turn detection); shorter end-of-turn silence makes finished lines appear sooner. Optional `assemblyai_speech_model` sets the streaming `speech_model`.
-
-**Model routing**: task-specific env vars take precedence over `config.json`, which makes it easy to point the backend at LiteLLM aliases without editing code.
-
-#### 5. Set Up Frontend
-
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-### Running the Application
-
-#### Start the Backend Server
-
-In your terminal (with virtual environment activated):
-
-```bash
-uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload
-```
-
-The backend will be available at `http://localhost:8000`
-
-**Available Endpoints**:
-
-- `GET /health` – Liveness: process is up (include `APP_VERSION` / `GIT_SHA` when set).
-- `GET /ready` – Readiness: dependency check; with `STRICT_READINESS=true`, returns 503 until LiteLLM and AssemblyAI configuration is present.
-- `GET /metrics` – Prometheus text (when `METRICS_ENABLED=true`; optional `METRICS_TOKEN`).
-- `GET /config` – Configuration introspection (requires auth when enabled)
-- `GET /limits` – Active per-minute and daily quota values
-- `POST /queue/suggestions` – Enqueue suggestion job (needs `ASYNC_JOBS_ENABLED=true` + worker when using async)
-- `POST /queue/extract-customer-data` – Enqueue extraction job
-- `GET /queue/jobs/{job_id}` – Poll job status and `result` payload
-- `POST /sessions/` – Create a persisted call session id
-- `GET /sessions/{session_id}` – Session metadata + recent stored events (same user only)
-- `POST /suggest` – AI suggestions endpoint (accepts conversation transcript + optional session id)
-- `POST /extract-customer-data` – Extract customer information (optional session id)
-- `POST /customer-history` – Read-only customer-history lookup using name and/or NRIC / Work Permit ID (optional session id)
-- `POST /call-summary` – Draft after-call notes (wrap-up card)
-- `GET /assemblyai-token` – How the browser starts live transcription: a short-lived AssemblyAI token, or a one-time ticket for the relay when Nemotron diarisation is on
-- `WS /ws/stt` – STT relay (AssemblyAI words + Nemotron speakers); see "Nemotron speaker diarisation"
-- `/demo/*` – Scripted-demo scenarios, warm cache, prewarm and preflight (only with `DEMO_MODE=true`; see [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md))
-
-**Tests & ops**: `pip install -r requirements-dev.txt && pytest` · load probe: `python scripts/load_smoke.py` · production checklist: [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md).
-
-#### Start the Frontend Development Server
-
-Open a **new terminal** (keep backend running):
-
-```bash
-cd frontend
-npm run dev
-```
-
-The frontend will be available at `http://localhost:3000`
-
-#### Run with Docker Compose (Production-like Local)
-
-```bash
-docker compose up --build
-```
-
-**Async inference (production scale)**:
-
-- Set `ASYNC_JOBS_ENABLED=true` and run the worker: `python -m backend.worker`.
-- `INFERENCE_QUEUE_MODE=poll` uses SQLite locks and a **shared** DB file (good for local / single-node Docker).
-- `INFERENCE_QUEUE_MODE=sqs` + `AWS_SQS_INFERENCE_QUEUE_URL` targets AWS SQS (recommended for multi-instance App Runner/ECS).
-- Frontend: set `NEXT_PUBLIC_USE_ASYNC_JOBS=true`. In Docker, pass it as a **build-arg** (see `Dockerfile.frontend` + `docker-compose.yml`).
-
-### Usage
-
-1. **Open the Application**: Navigate to `http://localhost:3000` in your browser
-2. **Start Transcription**: Click "Start session" (browser will request microphone access)
-3. **Speak**: Staff and customer voices on the same laptop mic are labeled separately; use **Next voice: Staff / Customer** and **Swap roles** if needed
-4. **View Suggestions**: AI-powered suggestions appear in real-time on the right side
-5. **Use customer lookup**: After extraction fills name or NRIC / Work Permit ID, click **Look up** to search the read-only history view
-6. **Stop**: Click "Stop" to end the transcription session
-
-**How It Works**:
-
-- Partial transcripts appear instantly as you speak, with Staff/Customer badges when diarization has locked roles
-- When finalized, transcripts overwrite partial text (no duplicates)
-- AI suggestions and customer extraction use role-labeled transcript context
-- Suggestions update in real-time as the conversation progresses
-- Customer history lookup prefers NRIC / Work Permit ID and falls back to exact customer-name matching
-
-### Same-laptop diarization setup
-
-This app uses **one microphone** (not WhatsApp/VoIP call bridging). Typical setup:
-
-1. Staff opens the UI on their laptop and starts a session.
-2. Customer speaks in-person or via speakerphone into the same room/mic.
-3. Diarization separates speakers; the first new voice defaults to **Staff** (change with **Next voice: Customer** before that speaker appears).
-4. If early labels are swapped, click **Swap roles** — no need to restart the session.
-
-### Nemotron speaker diarisation (recommended)
-
-AssemblyAI's streaming labels are per turn, and with natural, quick turn-taking AssemblyAI often merges both
-speakers into one turn, so a whole line is shown under the wrong role. With `DIARIZATION_BACKEND=nemotron`
-the browser streams to the backend relay (`/ws/stt`), which sends the same audio to AssemblyAI (words) and to
-[Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (who spoke each word), and
-splits turns wherever the speaker changes. A finished turn shows as *identifying speaker* until its labels are
-in; if the diariser falls behind, the turn uses AssemblyAI's labels instead (`DIARIZATION_MAX_WAIT_MS`).
-
-Words with the wrong role, measured with `scripts/bench_diarization.py` on synthetic two-voice calls
-(similar voices, short gaps, backchannels; "room" adds reverb, noise and a distant customer):
-
-| Audio | AssemblyAI labels, as the app used them | Nemotron per word, turns split |
-|---|---|---|
-| easy (contrasting voices) | 2.2% | 0.0% |
-| hard | 27.5% | 0.0% |
-| room | 15.2% | 0.0% |
-
-**Run it on an NVIDIA GPU.** On a GPU the 1.04 s profile adds well under a second. A laptop CPU cannot keep
-up with it; `DIARIZATION_DEVICE=cpu` defaults to int8 and 3.2 s chunks, which works only while the CPU is not
-throttled, and turns then wait several seconds for their labels.
+**Run Nemotron on an NVIDIA GPU.** There, the 1.04 s streaming profile adds well under a second per turn. A
+laptop CPU cannot keep up: `DIARIZATION_DEVICE=cpu` defaults to int8 and 3.5 s chunks, and turns then wait
+several seconds for their speakers.
 
 ```bash
 # On a Linux GPU machine (RTX 30-series or newer, or a cloud L4 / A10):
-scripts/setup_gpu_host.sh            # venv, CUDA torch, model weights, speed check
-DIARIZATION_BACKEND=nemotron DIARIZATION_DEVICE=cuda \
-  realtime-venv/bin/uvicorn backend.api:app --host 127.0.0.1 --port 8000
-sudo scripts/install_gpu_services.sh   # start on boot; idle and nightly auto-stop (scripts/gpu_host.conf)
-# On the laptop: tunnel the backend, then run the frontend as usual
+scripts/setup_gpu_host.sh               # venv, CUDA torch, model weights into data/models/
+sudo scripts/install_gpu_services.sh    # demo DB + backend as systemd services, idle and nightly auto-stop
+# On the laptop: tunnel the backend to localhost:8000, then run the frontend as usual
 scripts/gpu_connect.sh <gpu-host-ip>
 ```
 
-Day-to-day use of the AWS GPU server, including when it stops itself: [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md), section 6.
+The server stops itself to save cost:
 
-`GET /ready` reports `"diarization": {"backend": "nemotron", "ready": true}`. To evaluate a change:
-`scripts/make_demo_audio.py --variant hard|room` (writes ground truth), `scripts/bench_diarization.py
-capture|score|relay`.
+- after `IDLE_MINUTES` with no app use;
+- at `NIGHTLY_STOP`.
 
-**Persistence**:
+Both are set in `scripts/gpu_host.conf`. A stopped server keeps its disk; start it again from the AWS console.
+`gpu_connect.sh` shows when the next stop is due.
 
-- Default local storage uses SQLite (`data/sessions.db`).
-- Production on AWS uses DynamoDB (`STORAGE_BACKEND=dynamodb`; see `infra/aws/README.md`).
+Hugging Face downloads may be blocked on corporate networks. If so, fetch the weights elsewhere and set
+`DIARIZATION_MODEL` to the local folder.
 
-**Auth behavior**:
-
-- If Cognito frontend vars are configured, users can login via Hosted UI.
-- Backend validates JWTs when `REQUIRE_API_AUTH=true` and JWT settings are configured (`AUTH_JWKS_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`).
-
-## 🏗️ Architecture
-
-### How It Works
-
-1. **Real-Time Transcription (Frontend)**:
-
-- Frontend streams laptop-mic audio directly to AssemblyAI over WebSocket, or, with Nemotron diarisation on, to the backend relay (`/ws/stt`), which forwards it to AssemblyAI and the diariser
-- Speakers are labelled A/B (Nemotron per word with turns split at speaker changes; otherwise AssemblyAI `speaker_labels=true`, `max_speakers=2`)
-- UI maps labels to **Staff** / **Customer** (lock next voice + Swap roles if inverted)
-- Partial text renders immediately; finals overwrite partials to avoid duplicates
-- Suggest/extract receive role-labeled context (`Staff: …` / `Customer: …`)
-
-2. **Transcript Analysis (Backend)**:
-
-- Finalized labeled transcript turns are posted to `/suggest` endpoint
-- Backend processes conversation context through LiteLLM-routed models
-
-3. **AI Suggestions** (`SUGGESTION_PIPELINE`):
-
-- `single` (default with `DEMO_MODE=true`): one merged LLM call decides whether to suggest and writes the suggestion (`suggestion_fast.py`), for the lowest latency
-- `router` (default otherwise): a **Router Agent** decides when suggestions are needed, then a **Suggestion Agent** generates them
-- Suggestions include:
-  - Follow-up questions to gather essential information
-  - Legal issue identification
-  - Document requests
-  - Urgency assessment
-  - Natural language responses for operators
-
-4. **Customer Data Extraction**:
-
-- `/extract-customer-data` endpoint extracts structured information (name, NRIC, address, purpose) from **Customer**-attributed lines
-
-5. **Customer History Lookup**:
-
-- `/customer-history` uses customer identity fields to perform a read-only lookup against a curated Postgres customer-history view and returns case summaries for the operator
-
-## 📁 Project Structure
-
-```
-realtime-conversation-intelligence/
-├── backend/                       # FastAPI backend
-│   ├── api.py                     # App, health/readiness, STT token endpoint
-│   ├── stt_relay.py               # /ws/stt: AssemblyAI words + Nemotron speakers
-│   ├── diarization/               # Nemotron streaming diariser, word-to-speaker merge
-│   ├── suggestions.py             # /suggest endpoint
-│   ├── suggestions_core.py        # Pipeline selection (single / router) and fallbacks
-│   ├── suggestion_fast.py         # Single-call pipeline
-│   ├── router_agent.py            # Router agent
-│   ├── suggestion_agent.py        # Suggestion agent
-│   ├── call_summary.py            # /call-summary (wrap-up notes)
-│   ├── customer_data_extractor.py # /extract-customer-data
-│   ├── customer_history.py        # /customer-history (read-only Postgres view)
-│   ├── demo_api.py, demo_cache.py # Scripted demo endpoints and warm cache
-│   ├── async_jobs_router.py, worker.py  # Optional async inference queue + worker
-│   ├── prompt_loader.py           # Prompt loading
-│   ├── config.py                  # Environment and configuration
-│   ├── session_store.py           # SQLite + DynamoDB session persistence
-│   └── prompts/                   # Editable prompt files
-├── frontend/app/                  # Next.js UI: page.tsx, components/, lib/ (with unit tests)
-├── demo/scripts/                  # Demo call scripts
-├── scripts/                       # Demo DB, demo audio, STT / LLM / diarisation benchmarks, GPU host setup
-├── tests/                         # Backend tests (pytest)
-├── docs/                          # Ops, production checklist, demo runbook and presenter script
-├── infra/aws/                     # App Runner manifests
-├── config.json                    # Model and STT defaults
-└── requirements*.txt              # Python dependencies (base, dev, diarisation)
-```
-
-## 🎨 Customization
-
-### Customizing AI Prompts
-
-All AI prompts are stored in separate files for easy customization. Edit the files in `backend/prompts/` to modify agent behavior:
-
-**Router Agent Prompts** (controls when suggestions are generated):
-
-- `router_system_prompt.txt` – System instructions for the router agent
-- `router_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` placeholder)
-
-**Suggestion Agent Prompts** (controls what suggestions are generated):
-
-- `suggestion_system_prompt.txt` – System instructions for the suggestion agent
-- `suggestion_user_prompt.txt` – User prompt template (uses `{conversation_transcript}` and `{max_suggestions}` placeholders)
-
-**Single-call pipeline and wrap-up notes**:
-
-- `suggestion_fast_system_prompt.txt`, `suggestion_fast_user_prompt.txt` – The merged decide-and-suggest call (`SUGGESTION_PIPELINE=single`)
-- `call_summary_system_prompt.txt` – After-call notes
-
-**Fallback Suggestions** (shown when the AI fails):
-
-- `fallback_suggestions.json` – JSON array of fallback suggestion objects
-
-**Note**: Prompt files support template placeholders (e.g., `{conversation_transcript}`) which are automatically replaced at runtime. Do not modify these placeholders unless you understand the code structure.
-
-Changes take effect after restarting the backend server.
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Microphone not working**:
-
-- Check browser permissions (allow microphone access when prompted)
-- Ensure `ASSEMBLYAI_API_KEY` is configured in backend `.env`
-- Try refreshing the page and granting permissions again
-
-**Suggestions not appearing**:
-
-- Verify `LLM_API_KEY`, `LLM_BASE_URL`, and task model names are configured in your `.env` file
-- Check that your LiteLLM proxy is reachable and healthy
-- Review backend logs for error messages
-- Test the `/config` endpoint: `curl http://localhost:8000/config`
-
-**Customer history lookup not working**:
-
-- Ensure `CUSTOMER_HISTORY_DATABASE_URL` is configured
-- Verify `CUSTOMER_HISTORY_VIEW` points at a readable view with the expected columns
-- Confirm the backend database role is read-only and has access to the configured view
-
-**Backend connection issues**:
-
-- Ensure backend is running on port 8000
-- Check that virtual environment is activated
-- Verify all dependencies are installed: `pip list`
-- Review FastAPI logs for detailed error messages
-
-**Frontend connection issues**:
-
-- Ensure frontend is running on port 3000
-- Check that backend is accessible at `http://localhost:8000`
-- Verify CORS settings if accessing from different origin
-- Ensure AssemblyAI WebSocket can connect (corporate networks may require allowing `wss://streaming.assemblyai.com`)
-
-**Duplicate lines in conversation**:
-
-- The UI normalizes final vs partial transcripts automatically
-- If duplicates persist, refresh the page and try again
-- Check browser console for errors
-
-### Debugging
-
-**Backend Logging**: The suggestions endpoint provides detailed logging:
-
-- Input conversation transcripts with character counts
-- API call details (model, request parameters)
-- Output suggestions with type, text, confidence, priority
-- Error traces and fallback suggestions
-
-**Check Backend Health**:
+## Tests
 
 ```bash
-curl http://localhost:8000/health
+pytest                    # backend
+cd frontend && npm test   # frontend lib tests (node --test)
 ```
 
-**Check Configuration**:
+## License
 
-```bash
-curl http://localhost:8000/config
-```
-
-## 📝 Notes
-
-- CORS is now controlled by `BACKEND_CORS_ORIGINS`. Use explicit production domains only.
-- `REQUIRE_API_AUTH=true` enforces bearer token checks for backend endpoints as a production hardening scaffold (enable once real JWT login is integrated).
-- JWT auth mode is enabled automatically when `AUTH_JWKS_URL`, `AUTH_ISSUER`, and `AUTH_AUDIENCE` are configured. The backend validates bearer JWTs with JWKS.
-- Rate limiting and quotas are enabled per authenticated user key (`RATE_LIMIT_PER_MINUTE`, `DAILY_REQUEST_QUOTA`).
-- The backend issues short-lived AssemblyAI tokens via `/assemblyai-token`; your permanent AssemblyAI key stays server-side.
-- The backend provides comprehensive logging for all suggestion requests, making it easy to debug and monitor the system.
-- Suggestions are generated in real-time from finalized transcript turns and update automatically.
-- The system is optimized for legal entity in singapore's workflow, providing context-aware recommendations for legal assistance operators.
-
-## ☁️ AWS Deployment
-
-AWS deployment manifests and instructions are in:
-
-- `infra/aws/README.md`
-- `infra/aws/backend.apprunner.yaml`
-- `infra/aws/frontend.apprunner.yaml`
-
-## 📄 License
-
-See [LICENSE](./LICENSE) file for details.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📧 Support
-
-For issues and questions, please open an issue on GitHub.
+MIT, see [LICENSE](LICENSE).

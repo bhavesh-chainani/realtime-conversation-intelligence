@@ -82,7 +82,8 @@ CUSTOMER_HISTORY_EXTRA_COLUMNS = [
     if col.strip()
 ]
 
-# Optional AssemblyAI streaming speech model (sent as `speech_model`); empty = server default.
+# AssemblyAI streaming speech model (sent as `speech_model`); empty = server default. config.json sets
+# u3-rt-pro: the standard model misheard spoken NRICs ("S1234567A" as "S124567A"), breaking the lookup.
 ASSEMBLYAI_SPEECH_MODEL = str(CONFIG.get("assemblyai_speech_model") or "").strip()
 
 # Extra streaming query params, e.g. turn detection. Shorter end-of-turn silence makes finished
