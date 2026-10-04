@@ -6,6 +6,9 @@
 # Then copy your .env (AssemblyAI + LLM keys) next to it and start the backend as printed at the end.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Deep Learning AMIs put the system CUDA libraries on LD_LIBRARY_PATH; they clash with the cuDNN
+# bundled in the PyTorch wheel (CUDNN_STATUS_SUBLIBRARY_LOADING_FAILED). The wheel needs neither.
+unset LD_LIBRARY_PATH
 
 echo "== GPU"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader \
