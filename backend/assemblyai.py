@@ -57,26 +57,11 @@ async def create_streaming_token(expires_in_seconds: int = 300) -> str:
 STREAMING_WS_URL = "wss://streaming.assemblyai.com/v3/ws"
 
 
-def stt_session_config(scenario: str | None, demo: bool | None = None) -> dict:
-    """Keyterms, STT prompt, speech model and stream params for a session.
-
-    Raises `demo_cache.ScenarioNotFound` for an unknown scenario in demo mode.
-    """
-    keyterms = list(cfg.ASSEMBLYAI_KEYTERMS)
-    prompt = ""
-    speech_model = cfg.ASSEMBLYAI_SPEECH_MODEL
-    if (cfg.DEMO_MODE if demo is None else demo) and scenario:
-        from .demo_cache import scenario_stt_config
-
-        keyterms, prompt = scenario_stt_config(scenario)
-        speech_model = speech_model or cfg.DEMO_SPEECH_MODEL
-    # AssemblyAI rejects the whole session if `prompt` is sent to a non-u3 model.
-    if not speech_model.startswith("u3"):
-        prompt = ""
+def stt_session_config() -> dict:
+    """Keyterms, speech model and stream params for a session."""
     return {
-        "keyterms": keyterms,
-        "prompt": prompt,
-        "speech_model": speech_model,
+        "keyterms": list(cfg.ASSEMBLYAI_KEYTERMS),
+        "speech_model": cfg.ASSEMBLYAI_SPEECH_MODEL,
         "stream_params": dict(cfg.ASSEMBLYAI_STREAM_PARAMS),
     }
 
@@ -91,8 +76,6 @@ def streaming_params(sample_rate: int, session: dict) -> dict[str, str]:
     }
     if session["keyterms"]:
         params["keyterms_prompt"] = json.dumps(session["keyterms"])
-    if session["prompt"]:
-        params["prompt"] = session["prompt"]
     if session["speech_model"]:
         params["speech_model"] = session["speech_model"]
     params.update({k: str(v) for k, v in session["stream_params"].items()})

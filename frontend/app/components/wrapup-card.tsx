@@ -6,7 +6,6 @@ import { RecordChips } from "./suggestions-panel";
 type WrapupCardProps = {
   state: WrapupState;
   cases: CustomerHistoryCase[];
-  techView: boolean;
   /** Return to the live view (End call pressed by mistake, or to keep talking). */
   onBackToCall: () => void;
 };
@@ -21,7 +20,7 @@ function notesText(w: Wrapup): string {
   return lines.join("\n");
 }
 
-export function WrapupCard({ state, cases, techView, onBackToCall }: WrapupCardProps) {
+export function WrapupCard({ state, cases, onBackToCall }: WrapupCardProps) {
   const [copied, setCopied] = useState(false);
   const data = state.data;
 
@@ -40,9 +39,9 @@ export function WrapupCard({ state, cases, techView, onBackToCall }: WrapupCardP
     <section className="rail-section suggestion-hero" aria-label="Call wrap-up">
       <div className="panel-heading">
         <h2 className="panel-title">Wrap-up notes</h2>
-        {techView && state.status === "ready" ? (
-          <span className={`latency-chip latency-chip--${state.origin === "prepared" ? "instant" : "live"}`}>
-            {state.origin === "prepared" ? "Prepared" : "Live"}
+        {state.status === "ready" ? (
+          <span className="latency-chip latency-chip--live">
+            Live
             {state.latencyMs != null ? ` · ${(state.latencyMs / 1000).toFixed(1)}s` : ""}
           </span>
         ) : null}

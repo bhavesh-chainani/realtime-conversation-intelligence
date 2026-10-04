@@ -9,8 +9,6 @@ type SuggestionsPanelProps = {
   suggestions: Suggestion[];
   meta: SuggestionMeta | null;
   cases: CustomerHistoryCase[];
-  /** Show type, confidence and the live/prepared latency chip. */
-  techView: boolean;
   hasTranscript: boolean;
   isLive: boolean;
   isFetchingSuggestions: boolean;
@@ -21,7 +19,6 @@ function formatSeconds(ms: number): string {
 }
 
 function latencyLabel(meta: SuggestionMeta): string {
-  if (meta.origin === "instant") return `Prepared${meta.latencyMs != null ? ` · ${formatSeconds(meta.latencyMs)}` : ""}`;
   if (meta.origin === "fallback") return "Fallback guidance";
   const total = meta.latencyMs != null ? formatSeconds(meta.latencyMs) : "";
   const llm = typeof meta.llmMs === "number" ? ` (LLM ${formatSeconds(meta.llmMs)})` : "";
@@ -58,7 +55,6 @@ export function SuggestionsPanel({
   suggestions,
   meta,
   cases,
-  techView,
   hasTranscript,
   isLive,
   isFetchingSuggestions,
@@ -71,15 +67,13 @@ export function SuggestionsPanel({
     <section className="rail-section suggestion-hero" aria-label="Suggested response">
       <div className="panel-heading">
         <h2 className="panel-title">Suggested response</h2>
-        {techView && meta ? (
+        {meta ? (
           <span
             className={`latency-chip latency-chip--${meta.origin}${isFetchingSuggestions ? " latency-chip--busy" : ""}`}
             title={
-              meta.origin === "instant"
-                ? "Prepared for this script line; replaced automatically when the live answer arrives."
-                : meta.model
-                  ? `Time from end of customer turn to suggestion · ${meta.model}`
-                  : "Time from end of customer turn to suggestion"
+              meta.model
+                ? `Time from end of customer turn to suggestion · ${meta.model}`
+                : "Time from end of customer turn to suggestion"
             }
           >
             {latencyLabel(meta)}
@@ -109,13 +103,11 @@ export function SuggestionsPanel({
               key={`${index}-${topic}-${phrasing.slice(0, 40)}`}
               className={`hero-card${highPriority ? " hero-card--priority" : ""}`}
             >
-              {techView ? (
-                <div className="hero-card__tags">
-                  {suggestion.type ? <span className="tag tag--accent">{suggestion.type}</span> : null}
-                  {details.priority ? <span className="tag tag--muted">Priority: {String(details.priority)}</span> : null}
-                  {confidence ? <span className="tag tag--muted">{confidence}</span> : null}
-                </div>
-              ) : null}
+              <div className="hero-card__tags">
+                {suggestion.type ? <span className="tag tag--accent">{suggestion.type}</span> : null}
+                {details.priority ? <span className="tag tag--muted">Priority: {String(details.priority)}</span> : null}
+                {confidence ? <span className="tag tag--muted">{confidence}</span> : null}
+              </div>
               <h3 className="hero-card__topic">{topic}</h3>
               {phrasing ? <p className="hero-card__quote">“{phrasing}”</p> : null}
               <RecordChips ids={suggestion.linked_records || []} cases={cases} label="Based on" />

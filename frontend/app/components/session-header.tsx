@@ -8,7 +8,6 @@ type SessionHeaderProps = {
   /** Date.now() when the call started / ended (null when not applicable). */
   startedAt: number | null;
   endedAt: number | null;
-  audioMode: "mic" | "autopilot" | null;
   micLevel: number;
   canEndCall: boolean;
   onEndCall: () => void;
@@ -17,8 +16,9 @@ type SessionHeaderProps = {
   canResume: boolean;
   onPause: () => void;
   onResume: () => void;
-  /** Hidden in demo mode, where the presenter dock owns start/stop. */
-  showSessionControls: boolean;
+  /** The call has ended: offer to clear the workspace for the next one. */
+  canStartNewCall: boolean;
+  onNewCall: () => void;
   onStart: () => void;
   onStop: () => void;
 };
@@ -28,13 +28,13 @@ function formatClock(ms: number): string {
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/** Four bars driven by mic level; autopilot animates them since there is no audio. */
-function ListeningBars({ mode, level }: { mode: "mic" | "autopilot"; level: number }) {
+/** Four bars driven by mic level. */
+function ListeningBars({ level }: { level: number }) {
   const heights = [0.55, 1, 0.75, 0.45].map((w) => Math.max(0.18, Math.min(1, level * 1.6 * w)));
   return (
-    <span className={`listen-bars${mode === "autopilot" ? " listen-bars--auto" : ""}`} aria-label="Listening">
+    <span className="listen-bars" aria-label="Listening">
       {heights.map((h, i) => (
-        <span key={i} style={mode === "mic" ? { transform: `scaleY(${h})` } : undefined} />
+        <span key={i} style={{ transform: `scaleY(${h})` }} />
       ))}
     </span>
   );
@@ -46,7 +46,6 @@ export function SessionHeader({
   callerName,
   startedAt,
   endedAt,
-  audioMode,
   micLevel,
   canEndCall,
   onEndCall,
@@ -54,7 +53,8 @@ export function SessionHeader({
   canResume,
   onPause,
   onResume,
-  showSessionControls,
+  canStartNewCall,
+  onNewCall,
   onStart,
   onStop,
 }: SessionHeaderProps) {
@@ -91,16 +91,16 @@ export function SessionHeader({
         <span className={`call-status call-status--${tone}`} aria-live="polite">
           <span className="call-status__dot" aria-hidden />
           <span className="call-status__text">{status}</span>
-          {audioMode ? <ListeningBars mode={audioMode} level={micLevel} /> : null}
+          {isLive ? <ListeningBars level={micLevel} /> : null}
         </span>
 
         {canPause ? (
-          <button type="button" className="btn btn--secondary btn--sm" onClick={onPause} title="Stop listening, keep everything on screen (P)">
+          <button type="button" className="btn btn--secondary btn--sm" onClick={onPause} title="Stop listening, keep everything on screen">
             Pause
           </button>
         ) : null}
         {canResume ? (
-          <button type="button" className="btn btn--primary btn--sm" onClick={onResume} title="Resume listening (P)">
+          <button type="button" className="btn btn--primary btn--sm" onClick={onResume} title="Resume listening">
             Resume
           </button>
         ) : null}
@@ -111,17 +111,19 @@ export function SessionHeader({
           </button>
         ) : null}
 
-        {showSessionControls ? (
-          isLive ? (
-            <button type="button" className="btn btn--secondary btn--sm" onClick={onStop}>
-              Stop
-            </button>
-          ) : (
-            <button type="button" className="btn btn--primary btn--sm" onClick={onStart}>
-              Start session
-            </button>
-          )
-        ) : null}
+        {canStartNewCall ? (
+          <button type="button" className="btn btn--primary btn--sm" onClick={onNewCall}>
+            New call
+          </button>
+        ) : isLive ? (
+          <button type="button" className="btn btn--secondary btn--sm" onClick={onStop}>
+            Stop
+          </button>
+        ) : (
+          <button type="button" className="btn btn--primary btn--sm" onClick={onStart}>
+            Start session
+          </button>
+        )}
       </div>
     </header>
   );

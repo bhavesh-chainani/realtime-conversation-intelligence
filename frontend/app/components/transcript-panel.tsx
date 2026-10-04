@@ -12,10 +12,7 @@ type TranscriptPanelProps = {
   speaking: boolean;
   liveRole: SpeakerRole;
   moments: Moment[];
-  /** Show attribution captions, speaker labels and speaker controls. */
-  techView: boolean;
   status: string;
-  scriptGuided: boolean;
   nextVoiceIsStaff: boolean;
   hasRoleMapping: boolean;
   mappedStaffLabel?: string;
@@ -43,12 +40,8 @@ function roleDisplayName(role: SpeakerRole): string {
 /** Short explanation of how the speaker was decided (technical view). */
 function attribution(turn: Turn): string {
   switch (turn.roleSource) {
-    case "script":
-      return `script ${turn.scriptLineId ?? ""}${typeof turn.alignScore === "number" ? ` · ${Math.min(1, turn.alignScore).toFixed(2)}` : ""}`;
     case "diarization":
       return turn.speakerLabel ? `diarised ${turn.speakerLabel}` : "diarised";
-    case "alternation":
-      return "turn order";
     case "manual":
       return "set by staff";
     default:
@@ -74,9 +67,7 @@ export function TranscriptPanel({
   speaking,
   liveRole,
   moments,
-  techView,
   status,
-  scriptGuided,
   nextVoiceIsStaff,
   hasRoleMapping,
   mappedStaffLabel,
@@ -99,72 +90,61 @@ export function TranscriptPanel({
       <div className="panel-heading panel-heading--wide">
         <h2 className="panel-title">Conversation</h2>
 
-        {techView ? (
-          <div className="metric-strip" aria-label="Session metrics">
-            <span className="metric-chip">{status}</span>
-            <span className="metric-chip">{turns.length} turns</span>
-            {!scriptGuided ? (
-              <span className="metric-chip">{mappedSpeakerCount}/2 voices mapped</span>
-            ) : null}
-          </div>
-        ) : null}
+        <div className="metric-strip" aria-label="Session metrics">
+          <span className="metric-chip">{status}</span>
+          <span className="metric-chip">{turns.length} turns</span>
+          <span className="metric-chip">{mappedSpeakerCount}/2 voices mapped</span>
+        </div>
       </div>
 
-      {techView ? (
-        <div className="control-bar control-bar--compact" role="group" aria-label="Speaker role controls">
-          <div className="control-bar__content">
-            <p className="control-bar__hint">
-              {scriptGuided ? "Speakers matched to the script." : "Speakers from voice diarization."} Click a turn
-              to correct it.
-            </p>
+      <div className="control-bar control-bar--compact" role="group" aria-label="Speaker role controls">
+        <div className="control-bar__content">
+          <p className="control-bar__hint">Speakers from voice diarization. Click a turn to correct it.</p>
 
-            <div className="role-toggle-row">
-              {!scriptGuided ? (
-                <div className="role-toggle-group">
-                  <button
-                    type="button"
-                    className={`btn btn--toggle btn--sm${nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
-                    onClick={() => onSetNextVoiceRole(true)}
-                    aria-pressed={nextVoiceIsStaff}
-                    disabled={hasRoleMapping && Boolean(mappedStaffLabel)}
-                    title={
-                      mappedStaffLabel
-                        ? `Staff mapped to speaker ${mappedStaffLabel}`
-                        : "Lock the next unseen speaker as Staff"
-                    }
-                  >
-                    Next voice: Staff
-                  </button>
-                  <button
-                    type="button"
-                    className={`btn btn--toggle btn--sm${!nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
-                    onClick={() => onSetNextVoiceRole(false)}
-                    aria-pressed={!nextVoiceIsStaff}
-                    disabled={hasRoleMapping && Boolean(mappedCustomerLabel)}
-                    title={
-                      mappedCustomerLabel
-                        ? `Customer mapped to speaker ${mappedCustomerLabel}`
-                        : "Lock the next unseen speaker as Customer"
-                    }
-                  >
-                    Next voice: Customer
-                  </button>
-                </div>
-              ) : null}
-
+          <div className="role-toggle-row">
+            <div className="role-toggle-group">
               <button
                 type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={onSwapSpeakerRoles}
-                disabled={!hasRoleMapping && turns.length === 0}
-                title="Swap Staff and Customer labels if diarization inverted them"
+                className={`btn btn--toggle btn--sm${nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
+                onClick={() => onSetNextVoiceRole(true)}
+                aria-pressed={nextVoiceIsStaff}
+                disabled={hasRoleMapping && Boolean(mappedStaffLabel)}
+                title={
+                  mappedStaffLabel
+                    ? `Staff mapped to speaker ${mappedStaffLabel}`
+                    : "Lock the next unseen speaker as Staff"
+                }
               >
-                Swap roles
+                Next voice: Staff
+              </button>
+              <button
+                type="button"
+                className={`btn btn--toggle btn--sm${!nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
+                onClick={() => onSetNextVoiceRole(false)}
+                aria-pressed={!nextVoiceIsStaff}
+                disabled={hasRoleMapping && Boolean(mappedCustomerLabel)}
+                title={
+                  mappedCustomerLabel
+                    ? `Customer mapped to speaker ${mappedCustomerLabel}`
+                    : "Lock the next unseen speaker as Customer"
+                }
+              >
+                Next voice: Customer
               </button>
             </div>
+
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={onSwapSpeakerRoles}
+              disabled={!hasRoleMapping && turns.length === 0}
+              title="Swap Staff and Customer labels if diarization inverted them"
+            >
+              Swap roles
+            </button>
           </div>
         </div>
-      ) : null}
+      </div>
 
       <div className="transcript-canvas">
         <div className="transcript-list" ref={transcriptListRef}>
@@ -185,14 +165,12 @@ export function TranscriptPanel({
               >
                 <div className="turn-card__meta">
                   <span className={`role-badge role-badge--${turn.role}`}>{roleDisplayName(turn.role)}</span>
-                  {techView && turn.speakerLabel ? (
+                  {turn.speakerLabel ? (
                     <span className="turn-card__speaker">Speaker {turn.speakerLabel}</span>
                   ) : null}
-                  {techView ? (
-                    <span className={`turn-card__source turn-card__source--${turn.roleSource}`}>
-                      {attribution(turn)}
-                    </span>
-                  ) : null}
+                  <span className={`turn-card__source turn-card__source--${turn.roleSource}`}>
+                    {attribution(turn)}
+                  </span>
                 </div>
                 <p className="turn-card__text">{turn.text}</p>
               </article>

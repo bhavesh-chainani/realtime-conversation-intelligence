@@ -58,14 +58,14 @@ def _sign(payload: bytes) -> str:
     return hmac.new(cfg.STT_TICKET_SECRET.encode(), payload, hashlib.sha256).hexdigest()
 
 
-def issue_ticket(scenario: str | None) -> str:
-    body = json.dumps({"s": scenario or "", "e": int(time.time()) + TICKET_TTL_SECONDS, "n": secrets.token_hex(8)})
+def issue_ticket() -> str:
+    body = json.dumps({"e": int(time.time()) + TICKET_TTL_SECONDS, "n": secrets.token_hex(8)})
     payload = base64.urlsafe_b64encode(body.encode())
     return f"{payload.decode()}.{_sign(payload)}"
 
 
-def redeem_ticket(ticket: str) -> str | None:
-    """The ticket's scenario (None if it has none). Each ticket opens one session."""
+def redeem_ticket(ticket: str) -> None:
+    """Raises TicketError unless the ticket is valid and unused. Each ticket opens one session."""
     payload, _, signature = ticket.partition(".")
     if not signature or not hmac.compare_digest(signature, _sign(payload.encode())):
         raise TicketError("bad signature")
@@ -78,7 +78,6 @@ def redeem_ticket(ticket: str) -> str | None:
     if data["n"] in _redeemed:
         raise TicketError("already used")
     _redeemed[data["n"]] = data["e"]
-    return data["s"] or None
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +291,8 @@ async def stt_relay(ws: WebSocket, ticket: str = "", sample_rate: int = 48000) -
         await ws.close(code=1008, reason="origin not allowed")
         return
     try:
-        scenario = redeem_ticket(ticket)
-        session = stt_session_config(scenario)
-    except Exception as exc:  # bad / used ticket, unknown scenario
+        redeem_ticket(ticket)
+    except Exception as exc:  # bad / used / expired ticket
         logger.warning("STT relay rejected: %s", exc)
         await ws.close(code=1008, reason="invalid ticket")
         return
@@ -303,7 +301,7 @@ async def stt_relay(ws: WebSocket, ticket: str = "", sample_rate: int = 48000) -
     diarizer = get_diarizer()
     diar = diarizer.new_session(sample_rate) if diarizer else None
     try:
-        async with connect_assemblyai(streaming_params(sample_rate, session)) as aai:
+        async with connect_assemblyai(streaming_params(sample_rate, stt_session_config())) as aai:
             await Relay(ws, aai, diar, cfg.DIARIZATION_MAX_WAIT_MS).run()
     except Exception as exc:
         logger.exception("STT relay failed")

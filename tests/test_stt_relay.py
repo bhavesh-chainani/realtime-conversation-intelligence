@@ -27,19 +27,19 @@ def truth_probs(total_ms: int = 22000) -> list[list[float]]:
 
 
 def test_ticket_round_trip_and_single_use():
-    ticket = issue_ticket("katherine_liao_brightpath")
-    assert redeem_ticket(ticket) == "katherine_liao_brightpath"
+    ticket = issue_ticket()
+    redeem_ticket(ticket)
     with pytest.raises(TicketError):
         redeem_ticket(ticket)
 
 
 def test_tampered_or_expired_ticket_rejected(monkeypatch):
-    payload, _, sig = issue_ticket(None).partition(".")
+    payload, _, sig = issue_ticket().partition(".")
     with pytest.raises(TicketError):
         redeem_ticket(f"{payload}.{'0' * len(sig)}")
     monkeypatch.setattr(stt_relay, "TICKET_TTL_SECONDS", -1)
     with pytest.raises(TicketError):
-        redeem_ticket(issue_ticket(None))
+        redeem_ticket(issue_ticket())
 
 
 # --- turn labelling --------------------------------------------------------
@@ -138,7 +138,7 @@ def run_session(client, monkeypatch, session: FakeSession) -> tuple[list[dict], 
     monkeypatch.setattr(stt_relay, "connect_assemblyai", connect)
     monkeypatch.setattr(stt_relay, "get_diarizer", lambda: FakeDiarizer(session))
     received = []
-    with client.websocket_connect(f"/ws/stt?ticket={issue_ticket(None)}&sample_rate=48000") as ws:
+    with client.websocket_connect(f"/ws/stt?ticket={issue_ticket()}&sample_rate=48000") as ws:
         while True:
             msg = ws.receive_json()
             received.append(msg)
@@ -179,7 +179,7 @@ def test_terminate_still_delivers_turns_waiting_for_labels(client, monkeypatch):
 
     monkeypatch.setattr(stt_relay, "connect_assemblyai", connect)
     monkeypatch.setattr(stt_relay, "get_diarizer", lambda: FakeDiarizer(FakeSession([])))
-    with client.websocket_connect(f"/ws/stt?ticket={issue_ticket(None)}") as ws:
+    with client.websocket_connect(f"/ws/stt?ticket={issue_ticket()}") as ws:
         while ws.receive_json()["type"] != "PendingTurn":
             pass
         ws.send_text(json.dumps({"type": "Terminate"}))

@@ -32,14 +32,6 @@ snapshot_download('nvidia/Nemotron-3-Diarization', local_dir='data/models/Nemotr
                   allow_patterns=['config.json', 'processor_config.json', 'model.safetensors'])
 "
 
-echo "== Speed check (low_latency = 1.04 s profile)"
-if [ -f data/demo_audio/katherine_liao_brightpath.wav ]; then
-  realtime-venv/bin/python scripts/spike_nemotron.py --device cuda --modes low_latency,ultra_low_latency --repeat 2 \
-    2>&1 | grep -E "offline|step p50"
-else
-  echo "(skipped: no demo WAV; generate one with scripts/make_demo_audio.py)"
-fi
-
 cat <<'EOF'
 
 == Done. Start the backend (keep it bound to localhost; reach it over SSH):

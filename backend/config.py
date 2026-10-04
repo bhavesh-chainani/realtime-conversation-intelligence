@@ -81,22 +81,9 @@ SUGGESTION_TIMEOUT_SECONDS = float(
 )
 SUGGESTION_MAX_TOKENS = int((os.getenv("SUGGESTION_MAX_TOKENS") or "900").strip())
 
-# Scripted live demo (script-guided diarisation, warm cache, prewarm endpoints)
-DEMO_MODE = (os.getenv("DEMO_MODE") or "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-DEMO_SCRIPTS_DIR = pathlib.Path(
-    os.getenv("DEMO_SCRIPTS_DIR") or (_repo_root / "demo" / "scripts")
-)
-DEMO_CACHE_DIR = pathlib.Path(
-    os.getenv("DEMO_CACHE_DIR") or (_repo_root / "data" / "demo_cache")
-)
 # single = one merged LLM call (fast); router = router agent + suggestion agent.
 SUGGESTION_PIPELINE = (
-    (os.getenv("SUGGESTION_PIPELINE") or ("single" if DEMO_MODE else "router"))
+    (os.getenv("SUGGESTION_PIPELINE") or "router")
     .strip()
     .lower()
 )
@@ -119,8 +106,6 @@ ASSEMBLYAI_STREAM_PARAMS = (
     if isinstance(_raw_stream_params, dict)
     else {}
 )
-# Speech model used for scripted demo sessions; `prompt` (STT context) requires a u3 Pro model.
-DEMO_SPEECH_MODEL = (os.getenv("DEMO_SPEECH_MODEL") or "u3-rt-pro").strip()
 
 # Speaker diarisation. "assemblyai": the browser streams straight to AssemblyAI and uses its speaker
 # labels. "nemotron": the browser streams to the backend relay (/ws/stt), which sends the audio to

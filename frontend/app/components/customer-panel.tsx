@@ -13,8 +13,6 @@ import {
 type CustomerPanelProps = {
   customerData: CustomerData;
   fieldSources: Partial<Record<CustomerDataField, FieldSource>>;
-  /** Per-field source tags and lookup status badge. */
-  techView: boolean;
   /** Case IDs cited by the current suggestion. */
   citedIds: Set<string>;
   onCustomerDataChange: (field: CustomerDataField, value: string) => void;
@@ -56,23 +54,16 @@ const HISTORY_TONES: Record<CustomerHistoryStatus, string> = {
 function FieldLabel({
   htmlFor,
   source,
-  showSource,
   children,
 }: {
   htmlFor: string;
   source?: FieldSource;
-  showSource: boolean;
   children: ReactNode;
 }) {
   return (
     <label className="field-label field-label--with-source" htmlFor={htmlFor}>
       <span>{children}</span>
-      {source && showSource ? <span className={`source-tag source-tag--${source}`}>{SOURCE_LABELS[source]}</span> : null}
-      {source === "records" && !showSource ? (
-        <span className="verified-tick" title="Verified from case records">
-          ✓
-        </span>
-      ) : null}
+      {source ? <span className={`source-tag source-tag--${source}`}>{SOURCE_LABELS[source]}</span> : null}
     </label>
   );
 }
@@ -80,7 +71,6 @@ function FieldLabel({
 export function CustomerPanel({
   customerData,
   fieldSources,
-  techView,
   citedIds,
   onCustomerDataChange,
   onLookup,
@@ -103,7 +93,6 @@ export function CustomerPanel({
         : customerHistoryMessage || "No customer history information is available yet.";
   const showCases = customerHistoryStatus === "ok" && customerHistoryCases.length > 0;
   const nameOnlyMatch = historyMeta?.matchedOn === "name";
-  const verified = Object.values(fieldSources).includes("records");
 
   let standing: { tone: string; text: string } | null = null;
   if (historyMeta && showCases) {
@@ -122,13 +111,10 @@ export function CustomerPanel({
         <h2 className="panel-title">Caller</h2>
         {standing ? <span className={`standing standing--${standing.tone}`}>{standing.text}</span> : null}
       </div>
-      {verified && !techView ? (
-        <div className="caller-card__verified">✓ Verified from case records (NRIC match)</div>
-      ) : null}
 
       <div className="field-grid">
         <div className="field-group">
-          <FieldLabel htmlFor="cust-name" source={fieldSources.name} showSource={techView}>
+          <FieldLabel htmlFor="cust-name" source={fieldSources.name}>
             Name
           </FieldLabel>
           <input
@@ -143,7 +129,7 @@ export function CustomerPanel({
         </div>
 
         <div className="field-group">
-          <FieldLabel htmlFor="cust-id" source={fieldSources.nric_worker_permit_id} showSource={techView}>
+          <FieldLabel htmlFor="cust-id" source={fieldSources.nric_worker_permit_id}>
             NRIC / FIN
           </FieldLabel>
           <input
@@ -159,7 +145,7 @@ export function CustomerPanel({
       </div>
 
       <div className="field-group">
-        <FieldLabel htmlFor="cust-address" source={fieldSources.address} showSource={techView}>
+        <FieldLabel htmlFor="cust-address" source={fieldSources.address}>
           Address
         </FieldLabel>
         <input
@@ -174,7 +160,7 @@ export function CustomerPanel({
       </div>
 
       <div className="field-group">
-        <FieldLabel htmlFor="cust-purpose" source={fieldSources.purpose_of_call} showSource={techView}>
+        <FieldLabel htmlFor="cust-purpose" source={fieldSources.purpose_of_call}>
           Purpose of call
         </FieldLabel>
         <textarea
@@ -191,9 +177,7 @@ export function CustomerPanel({
         <div className="history-card__header">
           <div className="history-card__title">Prior cases</div>
           <div className="history-card__actions">
-            {techView ? (
-              <span className={`status-badge status-badge--${historyTone}`}>{historyBadge}</span>
-            ) : null}
+            <span className={`status-badge status-badge--${historyTone}`}>{historyBadge}</span>
             <button
               type="button"
               className="btn btn--ghost btn--sm"

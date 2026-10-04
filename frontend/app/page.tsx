@@ -3,25 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CustomerPanel } from "./components/customer-panel";
-import { DemoBar } from "./components/demo-bar";
 import { SessionHeader } from "./components/session-header";
 import { SuggestionsPanel } from "./components/suggestions-panel";
 import { TranscriptPanel } from "./components/transcript-panel";
 import { WrapupCard } from "./components/wrapup-card";
-import { createAutopilot, type Autopilot } from "./lib/autopilot.ts";
 import { nextLookup } from "./lib/lookup-guard.ts";
 import { extractIntroName, extractNric } from "./lib/quick-entities.ts";
-import {
-  alignTurn,
-  deriveLabelMap,
-  initialAlignState,
-  opposite,
-  relabelDiarizedTurns,
-  skippedLineIds,
-  type AlignSegment,
-  type AlignState,
-  type ScriptRole,
-} from "./lib/script-align.ts";
 import {
   normalizeSpeakerLabel,
   parsePendingTurn,
@@ -34,20 +21,14 @@ import {
 import { areSimilar } from "./lib/text-normalize.ts";
 import {
   isOpenCaseStatus,
-  type AutopilotState,
-  type CacheStatus,
   type CustomerData,
   type CustomerDataField,
   type CustomerHistoryCase,
   type CustomerHistoryStatus,
-  type DemoScenario,
-  type DemoScenarioSummary,
   type FieldSource,
   type HistoryMeta,
-  type InputMode,
   type Moment,
   type MomentKind,
-  type Preflight,
   type SpeakerRole,
   type Suggestion,
   type SuggestionMeta,
@@ -56,7 +37,8 @@ import {
   type WrapupState,
 } from "./lib/types.ts";
 
-type SpeakerRoleMap = Record<string, ScriptRole>;
+type KnownRole = "staff" | "customer";
+type SpeakerRoleMap = Record<string, KnownRole>;
 
 type FinalTurnInput = {
   text: string;
@@ -67,21 +49,14 @@ type FinalTurnInput = {
   segmentIndex?: number;
   /** Relay turns arrive after the next speaker's live text has started: leave it on screen. */
   keepLive?: boolean;
-  source: "mic" | "autopilot";
 };
-
-type CachedStep = { suggestions: Suggestion[] };
 
 /** Customer-turn work waits this long so a split second fragment can merge first. */
 const SUGGESTION_DEBOUNCE_MS = 250;
-/** If the live suggestion hasn't landed this long after the turn ended, show the prepared one. */
-const CACHE_RACE_MS = 1300;
 /** Max time a suggestion request waits for an in-flight history lookup. */
 const LOOKUP_WAIT_MS = 700;
-const PREWARM_INTERVAL_MS = 45_000;
 /** Streaming tokens are valid for 300 s; keep a spare one fresher than this for instant Start/Resume. */
 const STT_TOKEN_MAX_AGE_MS = 240_000;
-const STT_TOKEN_REFRESH_MS = 210_000;
 const TRANSCRIPT_WINDOW_TURNS = 16;
 /** Operators get one focused suggestion at a time. */
 const MAX_SUGGESTIONS = 1;
@@ -175,8 +150,8 @@ function resolveSpeakerRole(
   if (existing) return { role: existing, map };
 
   const assigned = new Set(Object.values(map));
-  const firstRole: ScriptRole = nextVoiceIsStaff ? "staff" : "customer";
-  const secondRole: ScriptRole = firstRole === "staff" ? "customer" : "staff";
+  const firstRole: KnownRole = nextVoiceIsStaff ? "staff" : "customer";
+  const secondRole: KnownRole = firstRole === "staff" ? "customer" : "staff";
 
   const nextMap = { ...map };
   if (!assigned.has(firstRole)) {
@@ -222,24 +197,6 @@ export default function Page() {
   const [speakerRoleMap, setSpeakerRoleMap] = useState<SpeakerRoleMap>({});
   const [nextVoiceIsStaff, setNextVoiceIsStaff] = useState(true);
 
-  // Demo mode
-  const [demoEnabled, setDemoEnabled] = useState(false);
-  const [scenarios, setScenarios] = useState<DemoScenarioSummary[] | null>(null);
-  const [scenarioId, setScenarioId] = useState<string>("");
-  const [scenario, setScenario] = useState<DemoScenario | null>(null);
-  const [inputMode, setInputMode] = useState<InputMode>("live");
-  const [autopilotState, setAutopilotState] = useState<AutopilotState>("idle");
-  const [speed, setSpeed] = useState(1);
-  const [stepMode, setStepMode] = useState(false);
-  const [cursor, setCursor] = useState(0);
-  const [skippedLines, setSkippedLines] = useState<string[]>([]);
-  const [cacheStatus, setCacheStatus] = useState<CacheStatus | null>(null);
-  const [isBuildingCache, setIsBuildingCache] = useState(false);
-  const [preflight, setPreflight] = useState<Preflight | null>(null);
-  const [isCheckingPreflight, setIsCheckingPreflight] = useState(false);
-  const [techView, setTechView] = useState(false);
-  const [dockOpen, setDockOpen] = useState(false);
-
   // Call presentation
   const [moments, setMoments] = useState<Moment[]>([]);
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
@@ -257,13 +214,11 @@ export default function Page() {
   const speakerRoleMapRef = useRef<SpeakerRoleMap>({});
   const nextVoiceIsStaffRef = useRef(true);
   const transcriptListRef = useRef<HTMLDivElement>(null);
-  const debugRef = useRef(false);
 
   // Conversation state mirrored in refs so async handlers never read stale values.
   const turnsRef = useRef<Turn[]>([]);
-  const alignStateRef = useRef<AlignState>(initialAlignState());
   /** State before the latest final, so a re-sent (formatted) version can replace it. */
-  const lastFinalSnapshotRef = useRef<{ key: string; turns: Turn[]; align: AlignState } | null>(null);
+  const lastFinalSnapshotRef = useRef<{ key: string; turns: Turn[] } | null>(null);
   const customerDataRef = useRef<CustomerData>(EMPTY_CUSTOMER);
   const fieldSourcesRef = useRef<Partial<Record<CustomerDataField, FieldSource>>>({});
   const historyCasesRef = useRef<CustomerHistoryCase[]>([]);
@@ -279,37 +234,20 @@ export default function Page() {
   const extractReqIdRef = useRef(0);
   const lastCustomerDataExtractRef = useRef("");
 
-  const scenarioRef = useRef<DemoScenario | null>(null);
-  const cacheStepsRef = useRef<Record<string, CachedStep>>({});
-  const autopilotRef = useRef<Autopilot | null>(null);
-  const speedRef = useRef(1);
-  const preflightReqIdRef = useRef(0);
   const momentKeysRef = useRef<Set<string>>(new Set());
   const micTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wrapupReqIdRef = useRef(0);
   const callEndedRef = useRef(false);
   const lastPartialLabelRef = useRef<string | null>(null);
   const pendingTurnsRef = useRef<PendingTurn[]>([]);
-  const pauseToggleRef = useRef<() => void>(() => {});
   const sttDropCountRef = useRef(0);
-  const sttTokenRef = useRef<{ key: string; payload: Record<string, unknown>; fetchedAt: number } | null>(null);
-  const stepModeRef = useRef(false);
+  const sttTokenRef = useRef<{ payload: Record<string, unknown>; fetchedAt: number } | null>(null);
 
   useEffect(() => {
     const el = transcriptListRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [turns, live, pendingTurns]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    debugRef.current = params.get("debug") === "1";
-    setDemoEnabled(process.env.NEXT_PUBLIC_DEMO_MODE === "true" || params.get("demo") === "1");
-    try {
-      setTechView(localStorage.getItem("DEMO_TECH_VIEW") === "1");
-    } catch {}
-  }, []);
 
   const transcriptText = useMemo(() => formatLabeledTranscript(turns), [turns]);
   const hasTranscript = transcriptText.trim().length >= 10;
@@ -399,14 +337,8 @@ export default function Page() {
   };
 
   // ---------------------------------------------------------------------------
-  // Suggestions (live call raced against the prepared demo cache)
+  // Suggestions
   // ---------------------------------------------------------------------------
-
-  const cachedStepFor = (turn: Turn): CachedStep | null => {
-    if (!scenarioRef.current || turn.roleSource !== "script" || turn.alignConfidence !== "high") return null;
-    if (!turn.scriptLineId) return null;
-    return cacheStepsRef.current[turn.scriptLineId] ?? null;
-  };
 
   const fetchSuggestions = async (turn: Turn) => {
     const context = formatTranscriptWindow(turnsRef.current);
@@ -420,23 +352,6 @@ export default function Page() {
     const cases = historyCasesRef.current;
     const profile = profilePayload();
     lastSuggestionCasesKeyRef.current = casesKey(historyMatchRef.current, cases);
-
-    const cached = cachedStepFor(turn);
-    let shown: "none" | "instant" | "live" = "none";
-    const showCached = () => {
-      if (!cached || shown !== "none" || reqId !== suggestReqIdRef.current) return;
-      shown = "instant";
-      const prepared = cached.suggestions.slice(0, MAX_SUGGESTIONS);
-      setSuggestions(prepared);
-      setSuggestionMeta({
-        origin: "instant",
-        latencyMs: performance.now() - turn.committedAt,
-      });
-      noteCitations(prepared, turn.id);
-    };
-    const raceTimer = cached
-      ? setTimeout(showCached, Math.max(0, CACHE_RACE_MS - (performance.now() - turn.committedAt)))
-      : null;
 
     setIsFetchingSuggestions(true);
     try {
@@ -462,20 +377,14 @@ export default function Page() {
         : [];
       const timings = (data.timings || {}) as { llm_ms?: number; model?: string };
       if (data.fallback) {
-        // Prefer a prepared, scenario-specific card over generic fallback text.
-        if (cached) showCached();
-        else if (shown === "none" && list.length) {
+        if (list.length) {
           setSuggestions(list);
           setSuggestionMeta({ origin: "fallback", latencyMs: performance.now() - turn.committedAt });
         }
         return;
       }
-      if (list.length === 0) {
-        // Router chose not to suggest: keep whatever is on screen.
-        showCached();
-        return;
-      }
-      shown = "live";
+      // The agent chose not to suggest: keep whatever is on screen.
+      if (list.length === 0) return;
       setSuggestions(list);
       setSuggestionMeta({
         origin: "live",
@@ -487,9 +396,7 @@ export default function Page() {
     } catch (err) {
       if (controller.signal.aborted) return;
       console.error("[Frontend] Failed to fetch suggestions:", err);
-      showCached();
     } finally {
-      if (raceTimer) clearTimeout(raceTimer);
       if (reqId === suggestReqIdRef.current) setIsFetchingSuggestions(false);
     }
   };
@@ -651,7 +558,7 @@ export default function Page() {
   };
 
   // ---------------------------------------------------------------------------
-  // Turn ingestion (shared by microphone and autopilot)
+  // Turn ingestion
   // ---------------------------------------------------------------------------
 
   /** Everything that should happen when the customer finishes speaking. */
@@ -683,12 +590,10 @@ export default function Page() {
     }, SUGGESTION_DEBOUNCE_MS);
   };
 
-  const labelRoleFor = (label: string | null): ScriptRole | null => {
+  const labelRoleFor = (label: string | null): KnownRole | null => {
     if (!label) return null;
     const mapped = speakerRoleMapRef.current[label];
     if (mapped) return mapped;
-    // With a script, unseen labels are mapped by alignment votes instead of the toggle.
-    if (scenarioRef.current) return null;
     const resolved = resolveSpeakerRole(label, speakerRoleMapRef.current, nextVoiceIsStaffRef.current);
     if (resolved.map !== speakerRoleMapRef.current) setRoleMap(resolved.map);
     return resolved.role === "unknown" ? null : resolved.role;
@@ -699,14 +604,12 @@ export default function Page() {
     setLive(trimmed);
     liveRef.current = trimmed;
     lastPartialLabelRef.current = speakerLabel;
-    const expected = scenarioRef.current?.lines[alignStateRef.current.cursor]?.role;
-    setLiveRole(expected ?? labelRoleFor(speakerLabel) ?? "unknown");
+    setLiveRole(labelRoleFor(speakerLabel) ?? "unknown");
   };
 
   const ingestSpeechStart = () => {
     setSpeaking(true);
-    const expected = scenarioRef.current?.lines[alignStateRef.current.cursor]?.role;
-    if (!liveRef.current) setLiveRole(expected ?? "unknown");
+    if (!liveRef.current) setLiveRole("unknown");
   };
 
   const setPending = (next: PendingTurn[]) => {
@@ -727,7 +630,7 @@ export default function Page() {
   const ingestRelayTurn = (turnOrder: number | undefined, segments: RelaySegment[]) => {
     setPending(pendingTurnsRef.current.filter((p) => p.turnOrder !== turnOrder));
     segments.forEach((seg, segmentIndex) =>
-      ingestFinalTurn({ ...seg, turnOrder, segmentIndex, keepLive: true, source: "mic" })
+      ingestFinalTurn({ ...seg, turnOrder, segmentIndex, keepLive: true })
     );
   };
 
@@ -743,7 +646,6 @@ export default function Page() {
 
     // A re-sent version of the latest turn (formatted text, same turn_order) replaces it.
     let baseTurns = turnsRef.current;
-    let baseAlign = alignStateRef.current;
     const last = baseTurns[baseTurns.length - 1];
     const snapshot = lastFinalSnapshotRef.current;
     const orderKey =
@@ -751,100 +653,29 @@ export default function Page() {
     const isResend =
       !!snapshot &&
       !!last &&
-      (orderKey !== undefined
-        ? snapshot.key === orderKey
-        : input.source === "mic" && last.roleSource !== "manual" && areSimilar(text, last.text));
+      (orderKey !== undefined ? snapshot.key === orderKey : last.roleSource !== "manual" && areSimilar(text, last.text));
     if (isResend && snapshot) {
       baseTurns = snapshot.turns;
-      baseAlign = snapshot.align;
     } else {
-      lastFinalSnapshotRef.current = {
-        key: orderKey ?? `turn:${baseTurns.length}`,
-        turns: baseTurns,
-        align: baseAlign,
-      };
+      lastFinalSnapshotRef.current = { key: orderKey ?? `turn:${baseTurns.length}`, turns: baseTurns };
     }
 
-    const prevTurn = [...baseTurns].reverse().find((t) => t.role !== "unknown");
-    const prevRole = prevTurn ? (prevTurn.role as ScriptRole) : null;
-    const script = scenarioRef.current;
-
-    let segments: AlignSegment[];
-    let nextAlign = baseAlign;
-    if (script) {
-      const res = alignTurn(script.lines, baseAlign, {
-        text,
-        speakerLabel: input.speakerLabel,
-        wordLabels: input.wordLabels,
-        labelRole: labelRoleFor,
-        prevRole,
-      });
-      segments = res.segments;
-      nextAlign = res.state;
-    } else {
-      segments = [
-        {
-          text,
-          role: labelRoleFor(input.speakerLabel),
-          source: "diarization",
-          lineId: null,
-          score: 0,
-          confidence: "none",
-          speakerLabel: input.speakerLabel,
-        },
-      ];
-    }
-
-    const committedAt = performance.now();
-    const newTurns: Turn[] = segments.map((seg) => ({
+    const turn: Turn = {
       id: newTurnId(),
-      text: seg.text,
-      speakerLabel: seg.speakerLabel,
-      role: seg.role ?? "unknown",
-      roleSource: seg.source,
-      scriptLineId: seg.lineId ?? undefined,
-      alignScore: seg.lineId ? seg.score : undefined,
-      alignConfidence: seg.confidence,
+      text,
+      speakerLabel: input.speakerLabel,
+      role: labelRoleFor(input.speakerLabel) ?? "unknown",
+      roleSource: "diarization",
       turnOrder: input.turnOrder,
-      committedAt,
-    }));
+      committedAt: performance.now(),
+    };
+    commitTurns([...baseTurns, turn]);
 
-    let allTurns = [...baseTurns, ...newTurns];
-    if (script) {
-      const corrected = deriveLabelMap(nextAlign.labelVotes, speakerRoleMapRef.current);
-      if (corrected) {
-        setRoleMap(corrected);
-        allTurns = relabelDiarizedTurns(allTurns, corrected);
-      }
-      alignStateRef.current = nextAlign;
-      setCursor(nextAlign.cursor);
-      setSkippedLines(skippedLineIds(script.lines, nextAlign));
-    }
-    commitTurns(allTurns);
-
-    if (debugRef.current) {
-      console.table(
-        segments.map((s) => ({
-          text: s.text.slice(0, 60),
-          role: s.role,
-          source: s.source,
-          line: s.lineId,
-          score: s.score.toFixed(2),
-          confidence: s.confidence,
-          label: s.speakerLabel,
-          cursor: nextAlign.cursor,
-        }))
-      );
-    }
-
-    // Without a script, unlabelled turns may be the customer too, so they also trigger guidance.
-    const lastCustomer = [...newTurns]
-      .reverse()
-      .find((t) => t.role === "customer" || (!script && t.role === "unknown"));
-    if (lastCustomer) handleCustomerTurn(lastCustomer);
+    // Unlabelled turns may be the customer too, so they also trigger guidance.
+    if (turn.role !== "staff") handleCustomerTurn(turn);
   };
 
-  // Long-lived callbacks (WebSocket, autopilot timers) call through this ref to the latest closures.
+  // Long-lived callbacks (WebSocket) call through this ref to the latest closures.
   /** The STT socket dropped or never connected: say so, instead of silently going quiet. */
   const notifySttDrop = () => {
     sttDropCountRef.current += 1;
@@ -863,7 +694,7 @@ export default function Page() {
   const swapSpeakerRoles = useCallback(() => {
     const next: SpeakerRoleMap = {};
     for (const [label, role] of Object.entries(speakerRoleMapRef.current)) {
-      next[label] = opposite(role);
+      next[label] = role === "staff" ? "customer" : "staff";
     }
     setRoleMap(next);
     commitTurns(
@@ -887,27 +718,13 @@ export default function Page() {
     setNextVoiceIsStaff(staff);
   }, []);
 
-  /** Staff correction of one turn; also counts as strong evidence for its diarization label. */
+  /** Staff correction of one turn. */
   const flipTurn = (turnId: string) => {
     const target = turnsRef.current.find((t) => t.id === turnId);
     if (!target) return;
-    const role: ScriptRole = target.role === "staff" ? "customer" : "staff";
+    const role: KnownRole = target.role === "staff" ? "customer" : "staff";
     const updated: Turn = { ...target, role, roleSource: "manual" };
-    let next = turnsRef.current.map((t) => (t.id === turnId ? updated : t));
-
-    if (target.speakerLabel) {
-      const align = alignStateRef.current;
-      const votes = { ...align.labelVotes };
-      const prev = votes[target.speakerLabel] ?? { staff: 0, customer: 0 };
-      votes[target.speakerLabel] = { ...prev, [role]: prev[role] + 2 };
-      alignStateRef.current = { ...align, labelVotes: votes };
-      const corrected = deriveLabelMap(votes, speakerRoleMapRef.current);
-      if (corrected) {
-        setRoleMap(corrected);
-        next = relabelDiarizedTurns(next, corrected);
-      }
-    }
-    commitTurns(next);
+    commitTurns(turnsRef.current.map((t) => (t.id === turnId ? updated : t)));
     if (role === "customer" && turnsRef.current[turnsRef.current.length - 1]?.id === turnId) {
       handleCustomerTurn(updated);
     }
@@ -972,11 +789,8 @@ export default function Page() {
     setIsConnecting(false);
   }
 
-  const sttTokenKey = () => scenarioRef.current?.id ?? "";
-
   async function fetchSttToken(): Promise<Record<string, unknown>> {
-    const key = sttTokenKey();
-    const res = await fetch(`${backendUrl}/assemblyai-token${key ? `?scenario=${encodeURIComponent(key)}` : ""}`);
+    const res = await fetch(`${backendUrl}/assemblyai-token`);
     if (!res.ok) throw new Error(`token status ${res.status}`);
     return (await res.json()) as Record<string, unknown>;
   }
@@ -984,10 +798,10 @@ export default function Page() {
   /** Keep a spare single-use token ready so Start/Resume skips a ~1 s round trip. */
   async function prefetchSttToken() {
     const cached = sttTokenRef.current;
-    if (cached && cached.key === sttTokenKey() && Date.now() - cached.fetchedAt < STT_TOKEN_MAX_AGE_MS) return;
+    if (cached && Date.now() - cached.fetchedAt < STT_TOKEN_MAX_AGE_MS) return;
     try {
       const payload = await fetchSttToken();
-      sttTokenRef.current = { key: sttTokenKey(), payload, fetchedAt: Date.now() };
+      sttTokenRef.current = { payload, fetchedAt: Date.now() };
     } catch {
       sttTokenRef.current = null;
     }
@@ -996,7 +810,7 @@ export default function Page() {
   async function takeSttToken(): Promise<Record<string, unknown>> {
     const cached = sttTokenRef.current;
     sttTokenRef.current = null;
-    if (cached && cached.key === sttTokenKey() && Date.now() - cached.fetchedAt < STT_TOKEN_MAX_AGE_MS) {
+    if (cached && Date.now() - cached.fetchedAt < STT_TOKEN_MAX_AGE_MS) {
       return cached.payload;
     }
     return fetchSttToken();
@@ -1004,7 +818,6 @@ export default function Page() {
 
   async function openWs() {
     closeWs();
-    stopAutopilot();
     startCall();
     setIsConnecting(true);
     const myAttempt = streamAttemptRef.current;
@@ -1012,14 +825,12 @@ export default function Page() {
     const tokenPromise = takeSttToken();
     tokenPromise.catch(() => {});
 
-    // A new stream may assign A/B differently: forget the old label map and votes.
+    // A new stream may assign A/B differently: forget the old label map.
     setRoleMap({});
-    alignStateRef.current = { ...alignStateRef.current, labelVotes: {} };
     nextVoiceIsStaffRef.current = true;
     setNextVoiceIsStaff(true);
     setLiveRole("unknown");
     lastFinalSnapshotRef.current = null;
-    if (demoEnabled) void prewarm();
 
     const media = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (myAttempt !== streamAttemptRef.current) {
@@ -1158,9 +969,9 @@ export default function Page() {
           return;
         }
         if (d.type === "Error" || d.error) {
-          // Fail loudly: a silent STT failure looks like a frozen demo.
+          // Fail loudly: a silent STT failure looks like a frozen call.
           console.error("[STT] Error", d);
-          alert(`Transcription error: ${String(d.error || "unknown")}\nSwitch to Autopilot to continue.`);
+          alert(`Transcription error: ${String(d.error || "unknown")}`);
           closeWs();
           return;
         }
@@ -1193,7 +1004,6 @@ export default function Page() {
             speakerLabel,
             wordLabels: extractWordLabels(d, text),
             turnOrder: typeof d.turn_order === "number" ? d.turn_order : undefined,
-            source: "mic",
           });
         } else {
           handlersRef.current.ingestPartial(text, speakerLabel);
@@ -1205,22 +1015,15 @@ export default function Page() {
   }
 
   // ---------------------------------------------------------------------------
-  // Demo controls
+  // Call controls
   // ---------------------------------------------------------------------------
 
-  async function prewarm() {
-    try {
-      await fetch(`${backendUrl}/demo/prewarm`, { method: "POST" });
-    } catch {}
-  }
-
-  /** Start (or resume) the call clock and get presenter controls out of the way. */
+  /** Start (or resume) the call clock. */
   function startCall() {
     setCallStartedAt((prev) => prev ?? Date.now());
     setCallEndedAt(null);
     callEndedRef.current = false;
     setWrapup({ status: "idle" });
-    setDockOpen(false);
   }
 
   /** Stop the mic without losing the sentence that was still being transcribed. */
@@ -1228,42 +1031,22 @@ export default function Page() {
     if (wsRef.current) {
       // Turns still waiting for speaker labels keep their provisional label.
       for (const turn of pendingTurnsRef.current) {
-        handlersRef.current.ingestFinalTurn({ text: turn.text, speakerLabel: turn.speakerLabel, source: "mic" });
+        handlersRef.current.ingestFinalTurn({ text: turn.text, speakerLabel: turn.speakerLabel });
       }
       const live = liveRef.current.trim();
       if (live) {
         handlersRef.current.ingestFinalTurn({
           text: live,
           speakerLabel: lastPartialLabelRef.current,
-          source: "mic",
         });
       }
     }
     closeWs();
   }
 
-  /** Put the call on hold: stop listening / playback but keep everything on screen. */
+  /** Put the call on hold: stop listening but keep everything on screen. */
   function pauseCall() {
-    if (autopilotState === "running" || autopilotState === "waiting") {
-      autopilotRef.current?.pause();
-      setAutopilotState("paused");
-    } else if (isListening) {
-      stopListening();
-    }
-  }
-
-  function resumeCall() {
-    if (inputMode === "autopilot" && scenarioRef.current) {
-      if (autopilotRef.current) {
-        startCall();
-        autopilotRef.current.start();
-        setAutopilotState("running");
-      } else {
-        startAutopilot();
-      }
-    } else {
-      void openWs();
-    }
+    if (isListening) stopListening();
   }
 
   /** Undo End call: back to the live view with the conversation intact (on hold). */
@@ -1277,7 +1060,6 @@ export default function Page() {
   }
 
   async function endCall() {
-    stopAutopilot();
     closeWs();
     if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
     suggestTimerRef.current = null;
@@ -1296,24 +1078,10 @@ export default function Page() {
     const started = performance.now();
     setWrapup({ status: "loading" });
 
-    // The prepared wrap-up only fits when the scripted call was (nearly) completed.
-    const script = scenarioRef.current;
-    const prepared =
-      script && alignStateRef.current.cursor >= script.lines.length - 1
-        ? (cacheStepsRef.current._wrapup as unknown as Wrapup | undefined)
-        : undefined;
-    let shown = false;
-    const show = (data: Wrapup, origin: "live" | "prepared") => {
-      if (reqId !== wrapupReqIdRef.current) return;
-      shown = true;
-      setWrapup({ status: "ready", data, origin, latencyMs: performance.now() - started });
+    const show = (data: Wrapup) => {
+      setWrapup({ status: "ready", data, latencyMs: performance.now() - started });
       emitMoment("wrapup", "wrapup", "Wrap-up notes drafted");
     };
-    const raceTimer = prepared
-      ? setTimeout(() => {
-          if (!shown) show(prepared, "prepared");
-        }, CACHE_RACE_MS)
-      : null;
 
     try {
       const cases = historyCasesRef.current;
@@ -1329,67 +1097,16 @@ export default function Page() {
       });
       const data = res.ok ? await res.json() : null;
       if (reqId !== wrapupReqIdRef.current) return;
-      if (data && !data.fallback && data.summary) show(data as Wrapup, "live");
-      else if (prepared && !shown) show(prepared, "prepared");
-      else if (!shown) setWrapup({ status: "error" });
+      if (data && !data.fallback && data.summary) show(data as Wrapup);
+      else setWrapup({ status: "error" });
     } catch (err) {
       console.error("[Frontend] Failed to draft wrap-up:", err);
       if (reqId !== wrapupReqIdRef.current) return;
-      if (prepared && !shown) show(prepared, "prepared");
-      else if (!shown) setWrapup({ status: "error" });
-    } finally {
-      if (raceTimer) clearTimeout(raceTimer);
+      setWrapup({ status: "error" });
     }
   }
 
-  const toggleTechView = () => {
-    setTechView((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("DEMO_TECH_VIEW", next ? "1" : "0");
-      } catch {}
-      return next;
-    });
-  };
-
-  function stopAutopilot() {
-    autopilotRef.current?.stop();
-    autopilotRef.current = null;
-    setAutopilotState("idle");
-  }
-
-  function startAutopilot() {
-    const script = scenarioRef.current;
-    if (!script) return;
-    closeWs();
-    autopilotRef.current?.stop();
-    lastFinalSnapshotRef.current = null;
-    const ap = createAutopilot(
-      script.lines,
-      alignStateRef.current.cursor,
-      {
-        onPartial: (_i, text) => handlersRef.current.ingestPartial(text, null),
-        onFinal: (i) =>
-          handlersRef.current.ingestFinalTurn({ text: script.lines[i].text, speakerLabel: null, source: "autopilot" }),
-        onWaiting: () => setAutopilotState("waiting"),
-        onDone: () => setAutopilotState("done"),
-      },
-      {
-        wpm: script.autopilot?.wpm ?? 185,
-        gapMs: script.autopilot?.gap_ms ?? [450, 850],
-        speed: speedRef.current,
-        stepMode: stepModeRef.current,
-      }
-    );
-    autopilotRef.current = ap;
-    startCall();
-    ap.start();
-    setAutopilotState("running");
-    void prewarm();
-  }
-
   const resetConversation = () => {
-    stopAutopilot();
     closeWs();
     if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
     suggestTimerRef.current = null;
@@ -1398,10 +1115,7 @@ export default function Page() {
     extractReqIdRef.current += 1;
 
     commitTurns([]);
-    alignStateRef.current = initialAlignState();
     lastFinalSnapshotRef.current = null;
-    setCursor(0);
-    setSkippedLines([]);
     setRoleMap({});
     nextVoiceIsStaffRef.current = true;
     setNextVoiceIsStaff(true);
@@ -1430,164 +1144,8 @@ export default function Page() {
     setWrapup({ status: "idle" });
   };
 
-  const loadCache = useCallback(
-    async (id: string) => {
-      try {
-        const res = await fetch(`${backendUrl}/demo/cache/${encodeURIComponent(id)}`);
-        if (!res.ok) return;
-        const body = await res.json();
-        cacheStepsRef.current = body.steps && typeof body.steps === "object" ? body.steps : {};
-        setCacheStatus({
-          built: Boolean(body.built),
-          fresh: Boolean(body.fresh),
-          steps: Number(body.steps ? Object.keys(body.steps).length : 0),
-          total: Number(body.total || 0),
-        });
-      } catch {}
-    },
-    [backendUrl]
-  );
-
-  const runPreflight = useCallback(
-    async (id: string) => {
-      // A slow earlier check (e.g. a cold LLM) must not overwrite a newer result.
-      const reqId = ++preflightReqIdRef.current;
-      setIsCheckingPreflight(true);
-      try {
-        const q = id ? `?scenario_id=${encodeURIComponent(id)}` : "";
-        const res = await fetch(`${backendUrl}/demo/preflight${q}`);
-        const body = res.ok ? await res.json() : null;
-        if (reqId === preflightReqIdRef.current) setPreflight(body);
-      } catch {
-        if (reqId === preflightReqIdRef.current) setPreflight(null);
-      } finally {
-        if (reqId === preflightReqIdRef.current) setIsCheckingPreflight(false);
-      }
-    },
-    [backendUrl]
-  );
-
-  const buildCache = async () => {
-    if (!scenarioId) return;
-    setIsBuildingCache(true);
-    try {
-      await fetch(`${backendUrl}/demo/cache/${encodeURIComponent(scenarioId)}/build`, {
-        method: "POST",
-      });
-      await loadCache(scenarioId);
-      await runPreflight(scenarioId);
-    } finally {
-      setIsBuildingCache(false);
-    }
-  };
-
-  // Load the scenario list once demo mode is on.
-  useEffect(() => {
-    if (!demoEnabled) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`${backendUrl}/demo/scenarios`);
-        if (!res.ok) return;
-        const list = (await res.json()) as DemoScenarioSummary[];
-        if (cancelled) return;
-        let remembered = "";
-        try {
-          remembered = localStorage.getItem("DEMO_SCENARIO") || "";
-        } catch {}
-        const initial = list.find((s) => s.id === remembered)?.id ?? list[0]?.id ?? "";
-        setScenarioId(initial);
-        setScenarios(list);
-      } catch {
-        console.warn("[Demo] Backend demo endpoints unavailable (is DEMO_MODE=true?)");
-        if (!cancelled) setScenarios([]);
-      }
-    })();
-    void prewarm();
-    return () => {
-      cancelled = true;
-    };
-  }, [demoEnabled, backendUrl]);
-
-  // Selecting a scenario loads its script + cache and starts a clean conversation.
-  useEffect(() => {
-    if (!demoEnabled || scenarios === null) return;
-    let cancelled = false;
-    try {
-      localStorage.setItem("DEMO_SCENARIO", scenarioId);
-    } catch {}
-    resetConversation();
-    if (!scenarioId) {
-      scenarioRef.current = null;
-      setScenario(null);
-      cacheStepsRef.current = {};
-      setCacheStatus(null);
-      setInputMode("live");
-      void runPreflight("");
-      return;
-    }
-    (async () => {
-      try {
-        const res = await fetch(`${backendUrl}/demo/scenarios/${encodeURIComponent(scenarioId)}`);
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as DemoScenario;
-        scenarioRef.current = data;
-        setScenario(data);
-      } catch {}
-      if (cancelled) return;
-      void prefetchSttToken();
-      await loadCache(scenarioId);
-      await runPreflight(scenarioId);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoEnabled, scenarios, scenarioId, backendUrl, loadCache, runPreflight]);
-
-  // Keep a fresh spare streaming token so Start/Resume connects quickly.
-  useEffect(() => {
-    if (!demoEnabled) return;
-    const timer = setInterval(() => void prefetchSttToken(), STT_TOKEN_REFRESH_MS);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoEnabled]);
-
-  // Keep LLM connections warm while a demo conversation is running.
-  const demoActive = isListening || autopilotState === "running" || autopilotState === "waiting";
-  useEffect(() => {
-    if (!demoEnabled || !demoActive) return;
-    const timer = setInterval(() => void prewarm(), PREWARM_INTERVAL_MS);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoEnabled, demoActive]);
-
-  // Presenter shortcuts: → next autopilot line, D presenter dock, T technical view.
-  useEffect(() => {
-    if (!demoEnabled) return;
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === "ArrowRight" && autopilotRef.current) {
-        e.preventDefault();
-        autopilotRef.current.next();
-        setAutopilotState("running");
-      } else if (e.key === "d" || e.key === "D") {
-        setDockOpen((open) => !open);
-      } else if (e.key === "t" || e.key === "T") {
-        toggleTechView();
-      } else if (e.key === "p" || e.key === "P") {
-        pauseToggleRef.current();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [demoEnabled]);
-
   useEffect(() => {
     return () => {
-      autopilotRef.current?.stop();
       if (suggestTimerRef.current) clearTimeout(suggestTimerRef.current);
     };
   }, []);
@@ -1620,16 +1178,7 @@ export default function Page() {
   const mappedCustomerLabel = Object.entries(speakerRoleMap).find(([, r]) => r === "customer")?.[0];
   const hasRoleMapping = Object.keys(speakerRoleMap).length > 0;
 
-  // Outside demo mode the workspace keeps showing all operational detail.
-  const showTech = !demoEnabled || techView;
-  const autopilotActive = autopilotState === "running" || autopilotState === "waiting";
-  const isLive = isListening || autopilotActive;
   const callActive = callStartedAt !== null && callEndedAt === null;
-  pauseToggleRef.current = () => {
-    if (!callActive) return;
-    if (isLive) pauseCall();
-    else resumeCall();
-  };
   const citedIds = useMemo(
     () => new Set(suggestions.flatMap((s) => s.linked_records || [])),
     [suggestions]
@@ -1638,23 +1187,21 @@ export default function Page() {
   return (
     <div className="shell shell--workspace">
       <SessionHeader
-        isLive={isLive}
+        isLive={isListening}
         isConnecting={isConnecting}
         callerName={customerData.name.trim() || null}
         startedAt={callStartedAt}
         endedAt={callEndedAt}
-        audioMode={isListening ? "mic" : autopilotActive ? "autopilot" : null}
         micLevel={micLevel}
         canEndCall={callActive && turns.length > 0}
         onEndCall={() => void endCall()}
-        canPause={callActive && isLive}
-        canResume={callActive && !isLive}
+        canPause={callActive && isListening}
+        canResume={callActive && !isListening}
         onPause={pauseCall}
-        onResume={resumeCall}
-        showSessionControls={!demoEnabled}
-        onStart={() => {
-          void openWs();
-        }}
+        onResume={() => void openWs()}
+        canStartNewCall={callEndedAt !== null}
+        onNewCall={resetConversation}
+        onStart={() => void openWs()}
         onStop={closeWs}
       />
 
@@ -1666,11 +1213,7 @@ export default function Page() {
           speaking={speaking}
           liveRole={liveRole}
           moments={moments}
-          techView={showTech}
-          status={
-            isListening ? "Listening" : autopilotActive ? "Playing script" : autopilotState === "paused" ? "Paused" : "Ready"
-          }
-          scriptGuided={Boolean(scenario)}
+          status={isListening ? "Listening" : "Ready"}
           nextVoiceIsStaff={nextVoiceIsStaff}
           hasRoleMapping={hasRoleMapping}
           mappedStaffLabel={mappedStaffLabel}
@@ -1686,7 +1229,6 @@ export default function Page() {
             <WrapupCard
               state={wrapup}
               cases={customerHistoryCases}
-              techView={showTech}
               onBackToCall={backToCall}
             />
           ) : (
@@ -1694,9 +1236,8 @@ export default function Page() {
               suggestions={suggestions}
               meta={suggestionMeta}
               cases={customerHistoryCases}
-              techView={showTech}
               hasTranscript={hasTranscript}
-              isLive={isLive}
+              isLive={isListening}
               isFetchingSuggestions={isFetchingSuggestions}
             />
           )}
@@ -1704,7 +1245,6 @@ export default function Page() {
           <CustomerPanel
             customerData={customerData}
             fieldSources={fieldSources}
-            techView={showTech}
             citedIds={citedIds}
             onCustomerDataChange={handleCustomerDataChange}
             onLookup={obtainCustomerInfo}
@@ -1717,59 +1257,6 @@ export default function Page() {
         </aside>
       </main>
 
-      {demoEnabled ? (
-        <DemoBar
-          open={dockOpen}
-          onToggleOpen={() => setDockOpen((o) => !o)}
-          techView={techView}
-          onToggleTechView={toggleTechView}
-          scenarios={scenarios ?? []}
-          scenarioId={scenarioId}
-          onScenarioChange={setScenarioId}
-          scenario={scenario}
-          inputMode={inputMode}
-          onInputModeChange={(mode) => {
-            if (mode === "live") stopAutopilot();
-            else closeWs();
-            setInputMode(mode);
-          }}
-          isListening={isListening}
-          autopilotState={autopilotState}
-          onStart={() => {
-            if (inputMode === "autopilot") startAutopilot();
-            else void openWs();
-          }}
-          onStop={pauseCall}
-          onNextLine={() => {
-            if (!autopilotRef.current) startAutopilot();
-            else {
-              autopilotRef.current.next();
-              setAutopilotState("running");
-            }
-          }}
-          onReset={resetConversation}
-          speed={speed}
-          onSpeedChange={(s) => {
-            speedRef.current = s;
-            setSpeed(s);
-            autopilotRef.current?.setSpeed(s);
-          }}
-          stepMode={stepMode}
-          onStepModeChange={(v) => {
-            stepModeRef.current = v;
-            setStepMode(v);
-            autopilotRef.current?.setStepMode(v);
-          }}
-          cursor={cursor}
-          skippedLines={skippedLines}
-          cacheStatus={cacheStatus}
-          isBuildingCache={isBuildingCache}
-          onBuildCache={() => void buildCache()}
-          preflight={preflight}
-          isCheckingPreflight={isCheckingPreflight}
-          onRunPreflight={() => void runPreflight(scenarioId)}
-        />
-      ) : null}
     </div>
   );
 }

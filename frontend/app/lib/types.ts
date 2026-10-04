@@ -1,7 +1,9 @@
 // Shared UI types for the operator workspace.
-import type { AlignConfidence, RoleSource, ScriptLine } from "./script-align.ts";
 
 export type SpeakerRole = "staff" | "customer" | "unknown";
+
+/** How a turn's speaker was decided: voice diarization, or corrected by staff. */
+export type RoleSource = "diarization" | "manual";
 
 export type Turn = {
   id: string;
@@ -9,9 +11,6 @@ export type Turn = {
   speakerLabel: string | null;
   role: SpeakerRole;
   roleSource: RoleSource;
-  scriptLineId?: string;
-  alignScore?: number;
-  alignConfidence?: AlignConfidence;
   turnOrder?: number;
   /** performance.now() when the turn was finalized; latency is measured from here. */
   committedAt: number;
@@ -31,7 +30,7 @@ export type Suggestion = {
 };
 
 export type SuggestionMeta = {
-  origin: "live" | "instant" | "fallback";
+  origin: "live" | "fallback";
   latencyMs: number | null;
   llmMs?: number;
   model?: string;
@@ -71,36 +70,6 @@ export type HistoryMeta = {
   matchedOn: string | null;
 };
 
-export type DemoScenarioSummary = { id: string; title: string };
-
-export type DemoScenario = DemoScenarioSummary & {
-  persona?: { name?: string; nric?: string; address?: string; employer?: string };
-  staff_name?: string;
-  autopilot?: { wpm?: number; gap_ms?: [number, number] };
-  lines: ScriptLine[];
-};
-
-export type CacheStatus = {
-  built: boolean;
-  fresh: boolean;
-  steps: number;
-  total: number;
-};
-
-export type PreflightCheck = { ok: boolean; ms?: number; error?: string; [key: string]: unknown };
-
-export type Preflight = {
-  ok: boolean;
-  llm: PreflightCheck;
-  db: PreflightCheck;
-  stt: PreflightCheck;
-  cache: PreflightCheck;
-  limits: PreflightCheck;
-};
-
-export type InputMode = "live" | "autopilot";
-export type AutopilotState = "idle" | "running" | "waiting" | "paused" | "done";
-
 const CLOSED_CASE_STATUSES = new Set(["resolved", "closed", "approved", "withdrawn", "completed"]);
 
 /** Mirrors backend prompt_loader.is_open_case_status. */
@@ -124,6 +93,5 @@ export type Wrapup = {
 export type WrapupState = {
   status: "idle" | "loading" | "ready" | "error";
   data?: Wrapup;
-  origin?: "live" | "prepared";
   latencyMs?: number;
 };

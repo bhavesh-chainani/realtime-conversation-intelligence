@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 from . import config as cfg
 from .assemblyai import StreamingTokenError, create_streaming_token, ssl_context, stt_session_config
-from .config import BACKEND_CORS_ORIGINS, DEMO_MODE
+from .config import BACKEND_CORS_ORIGINS
 from .call_summary import router as call_summary_router
 from .customer_data_extractor import router as customer_data_router
 from .customer_history import router as customer_history_router
@@ -26,20 +26,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    prewarm_task = None
     # Load the CA bundle now, not when the first call connects (can take seconds).
     tls_task = asyncio.create_task(ssl_context())
     if cfg.DIARIZATION_BACKEND == "nemotron":
         await asyncio.to_thread(nemotron.load_diarizer)
-    if DEMO_MODE:
-        from .demo_api import prewarm
-
-        # Background so startup isn't blocked; opens LLM keep-alive connections early.
-        prewarm_task = asyncio.create_task(prewarm())
     yield
     tls_task.cancel()
-    if prewarm_task and not prewarm_task.done():
-        prewarm_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -55,10 +47,6 @@ app.include_router(call_summary_router)
 app.include_router(customer_data_router)
 app.include_router(customer_history_router)
 app.include_router(stt_relay_router)
-if DEMO_MODE:
-    from .demo_api import router as demo_router
-
-    app.include_router(demo_router)
 
 
 @app.get("/health")
@@ -97,22 +85,16 @@ def diarization_status() -> dict:
 
 
 @app.get("/assemblyai-token")
-async def assemblyai_token(
-scenario: str | None = None):
+async def assemblyai_token():
     """How the browser should start live transcription.
 
     With Nemotron diarisation loaded: a one-time ticket for the backend relay (/ws/stt).
     Otherwise: a temporary AssemblyAI token plus session settings for the direct path.
     """
-    from .demo_cache import ScenarioNotFound
-
-    try:
-        session = stt_session_config(scenario)
-    except ScenarioNotFound:
-        raise HTTPException(status_code=404, detail="Unknown scenario")
+    session = stt_session_config()
 
     if cfg.DIARIZATION_BACKEND == "nemotron" and nemotron.get_diarizer() is not None:
-        return {"relay": {"path": "/ws/stt", "ticket": issue_ticket(scenario)}, "diarization": "nemotron"}
+        return {"relay": {"path": "/ws/stt", "ticket": issue_ticket()}, "diarization": "nemotron"}
 
     try:
         token = await create_streaming_token()

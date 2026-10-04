@@ -1,7 +1,7 @@
 """Fast, deterministic entity extraction from transcript text (no LLM).
 
-Mirrors frontend/app/lib/quick-entities.ts so the browser and the demo cache
-builder agree on when an NRIC / name becomes known during a call.
+Mirrors frontend/app/lib/quick-entities.ts so the browser and the backend
+agree on when an NRIC / name becomes known during a call.
 """
 
 from __future__ import annotations
