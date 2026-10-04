@@ -1,7 +1,7 @@
 // Instant (no-LLM) identity capture from customer speech. Mirrors backend/quick_entities.py.
 import { collapseSpelledRuns, spokenTokens } from "./text-normalize.ts";
 
-// Checksum is intentionally not enforced: demo personas use dummy IDs.
+// Checksum is intentionally not enforced: the seeded demo DB uses dummy IDs.
 const NRIC_IN_TOKEN = /[stfgm]\d{7}[a-z]/;
 const NRIC_EXACT = /^[STFGM]\d{7}[A-Z]$/;
 const INTRO_NAME =

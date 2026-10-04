@@ -1,7 +1,7 @@
-import { Fragment, type RefObject } from "react";
+import type { RefObject } from "react";
 
 import type { PendingTurn } from "../lib/stt-relay.ts";
-import type { Moment, SpeakerRole, Turn } from "../lib/types.ts";
+import type { SpeakerRole, Turn } from "../lib/types.ts";
 
 type TranscriptPanelProps = {
   turns: Turn[];
@@ -10,8 +10,6 @@ type TranscriptPanelProps = {
   pending: PendingTurn[];
   /** Speech detected but little or no text yet (u3 models stream few partials). */
   speaking: boolean;
-  liveRole: SpeakerRole;
-  moments: Moment[];
   status: string;
   nextVoiceIsStaff: boolean;
   hasRoleMapping: boolean;
@@ -21,13 +19,6 @@ type TranscriptPanelProps = {
   onSwapSpeakerRoles: () => void;
   onFlipTurn: (turnId: string) => void;
   transcriptListRef: RefObject<HTMLDivElement>;
-};
-
-const MOMENT_ICONS: Record<Moment["kind"], string> = {
-  success: "✓",
-  warning: "!",
-  info: "i",
-  link: "↗",
 };
 
 function roleDisplayName(role: SpeakerRole): string {
@@ -48,24 +39,11 @@ function attribution(turn: Turn): string {
   }
 }
 
-function MomentChip({ moment }: { moment: Moment }) {
-  return (
-    <div className={`moment moment--${moment.kind}`} role="status">
-      <span className="moment__icon" aria-hidden>
-        {MOMENT_ICONS[moment.kind]}
-      </span>
-      {moment.text}
-    </div>
-  );
-}
-
 export function TranscriptPanel({
   turns,
   live,
   pending,
   speaking,
-  liveRole,
-  moments,
   status,
   nextVoiceIsStaff,
   hasRoleMapping,
@@ -77,12 +55,6 @@ export function TranscriptPanel({
   transcriptListRef,
 }: TranscriptPanelProps) {
   const mappedSpeakerCount = [mappedStaffLabel, mappedCustomerLabel].filter(Boolean).length;
-  const momentsByTurn = new Map<string | null, Moment[]>();
-  for (const m of moments) {
-    const list = momentsByTurn.get(m.afterTurnId) ?? [];
-    list.push(m);
-    momentsByTurn.set(m.afterTurnId, list);
-  }
 
   return (
     <section className="panel transcript-panel" aria-label="Live transcript workspace">
@@ -151,32 +123,24 @@ export function TranscriptPanel({
             <div className="empty-state empty-state--large">The conversation will appear here once the call starts.</div>
           ) : null}
 
-          {(momentsByTurn.get(null) ?? []).map((m) => (
-            <MomentChip key={m.id} moment={m} />
-          ))}
-
           {turns.map((turn) => (
-            <Fragment key={turn.id}>
-              <article
-                className={`turn-card turn-card--${turn.role} turn-card--clickable`}
-                onClick={() => onFlipTurn(turn.id)}
-                title="Click to switch Staff / Customer for this turn"
-              >
-                <div className="turn-card__meta">
-                  <span className={`role-badge role-badge--${turn.role}`}>{roleDisplayName(turn.role)}</span>
-                  {turn.speakerLabel ? (
-                    <span className="turn-card__speaker">Speaker {turn.speakerLabel}</span>
-                  ) : null}
-                  <span className={`turn-card__source turn-card__source--${turn.roleSource}`}>
-                    {attribution(turn)}
-                  </span>
-                </div>
-                <p className="turn-card__text">{turn.text}</p>
-              </article>
-              {(momentsByTurn.get(turn.id) ?? []).map((m) => (
-                <MomentChip key={m.id} moment={m} />
-              ))}
-            </Fragment>
+            <article
+              key={turn.id}
+              className={`turn-card turn-card--${turn.role} turn-card--clickable`}
+              onClick={() => onFlipTurn(turn.id)}
+              title="Click to switch Staff / Customer for this turn"
+            >
+              <div className="turn-card__meta">
+                <span className={`role-badge role-badge--${turn.role}`}>{roleDisplayName(turn.role)}</span>
+                {turn.speakerLabel ? (
+                  <span className="turn-card__speaker">Speaker {turn.speakerLabel}</span>
+                ) : null}
+                <span className={`turn-card__source turn-card__source--${turn.roleSource}`}>
+                  {attribution(turn)}
+                </span>
+              </div>
+              <p className="turn-card__text">{turn.text}</p>
+            </article>
           ))}
 
           {pending.map((turn, i) => (
@@ -190,9 +154,9 @@ export function TranscriptPanel({
           ))}
 
           {live || speaking ? (
-            <article className={`turn-card turn-card--live turn-card--${liveRole}`} aria-live="polite">
+            <article className="turn-card turn-card--live turn-card--unknown" aria-live="polite">
               <div className="turn-card__meta">
-                <span className={`role-badge role-badge--${liveRole}`}>{roleDisplayName(liveRole)}</span>
+                <span className="role-badge role-badge--unknown">…</span>
                 <span className="turn-card__speaker">speaking</span>
               </div>
               <p className="turn-card__text turn-card__text--live">

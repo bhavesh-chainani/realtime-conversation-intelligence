@@ -76,7 +76,3 @@ const CLOSED_CASE_STATUSES = new Set(["resolved", "closed", "approved", "withdra
 export function isOpenCaseStatus(status: string): boolean {
   return !CLOSED_CASE_STATUSES.has(status.trim().toLowerCase());
 }
-
-/** A narrated milestone shown inline in the transcript (identity verified, case linked, …). */
-export type MomentKind = "success" | "warning" | "info" | "link";
-export type Moment = { id: string; afterTurnId: string | null; kind: MomentKind; text: string };

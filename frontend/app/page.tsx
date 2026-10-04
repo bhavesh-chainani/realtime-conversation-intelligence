@@ -24,8 +24,6 @@ import {
   type CustomerHistoryStatus,
   type FieldSource,
   type HistoryMeta,
-  type Moment,
-  type MomentKind,
   type SpeakerRole,
   type Suggestion,
   type SuggestionMeta,
@@ -125,7 +123,6 @@ export default function Page() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [live, setLive] = useState("");
   const [speaking, setSpeaking] = useState(false);
-  const [liveRole, setLiveRole] = useState<SpeakerRole>("unknown");
   /** Finished turns the relay is still attributing to a speaker (Nemotron diarisation). */
   const [pendingTurns, setPendingTurns] = useState<PendingTurn[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -144,7 +141,8 @@ export default function Page() {
   const [nextVoiceIsStaff, setNextVoiceIsStaff] = useState(true);
 
   // Call presentation
-  const [moments, setMoments] = useState<Moment[]>([]);
+  /** The relay connection dropped mid-call; cleared when listening resumes. */
+  const [sttDropped, setSttDropped] = useState(false);
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
   const [callEndedAt, setCallEndedAt] = useState<number | null>(null);
   const [micLevel, setMicLevel] = useState(0);
@@ -177,11 +175,9 @@ export default function Page() {
   const extractReqIdRef = useRef(0);
   const lastCustomerDataExtractRef = useRef("");
 
-  const momentKeysRef = useRef<Set<string>>(new Set());
   const micTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callEndedRef = useRef(false);
   const pendingTurnsRef = useRef<PendingTurn[]>([]);
-  const sttDropCountRef = useRef(0);
 
   useEffect(() => {
     const el = transcriptListRef.current;
@@ -250,32 +246,6 @@ export default function Page() {
     return out;
   };
 
-  /** Narrate a milestone once, anchored after a transcript turn (default: the latest). */
-  const emitMoment = (key: string, kind: MomentKind, text: string, afterTurnId?: string | null) => {
-    if (momentKeysRef.current.has(key)) return;
-    momentKeysRef.current.add(key);
-    const anchor =
-      afterTurnId !== undefined ? afterTurnId : turnsRef.current[turnsRef.current.length - 1]?.id ?? null;
-    setMoments((prev) => [...prev, { id: key, afterTurnId: anchor, kind, text }]);
-  };
-
-  /** First time a suggestion cites a case, say so in the conversation. */
-  const noteCitations = (list: Suggestion[], turnId: string) => {
-    const byId = new Map(historyCasesRef.current.map((c) => [c.case_id, c]));
-    for (const s of list) {
-      for (const id of s.linked_records || []) {
-        const c = byId.get(id);
-        if (!c) continue;
-        emitMoment(
-          `cite:${id}`,
-          "link",
-          isOpenCaseStatus(c.status) ? `Linked to open case ${id}` : `Referenced past case ${id} · ${c.status}`,
-          turnId
-        );
-      }
-    }
-  };
-
   // ---------------------------------------------------------------------------
   // Suggestions
   // ---------------------------------------------------------------------------
@@ -332,7 +302,6 @@ export default function Page() {
         llmMs: timings.llm_ms,
         model: timings.model,
       });
-      noteCitations(list, turn.id);
     } catch (err) {
       if (controller.signal.aborted) return;
       console.error("[Frontend] Failed to fetch suggestions:", err);
@@ -397,21 +366,6 @@ export default function Page() {
       setCustomerHistoryStatus(normalizedStatus);
       setCustomerHistory(summary || message || "No customer history found.");
       setCustomerHistoryCases(cases);
-
-      const anchor = lastCustomerTurnRef.current?.id ?? null;
-      if (matchedOn === "name") {
-        emitMoment("match:name", "warning", "Possible match in records · verify NRIC", anchor);
-      } else if (matchedOn === "nric_worker_permit_id") {
-        emitMoment("match:verified", "success", "Identity verified · NRIC matches records", anchor);
-        emitMoment(
-          "returning",
-          "info",
-          `Returning customer · ${cases.length} prior case${cases.length === 1 ? "" : "s"}, ${openCount} open`,
-          anchor
-        );
-      } else if (normalizedStatus === "not_found" && args.nric_worker_permit_id) {
-        emitMoment("new-customer", "info", "New customer · no prior cases", anchor);
-      }
 
       setHistoryMeta(
         normalizedStatus === "ok"
@@ -548,7 +502,6 @@ export default function Page() {
 
   const ingestSpeechStart = () => {
     setSpeaking(true);
-    if (!liveRef.current) setLiveRole("unknown");
   };
 
   const setPending = (next: PendingTurn[]) => {
@@ -561,7 +514,6 @@ export default function Page() {
     setSpeaking(false);
     setLive("");
     liveRef.current = "";
-    setLiveRole("unknown");
     if (pending.text) setPending([...pendingTurnsRef.current, pending]);
   };
 
@@ -577,8 +529,7 @@ export default function Page() {
       setSpeaking(false);
       setLive("");
       liveRef.current = "";
-      setLiveRole("unknown");
-    }
+      }
     if (!text) return;
 
     const turn: Turn = {
@@ -599,8 +550,7 @@ export default function Page() {
   // Long-lived callbacks (WebSocket) call through this ref to the latest closures.
   /** The STT socket dropped or never connected: say so, instead of silently going quiet. */
   const notifySttDrop = () => {
-    sttDropCountRef.current += 1;
-    emitMoment(`stt-drop:${sttDropCountRef.current}`, "warning", "Transcription disconnected · press Resume");
+    setSttDropped(true);
     closeWs();
   };
 
@@ -623,9 +573,6 @@ export default function Page() {
         ...t,
         role: t.role === "staff" ? "customer" : t.role === "customer" ? "staff" : t.role,
       }))
-    );
-    setLiveRole((prev) =>
-      prev === "staff" ? "customer" : prev === "customer" ? "staff" : prev
     );
     setNextVoiceIsStaff((prev) => {
       const next = !prev;
@@ -705,7 +652,6 @@ export default function Page() {
     liveRef.current = "";
     setPending([]);
     setSpeaking(false);
-    setLiveRole("unknown");
     setIsListening(false);
     setIsConnecting(false);
   }
@@ -719,6 +665,7 @@ export default function Page() {
   async function openWs() {
     closeWs();
     startCall();
+    setSttDropped(false);
     setIsConnecting(true);
     const myAttempt = streamAttemptRef.current;
     // Session ticket and microphone in parallel.
@@ -729,7 +676,6 @@ export default function Page() {
     setRoleMap({});
     nextVoiceIsStaffRef.current = true;
     setNextVoiceIsStaff(true);
-    setLiveRole("unknown");
 
     const media = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (myAttempt !== streamAttemptRef.current) {
@@ -919,8 +865,7 @@ export default function Page() {
     lastSuggestionCasesKeyRef.current = "";
     lastCustomerDataExtractRef.current = "";
 
-    setMoments([]);
-    momentKeysRef.current = new Set();
+    setSttDropped(false);
     setCallStartedAt(null);
     setCallEndedAt(null);
     callEndedRef.current = false;
@@ -993,9 +938,7 @@ export default function Page() {
           live={live}
           pending={pendingTurns}
           speaking={speaking}
-          liveRole={liveRole}
-          moments={moments}
-          status={isListening ? "Listening" : "Ready"}
+          status={isListening ? "Listening" : sttDropped ? "Transcription disconnected · press Resume" : "Ready"}
           nextVoiceIsStaff={nextVoiceIsStaff}
           hasRoleMapping={hasRoleMapping}
           mappedStaffLabel={mappedStaffLabel}

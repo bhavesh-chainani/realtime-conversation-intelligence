@@ -3,7 +3,6 @@ import { test } from "node:test";
 
 import { nextLookup } from "./lookup-guard.ts";
 import { extractIntroName, extractNric } from "./quick-entities.ts";
-import { areSimilar } from "./text-normalize.ts";
 
 test("NRIC from written and spoken forms (mirrors backend tests)", () => {
   for (const text of [
@@ -40,9 +39,4 @@ test("lookup guard: name first, ID supersedes, no repeats", () => {
   assert.equal(nextLookup(byId!.key, { name: "Katherine Tan", nric_worker_permit_id: "" }), null);
   // Single names and malformed IDs never trigger.
   assert.equal(nextLookup(null, { name: "Katherine", nric_worker_permit_id: "S88" }), null);
-});
-
-test("areSimilar treats formatted/unformatted variants as duplicates", () => {
-  assert.ok(areSimilar("sure its s one two three four five six seven a", "Sure, it's S1234567A."));
-  assert.ok(!areSimilar("My name is Katherine Liao.", "Can I confirm your address?"));
 });

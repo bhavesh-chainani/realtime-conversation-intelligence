@@ -22,7 +22,7 @@ DIGIT_WORDS = {
 }
 REPEAT_WORDS = {"double": 2, "triple": 3}
 
-# Checksum is intentionally not enforced: demo personas use dummy IDs.
+# Checksum is intentionally not enforced: the seeded demo DB uses dummy IDs.
 NRIC_PATTERN = re.compile(r"[stfgm]\d{7}[a-z]")
 INTRO_NAME_PATTERN = re.compile(
     r"\b(?:[Mm]y name is|[Mm]y name's|[Tt]his is|I am|I'm)\s+"
