@@ -15,8 +15,8 @@ PGDATA = Path(__file__).resolve().parent.parent / "data" / "demo_pg"
 # (customer_id, name, contact_number, email). Phones are stored in mixed formats on purpose: the lookup
 # compares the last 8 digits, as a real case system will not be consistent either.
 CUSTOMERS = [
-    ("CUST-0001", "Katherine Liao", "+65 9123 4567", "katherine.liao@example.com"),
-    ("CUST-0002", "Rajesh Kumar", "8234 5678", "rajesh.kumar@example.com"),
+    ("CUST-0001", "Katherine Liao", "+65 9123 4567", "katherine.liao@gmail.com"),
+    ("CUST-0002", "Rajesh Kumar", "8234 5678", "rajesh.kumar@gmail.com"),
     ("CUST-0003", "Maria Santos", "+6593456789", "maria.santos@example.com"),
     ("CUST-0004", "David Tan", "9456-7890", "david.tan@example.com"),
     ("CUST-0005", "Nguyen Van An", "8567 8901", "nguyen.vanan@example.com"),

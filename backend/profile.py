@@ -61,11 +61,17 @@ class Profile:
     def missing(self) -> list[str]:
         return [f for f in FIELDS if not self.values[f]]
 
-    def suggestion_payload(self, record_match: str | None) -> dict[str, str]:
-        """Profile fields for the suggestion agent; `record_match` says how the DB record was matched."""
+    def suggestion_payload(
+        self, record_match: str | None, lookup_status: str | None = None
+    ) -> dict[str, str]:
+        """Profile fields for the suggestion agent. `record_match` says how the DB record was matched;
+        `lookup_status` where the history check stands (see customer_history.format_caller_card).
+        """
         out = {f: v for f, v in self.values.items() if v}
         if record_match:
             out["record_match"] = record_match
+        if lookup_status:
+            out["lookup_status"] = lookup_status
         return out
 
 

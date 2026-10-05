@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from backend.customer_history import customer_history_service, format_customer_record
+from backend.customer_history import (
+    customer_history_service,
+    format_caller_card,
+    format_customer_record,
+)
 
 
 class _FakeService:
@@ -184,7 +188,7 @@ def test_customer_record_names_how_it_was_matched():
     by_name = format_customer_record(
         {"name": "Katherine Liao", "record_match": "name"}, cases
     )
-    assert "NAME ONLY" in by_name and "contact number or email" in by_name
+    assert "NAME ONLY" in by_name and "ask for the caller's contact number" in by_name
 
 
 def test_name_only_match_does_not_reveal_contact_details(monkeypatch):
@@ -210,3 +214,34 @@ def test_name_only_match_does_not_reveal_contact_details(monkeypatch):
         "contact_number": None,
         "email": None,
     }
+
+
+def test_caller_card_lists_what_is_known_and_what_the_check_needs():
+    card = format_caller_card({})
+    assert "Name: not given | Contact number: not given" in card
+    assert "needs the caller's full name and contact number" in card
+
+    card = format_caller_card({"name": "Katherine", "lookup_status": "not_started"})
+    assert "Name: Katherine" in card and "needs the caller's contact number" in card
+
+    card = format_caller_card(
+        {"contact_number": "9123 45", "lookup_status": "not_started"}
+    )
+    assert "complete contact number" in card
+
+
+def test_caller_card_history_check_states():
+    def check(**profile):
+        return format_caller_card(profile).split("HISTORY CHECK: ", 1)[1]
+
+    assert check(lookup_status="pending").startswith("in progress")
+    assert "verified (matched on email)" in check(
+        lookup_status="verified", record_match="email"
+    )
+    assert "NAME ONLY" in check(lookup_status="name", name="Katherine Liao")
+    # Not found by phone: a new caller. Not found by name only: ask for a contact number.
+    assert "new caller" in check(lookup_status="not_found", contact_number="81112222")
+    assert "Ask for the caller's contact number" in check(
+        lookup_status="not_found", name="Katherine Liao"
+    )
+    assert "could not be checked" in check(lookup_status="unavailable")

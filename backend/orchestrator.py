@@ -70,6 +70,9 @@ class HistoryState(BaseModel):
     lookup_key: str | None = None
     match_strategy: str | None = None
     cases: list[CustomerCase] = []
+    status: str | None = (
+        None  # the client's history status: "loading", "not_found", "error", ...
+    )
 
 
 class AssistRequest(BaseModel):
@@ -81,6 +84,10 @@ class AssistRequest(BaseModel):
         True, description="False when re-suggesting after a manual lookup"
     )
     max_suggestions: int | None = None
+    previous_suggestions: list[str] = Field(
+        [],
+        description="What Staff currently see, so the agent can move on instead of repeating it",
+    )
 
 
 @dataclass(frozen=True)
@@ -150,6 +157,10 @@ class _AssistRun:
         )  # last identity looked up (or being looked up)
         self.match = history.match_strategy
         self.cases = [c.model_dump() for c in history.cases]
+        self.history_status = history.status
+        self.previous = [
+            s.strip()[:400] for s in req.previous_suggestions if s.strip()
+        ][:3]
         self.tasks: dict[asyncio.Task, str] = {}
         self.lookup_keys: dict[asyncio.Task, str] = {}
         self.lookups = 0
@@ -200,6 +211,7 @@ class _AssistRun:
             key = identity_key(values["contact_number"], values["email"]) or key
             self.lookup_key = key
         status = result.get("status") or "error"
+        self.history_status = status
         ok = status == "ok"
         self.match = result.get("match_strategy") if ok else None
         self.cases = _cases(result) if ok else []
@@ -224,6 +236,16 @@ class _AssistRun:
             events.append(_customer_event("records", accepted))
         return events
 
+    def lookup_status(self) -> str:
+        """Where the history check stands, as the suggestion agent should see it."""
+        if "lookup" in self.tasks.values() or self.history_status == "loading":
+            return "pending"
+        if self.match:
+            return "name" if self.match == "name" else "verified"
+        if self.history_status in ("error", "not_configured"):
+            return "unavailable"
+        return "not_found" if self.lookup_key else "not_started"
+
     # --- agents ---------------------------------------------------------------------------
 
     def start_suggest(self) -> dict[str, Any] | None:
@@ -240,8 +262,9 @@ class _AssistRun:
             self.deps.suggest(
                 context,
                 self.req.max_suggestions or cfg.SUGGESTION_MAX,
-                self.profile.suggestion_payload(self.match),
+                self.profile.suggestion_payload(self.match, self.lookup_status()),
                 list(self.cases),
+                list(self.previous),
             )
         )
         self.tasks[self.suggest_task] = "suggest"

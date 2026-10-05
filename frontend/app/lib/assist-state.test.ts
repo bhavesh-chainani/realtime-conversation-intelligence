@@ -109,8 +109,21 @@ test("request carries the profile, sources and last lookup", () => {
     turns: [{ role: "customer", text: "Hi" }],
     customer: { contact_number: "91234567" },
     sources: { contact_number: "heard" },
-    history: { lookup_key: "id:91234567", match_strategy: "contact_number", cases: OK_RESULT.cases },
+    history: { lookup_key: "id:91234567", match_strategy: "contact_number", cases: OK_RESULT.cases, status: "ok" },
+    previous_suggestions: [],
     extract: false,
     max_suggestions: 1,
   });
+});
+
+test("request carries the suggestion staff can see, so the agent does not repeat it", () => {
+  const s = send(streaming(), {
+    type: "suggestions",
+    round: 1,
+    suggestions: [{ topic: "Identify the caller", details: { possibleConversation: "May I have your name?" } }],
+    fallback: false,
+    timings: {},
+  });
+  assert.deepEqual(buildAssistRequest(s, [], true).previous_suggestions, ["May I have your name?"]);
+  assert.deepEqual(buildAssistRequest(streaming(), [], true).previous_suggestions, []);
 });

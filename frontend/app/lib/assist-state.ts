@@ -200,7 +200,12 @@ export function buildAssistRequest(state: AssistState, turns: Turn[], extract: b
       lookup_key: state.history.lookupKey,
       match_strategy: state.history.matchedOn,
       cases: state.history.cases,
+      status: state.history.status,
     },
+    // What Staff see now, so the agent moves on once it has been asked rather than repeating it.
+    previous_suggestions: state.suggestions
+      .map((s) => s.details?.possibleConversation || s.topic || "")
+      .filter((text) => text.trim()),
     extract,
     max_suggestions: MAX_SUGGESTIONS,
   };

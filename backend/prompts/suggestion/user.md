@@ -1,4 +1,9 @@
+{caller_card}
+
 {customer_record}
+
+SUGGESTION STAFF CAN SEE NOW (from the previous turn):
+{previous_suggestions}
 
 LIVE CALL TRANSCRIPT (most recent line last):
 {conversation_transcript}

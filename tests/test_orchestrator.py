@@ -73,10 +73,15 @@ class FakeSuggest:
         self.cancelled: list[int] = []
         self.gate = asyncio.Event()
 
-    async def __call__(self, transcript, max_suggestions, profile, cases):
+    async def __call__(self, transcript, max_suggestions, profile, cases, previous=()):
         round_ = len(self.calls) + 1
         self.calls.append(
-            {"transcript": transcript, "profile": profile, "cases": cases}
+            {
+                "transcript": transcript,
+                "profile": profile,
+                "cases": cases,
+                "previous": previous,
+            }
         )
         if round_ in self.block_rounds:
             try:
@@ -366,3 +371,70 @@ def test_endpoint_streams_ndjson(client):
         "patch": {"contact_number": "91234567"},
     }
     assert events[-1]["type"] == "done"
+
+
+def _status_seen(req: AssistRequest, lookup=None) -> str:
+    suggest = FakeSuggest()
+    run(req, deps(lookup, suggest=suggest))
+    return suggest.calls[0]["profile"]["lookup_status"]
+
+
+def test_suggestion_is_told_where_the_history_check_stands():
+    # Nothing to look up yet: the agent should steer towards name and contact number.
+    assert _status_seen(request("Customer: My salary was cut.")) == "not_started"
+    # Looked up on this turn.
+    assert (
+        _status_seen(
+            request("Customer: It's 9123 4567."),
+            FakeLookup(by_id={"91234567": PHONE_MATCH}),
+        )
+        == "verified"
+    )
+    assert _status_seen(request("Customer: It's 8111 2222.")) == "not_found"
+    assert (
+        _status_seen(
+            request("Customer: I'm Katherine Liao."),
+            FakeLookup(by_name={"Katherine Liao": NAME_MATCH}),
+        )
+        == "name"
+    )
+    assert (
+        _status_seen(
+            request("Customer: It's 9123 4567."), FakeLookup(error=RuntimeError("db"))
+        )
+        == "unavailable"
+    )
+    # Earlier turns' results, as the client reports them.
+    earlier = {"lookup_key": "id:81112222", "cases": []}
+    assert (
+        _status_seen(
+            request("Customer: Thanks.", history={**earlier, "status": "not_found"})
+        )
+        == "not_found"
+    )
+    assert (
+        _status_seen(
+            request("Customer: Thanks.", history={**earlier, "status": "error"})
+        )
+        == "unavailable"
+    )
+    assert (
+        _status_seen(
+            request(
+                "Customer: Thanks.", history={"lookup_key": None, "status": "loading"}
+            )
+        )
+        == "pending"
+    )
+
+
+def test_suggestion_sees_what_staff_can_see_now():
+    suggest = FakeSuggest()
+    run(
+        request(
+            "Customer: My salary was cut.",
+            previous_suggestions=["May I have your name?", "  ", "b", "c", "d"],
+        ),
+        deps(suggest=suggest),
+    )
+    assert suggest.calls[0]["previous"] == ["May I have your name?", "b", "c"]

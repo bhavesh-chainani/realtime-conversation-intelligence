@@ -36,9 +36,32 @@ class CustomerCase(BaseModel):
     summary: str | None = None
 
 
-NO_CUSTOMER_RECORD = (
-    "CUSTOMER RECORD: not yet retrieved. Do not mention or guess at prior cases."
+NO_CUSTOMER_RECORD = "CUSTOMER RECORD: none. Do not mention or guess at prior cases."
+
+CARD_FIELDS = (
+    ("name", "Name"),
+    ("contact_number", "Contact number"),
+    ("email", "Email"),
+    ("purpose_of_call", "Purpose of call"),
 )
+
+# What the suggestion agent is told about the history check, by orchestrator lookup status.
+HISTORY_CHECK = {
+    "pending": "in progress. Do not mention prior cases yet, and do not ask for more identity details.",
+    "verified": "done, verified (matched on {matched_on}). Do not ask for identity details again.",
+    "name": (
+        "possible match by NAME ONLY, not verified. Ask for the caller's contact number to confirm "
+        "before discussing any case details."
+    ),
+    "new_caller": (
+        "done, no prior cases found. Treat this as a new caller and do not ask for more identity details."
+    ),
+    "not_found_by_name": (
+        "no record under that name. Ask for the caller's contact number to check again "
+        "(the name may be recorded differently)."
+    ),
+    "unavailable": "the case system could not be checked. Carry on without history.",
+}
 
 MATCH_LABELS = {
     "contact_number": "contact number",
@@ -67,6 +90,38 @@ def verified_case_ids(
     }
 
 
+def format_caller_card(profile: dict[str, Any] | None) -> str:
+    """What Staff already know about the caller, and where the history check stands."""
+    profile = profile or {}
+    known = " | ".join(
+        f"{label}: {profile.get(key) or 'not given'}" for key, label in CARD_FIELDS
+    )
+    has_contact = bool(
+        normalize_phone(profile.get("contact_number"))
+        or normalize_email(profile.get("email"))
+    )
+    status = profile.get("lookup_status") or "not_started"
+    if status == "not_found":
+        status = "new_caller" if has_contact else "not_found_by_name"
+    if status == "not_started":
+        if profile.get("contact_number") and not has_contact:
+            needs = "a complete contact number (the one on the card looks incomplete)"
+        elif profile.get("name"):
+            needs = "contact number"
+        else:
+            needs = "full name and contact number"
+        check = f"not done yet. It needs the caller's {needs}."
+    else:
+        matched_on = MATCH_LABELS.get(profile.get("record_match"), "contact details")
+        check = HISTORY_CHECK.get(status, HISTORY_CHECK["unavailable"]).format(
+            matched_on=matched_on
+        )
+    return (
+        "CALLER CARD (details Staff already have; never ask for these again):\n"
+        f"{known}\nHISTORY CHECK: {check}"
+    )
+
+
 def format_customer_record(
     profile: dict[str, Any] | None, cases: list[dict[str, Any]] | None
 ) -> str:
@@ -90,7 +145,7 @@ def format_customer_record(
     if match == "name":
         header = (
             "CUSTOMER RECORD (possible match by NAME ONLY - identity NOT verified yet; "
-            "ask for the caller's contact number or email before discussing any case details):"
+            "ask for the caller's contact number before discussing any case details):"
         )
     else:
         matched_on = MATCH_LABELS.get(match, "contact details")

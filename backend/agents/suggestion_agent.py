@@ -1,8 +1,10 @@
 """Suggestion agent (the principal agent): reads the live transcript plus any customer record and
 suggests what Staff should say next, in one LLM round trip.
 
-The customer record (from the entity agent's DB lookup) is rendered into the prompt so suggestions
-can cite prior cases by ID; IDs that are not in the record are dropped.
+The prompt also gets the caller card (what Staff already know, and where the history check stands) and
+the suggestion Staff currently see, so it steers towards identifying the caller first and does not repeat
+itself. The customer record is rendered in so suggestions can cite prior cases by ID; IDs that are not
+in the record are dropped.
 """
 
 from __future__ import annotations
@@ -13,7 +15,11 @@ import time
 from typing import Any
 
 from .. import config as cfg
-from ..customer_history import format_customer_record, verified_case_ids
+from ..customer_history import (
+    format_caller_card,
+    format_customer_record,
+    verified_case_ids,
+)
 from ..llm import (
     get_async_llm_client,
     get_suggestion_model,
@@ -71,10 +77,12 @@ async def generate_suggestions(
     max_suggestions: int = 2,
     customer_profile: dict[str, Any] | None = None,
     customer_cases: list[dict[str, Any]] | None = None,
+    previous_suggestions: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return {suggestions, decision, timings}. Raises on LLM/parse failure."""
     max_suggestions = max(1, min(5, int(max_suggestions or 2)))
     customer_record = format_customer_record(customer_profile, customer_cases)
+    previous = "\n".join(f"- {s}" for s in previous_suggestions or []) or "none"
     known_case_ids = verified_case_ids(customer_profile, customer_cases)
 
     client = get_async_llm_client()
@@ -97,7 +105,9 @@ async def generate_suggestions(
                     "suggestion",
                     conversation_transcript=conversation_transcript,
                     max_suggestions=max_suggestions,
+                    caller_card=format_caller_card(customer_profile),
                     customer_record=customer_record,
+                    previous_suggestions=previous,
                 ),
             },
         ],
@@ -148,6 +158,7 @@ async def suggest_with_fallback(
     max_suggestions: int,
     customer_profile: dict[str, Any] | None = None,
     customer_cases: list[dict[str, Any]] | None = None,
+    previous_suggestions: list[str] | None = None,
 ) -> dict[str, Any]:
     """Suggestions from the agent, or the static fallback (flagged `fallback`) if it fails."""
     started = time.perf_counter()
@@ -157,6 +168,7 @@ async def suggest_with_fallback(
             max_suggestions=max_suggestions,
             customer_profile=customer_profile,
             customer_cases=customer_cases,
+            previous_suggestions=previous_suggestions,
         )
     except Exception as exc:
         logger.warning(
