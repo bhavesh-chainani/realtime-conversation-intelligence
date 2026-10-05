@@ -130,7 +130,8 @@ and `done`. The full schema is documented at the top of `backend/orchestrator.py
 laptop CPU cannot keep up: `DIARIZATION_DEVICE=cpu` defaults to int8 and 3.5 s chunks, and turns then wait
 several seconds for their speakers.
 
-The project's server is an AWS g6.xlarge (NVIDIA L4) named `rci-gpu` in ap-southeast-2. Manage it from the
+The project's server is an AWS EC2 instance named `rci-gpu`: a g4dn.xlarge (NVIDIA T4) in ap-southeast-2b, which keeps
+up with the 1.04 s profile. Manage it from the
 laptop with the AWS CLI:
 
 ```bash

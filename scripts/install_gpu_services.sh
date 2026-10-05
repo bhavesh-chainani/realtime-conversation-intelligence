@@ -22,6 +22,15 @@ source "$CONF"
 LOG=/var/log/rci-autostop.log
 touch "$LOG" && chmod 644 "$LOG"
 
+# systemd-logind deletes a normal user's shared memory when their last login session ends (RemoveIPC),
+# which kills the demo Postgres running as $RUN_AS as soon as an SSH session closes ("could not open
+# shared memory segment"). The PostgreSQL docs' fix: keep IPC objects.
+mkdir -p /etc/systemd/logind.conf.d
+if ! grep -qs '^RemoveIPC=no' /etc/systemd/logind.conf.d/rci-keep-ipc.conf; then
+  printf '[Login]\nRemoveIPC=no\n' > /etc/systemd/logind.conf.d/rci-keep-ipc.conf
+  systemctl restart systemd-logind
+fi
+
 cat > /etc/systemd/system/rci-demo-db.service <<EOF
 [Unit]
 Description=Demo customer-history Postgres

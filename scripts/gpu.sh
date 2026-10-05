@@ -77,7 +77,7 @@ case "${1:-}" in
     ip=$(instance_ip)
     # The server keeps its own .env, data/ (model weights, demo DB) and .venv.
     rsync -az --delete -e "ssh ${ssh_opts[*]}" \
-      --exclude .git --exclude .venv --exclude realtime-venv --exclude data --exclude .env \
+      --exclude .git --exclude .venv --exclude data --exclude .env \
       --exclude frontend --exclude node_modules --exclude __pycache__ --exclude '*.egg-info' \
       --exclude .pytest_cache --exclude .ruff_cache \
       ./ "$SSH_USER@$ip:$REMOTE_DIR/"
