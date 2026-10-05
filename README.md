@@ -11,45 +11,56 @@ Browser mic ──PCM──▶ WS /ws/stt (backend relay) ──▶ AssemblyAI s
                                                 └─▶ Nemotron 3 Diarization     → who said each word
            ◀── finished turns, split wherever the speaker changes (A / B → Staff / Customer)
 
-On each customer turn:
-  1. Entity / DB agent   instant NRIC + name regex (browser) and POST /extract-customer-data (LLM)
-                         → POST /customer-history: read-only Postgres view, NRIC match first, then name
-  2. Principal agent     POST /suggest with the transcript + the customer record
-                         → one suggestion; case IDs it cites must exist in the record
+Each customer turn ──▶ POST /assist (NDJSON stream, backend/orchestrator.py)
+  1. instant regex on the turn (NRIC, "my name is …") ──▶ customer DB lookup     → caller card, prior cases
+  2. after a 250 ms debounce, in parallel:
+       entity agent      LLM extraction of name / NRIC / address / purpose (while fields are missing)
+       suggestion agent  transcript + customer record ──▶ what Staff should say next, citing case IDs
+  3. if extraction reveals a new identity with a different record, the suggestion is redone with it
 ```
 
 - **Diarisation.** The relay sends the same audio to AssemblyAI (words and timestamps) and to
   [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (speaker probabilities
   every 10 ms). Each word gets the speaker active during it (`backend/diarization/merge.py`).
-  - A finished turn shows as *identifying speaker* until the diariser has covered its last word, or until
+  - A finished turn shows as _identifying speaker_ until the diariser has covered it, or until
     `DIARIZATION_MAX_WAIT_MS` passes.
   - Without a loaded model, turns arrive unlabelled and staff assign roles in the UI (Next voice, Swap
     roles, or click a turn).
-- **Identity.** Only an NRIC match counts as verified. A name-only match is shown as a *possible match*, and
-  the agent is told not to discuss those cases until the NRIC is confirmed.
-- **Orchestration.** The order of the two agents currently lives in the browser (`handleCustomerTurn` in
-  `frontend/app/page.tsx`).
+- **Identity.** Only an NRIC match counts as verified and fills the caller card from the record. A name-only
+  match shows as a _possible match_, and the suggestion agent asks for the NRIC before discussing cases.
+- **Field precedence.** Staff edits always win, then DB records, then what was heard (regex), then LLM
+  extraction. The rule lives in `backend/profile.py` and `frontend/app/lib/customer-profile.ts`; both test
+  suites check it against `tests/fixtures/profile_precedence.json`.
+- **Cancellation.** The browser aborts the previous `/assist` request when the next turn arrives, which
+  cancels its LLM calls on the server.
 
 ## Repository layout
 
 ```text
 backend/
-  api.py                      FastAPI app: /health, /ready, /stt/session, routers
-  stt_relay.py                WS /ws/stt: AssemblyAI words + Nemotron speakers
-  assemblyai.py               AssemblyAI streaming connection
-  diarization/                nemotron.py (model, per-call sessions), merge.py (word → speaker)
-  suggestion_agent.py         principal agent
-  suggestions.py              POST /suggest (agent + static fallback)
-  customer_data_extractor.py  entity agent: LLM extraction of name / NRIC / address / purpose
-  quick_entities.py           regex NRIC / name extraction (mirrors frontend/app/lib/quick-entities.ts)
-  customer_history.py         POST /customer-history + customer-record formatting for the prompt
-  prompts/                    suggestion prompts and fallback suggestions (editable without code changes)
-  llm.py, config.py, text_guard.py, prompt_loader.py
-frontend/app/                 Next.js UI: page.tsx, components/, lib/
+  api.py                  FastAPI app: /health, /ready, /stt/session, routers
+  orchestrator.py         POST /assist: runs both agents for a turn, streams NDJSON events
+  agents/
+    entity_agent.py       LLM extraction of caller details
+    suggestion_agent.py   what Staff should say next (the principal agent), with a static fallback
+  prompts/<agent>/        system.md, user.md (str.format template); suggestion/fallback.json
+  profile.py              field precedence, when to look up, records prefill
+  quick_entities.py       instant regex for spoken / written NRICs and self-introduced names
+  customer_history.py     read-only Postgres lookup; POST /customer-history (manual Look up)
+  stt_relay.py            WS /ws/stt: AssemblyAI words + Nemotron speakers
+  assemblyai.py           AssemblyAI streaming connection
+  diarization/            nemotron.py (model, per-call sessions), merge.py (word → speaker)
+  llm.py, config.py, prompt_loader.py, text_guard.py
+frontend/app/
+  page.tsx                composes the hooks into the workspace
+  hooks/                  useLiveTranscript (relay, mic, speakers), useAssist (/assist stream), useCallClock
+  lib/                    pure, unit-tested logic: assist stream + reducer, precedence, transcript, relay
+  components/             header, transcript, suggestion, caller card
 scripts/
-  demo_db.py                  embedded Postgres with demo customers and cases
-  setup_gpu_host.sh, install_gpu_services.sh, gpu_connect.sh, gpu_host.conf   GPU host for Nemotron
-tests/                        pytest suite
+  demo_db.py              embedded Postgres with demo customers and cases
+  gpu.sh                  start / deploy / connect / stop the AWS GPU server
+  setup_gpu_host.sh, install_gpu_services.sh, gpu_host.conf
+tests/                    pytest suite (frontend tests live next to the code as *.test.ts)
 ```
 
 ## Setup
@@ -73,6 +84,9 @@ demo customers. For example, Katherine Liao, S1234567A, has open and closed case
 `CUSTOMER_HISTORY_DATABASE_URL` and `CUSTOMER_HISTORY_EXTRA_COLUMNS` values to put in `.env`. Re-run it after a
 reboot.
 
+**Nemotron weights** load from `data/models/Nemotron-3-Diarization` when present, otherwise from Hugging Face.
+`scripts/setup_gpu_host.sh` downloads them.
+
 ## Run
 
 ```bash
@@ -86,23 +100,29 @@ Open the app, click **Start session**, and speak with two voices into the mic:
 - Say an NRIC ("my IC is S1234567A") and the caller card fills from the database.
 - The next suggestion cites the caller's cases.
 
+A laptop CPU runs Nemotron too slowly for live calls (turns wait seconds for speakers); use the GPU host below.
+
 **Endpoints:**
 
-| Endpoint | What it does |
-| --- | --- |
-| `GET /health` | Liveness |
-| `GET /ready` | Whether the LLM and transcription are configured, the diariser is loaded, and the customer DB is set |
-| `GET /stt/session` | One-time ticket for the relay |
-| `WS /ws/stt` | The relay |
-| `POST /suggest` | Principal agent |
-| `POST /extract-customer-data` | LLM entity extraction |
-| `POST /customer-history` | DB lookup by NRIC and/or name |
+| Endpoint                 | What it does                                                       |
+| ------------------------ | ------------------------------------------------------------------ |
+| `GET /health`            | Liveness                                                           |
+| `GET /ready`             | LLM and transcription configured, diariser loaded, customer DB set |
+| `GET /stt/session`       | One-time ticket for the relay                                      |
+| `WS /ws/stt`             | The relay                                                          |
+| `POST /assist`           | Both agents for one customer turn, as an NDJSON event stream       |
+| `POST /customer-history` | Manual lookup by NRIC and/or name                                  |
+
+`/assist` events, one JSON object per line: `customer` (a patch to the caller card, with its source),
+`history` (`loading`, then the lookup result), `suggesting`, `suggestions`, `error` (non-fatal, per stage)
+and `done`. The full schema is documented at the top of `backend/orchestrator.py`.
 
 ## Configuration
 
 - **`.env`** holds every setting; defaults and comments live in `backend/config.py`. AssemblyAI uses
   `u3-rt-pro` by default because the standard model mishears spoken NRICs.
-- **`backend/prompts/`**: the principal agent's system and user prompts, and the fallback suggestions.
+- **`backend/prompts/<agent>/`**: each agent's system prompt and user template, editable without code
+  changes. Only `user.md` is passed through `str.format`.
 
 ## GPU host (Nemotron)
 
@@ -110,31 +130,41 @@ Open the app, click **Start session**, and speak with two voices into the mic:
 laptop CPU cannot keep up: `DIARIZATION_DEVICE=cpu` defaults to int8 and 3.5 s chunks, and turns then wait
 several seconds for their speakers.
 
+The project's server is an AWS g6.xlarge (NVIDIA L4) named `rci-gpu` in ap-southeast-2. Manage it from the
+laptop with the AWS CLI:
+
 ```bash
-# On a Linux GPU machine (RTX 30-series or newer, or a cloud L4 / A10):
-scripts/setup_gpu_host.sh               # venv, CUDA torch, model weights into data/models/
-sudo scripts/install_gpu_services.sh    # demo DB + backend as systemd services, idle and nightly auto-stop
-# On the laptop: tunnel the backend to localhost:8000, then run the frontend as usual
-scripts/gpu_connect.sh <gpu-host-ip>
+scripts/gpu.sh status     # state, IP, and when it will stop itself
+scripts/gpu.sh start      # start it and wait for SSH (the public IP changes on every start)
+scripts/gpu.sh deploy     # copy this checkout, install, restart the services, wait for /ready
+scripts/gpu.sh connect    # tunnel its backend to localhost:8000; then: cd frontend && npm run dev
+scripts/gpu.sh stop       # stop it (the disk and setup are kept)
 ```
 
-The server stops itself to save cost:
+It stops itself after `IDLE_MINUTES` without app use and at `NIGHTLY_STOP`, both set in
+`scripts/gpu_host.conf`. The server keeps its own `.env`, model weights and demo DB; `deploy` never
+overwrites them.
 
-- after `IDLE_MINUTES` with no app use;
-- at `NIGHTLY_STOP`.
+**A new GPU machine:**
 
-Both are set in `scripts/gpu_host.conf`. A stopped server keeps its disk; start it again from the AWS console.
-`gpu_connect.sh` shows when the next stop is due.
+1. Copy the repo to it.
+2. Run `scripts/setup_gpu_host.sh` (venv, CUDA torch, model weights).
+3. Add a `.env` with `DIARIZATION_DEVICE=cuda`.
+4. Run `sudo scripts/install_gpu_services.sh` (systemd services and auto-stop).
 
 Hugging Face downloads may be blocked on corporate networks. If so, fetch the weights elsewhere and set
 `DIARIZATION_MODEL` to the local folder.
 
-## Tests
+## Development
 
 ```bash
-pytest                    # backend
-cd frontend && npm test   # frontend lib tests (node --test)
+pytest                                    # backend tests
+ruff check . && ruff format --check .     # backend lint / format
+cd frontend && npm test                   # frontend tests (node --test)
+npm run format:check && npm run build     # frontend format / build
 ```
+
+CI runs all of these on every pull request.
 
 ## License
 

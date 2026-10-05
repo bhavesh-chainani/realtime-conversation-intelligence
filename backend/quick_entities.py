@@ -1,7 +1,7 @@
 """Fast, deterministic entity extraction from transcript text (no LLM).
 
-Mirrors frontend/app/lib/quick-entities.ts so the browser and the backend
-agree on when an NRIC / name becomes known during a call.
+Runs on every customer turn before any LLM call (backend/orchestrator.py), so a spoken NRIC
+or self-introduced name starts the customer DB lookup within milliseconds.
 """
 
 from __future__ import annotations
