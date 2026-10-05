@@ -38,8 +38,8 @@ export type SuggestionMeta = {
 
 export type CustomerData = {
   name: string;
-  nric_worker_permit_id: string;
-  address: string;
+  contact_number: string;
+  email: string;
   purpose_of_call: string;
 };
 

@@ -45,7 +45,7 @@ Customer lookup:
 
 ```bash
 curl -s -X POST localhost:8000/customer-history -H 'Content-Type: application/json' \
-  -d '{"nric_worker_permit_id":"S1234567A"}'
+  -d '{"contact_number":"91234567"}'
 ```
 
 Expect `status: ok` and Katherine Liao with 2 cases.
@@ -55,7 +55,7 @@ Both agents for one turn (streams NDJSON):
 ```bash
 curl -sN -X POST localhost:8000/assist -H 'Content-Type: application/json' -d '{"turns":[
   {"role":"staff","text":"Hello, how can I help?"},
-  {"role":"customer","text":"Hi, my name is Katherine Liao, my IC is S one two three four five six seven A. Brightpath cut my leave again."}]}'
+  {"role":"customer","text":"Hi, my name is Katherine Liao, my number is nine one two three, four five six seven. Brightpath cut my leave again."}]}'
 ```
 
 Expect this event order: `customer` (heard) → `history` loading → `history` ok → `customer` (records) →

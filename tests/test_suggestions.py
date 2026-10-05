@@ -79,7 +79,8 @@ def test_customer_record_is_rendered_into_prompt(monkeypatch):
             TRANSCRIPT,
             customer_profile={
                 "name": "Katherine Liao",
-                "nric_worker_permit_id": "S1234567A",
+                "contact_number": "91234567",
+                "record_match": "contact_number",
             },
             customer_cases=CASES,
         )

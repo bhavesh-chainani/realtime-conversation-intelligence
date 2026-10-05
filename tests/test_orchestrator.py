@@ -11,9 +11,10 @@ from backend.orchestrator import AssistDeps, AssistRequest, get_assist_deps, run
 
 CUSTOMER = {
     "name": "Katherine Liao",
-    "nric_worker_permit_id": "S1234567A",
-    "address": "12 Tampines Street 45",
+    "contact_number": "+65 9123 4567",
+    "email": "katherine.liao@example.com",
 }
+CUSTOMER_KEY = "id:91234567|katherine.liao@example.com"
 CASES = [
     {
         "case_id": "CASE-2026-03117",
@@ -30,15 +31,16 @@ CASES = [
         "summary": "y",
     },
 ]
-NRIC_MATCH = {
+PHONE_MATCH = {
     "status": "ok",
-    "match_strategy": "nric_worker_permit_id",
+    "match_strategy": "contact_number",
     "customer": CUSTOMER,
     "cases": CASES,
     "open_count": 1,
     "history_summary": "Katherine Liao has 2 prior cases.",
 }
-NAME_MATCH = {**NRIC_MATCH, "match_strategy": "name"}
+EMAIL_MATCH = {**PHONE_MATCH, "match_strategy": "email"}
+NAME_MATCH = {**PHONE_MATCH, "match_strategy": "name"}
 NOT_FOUND = {"status": "not_found", "cases": [], "message": "No prior cases found."}
 
 
@@ -50,14 +52,15 @@ class FakeLookup:
         error: Exception | None = None,
     ):
         self.by_id, self.by_name, self.error = by_id or {}, by_name or {}, error
-        self.calls: list[tuple[str | None, str | None]] = []
+        self.calls: list[tuple[str | None, str | None, str | None]] = []
 
-    def __call__(self, name, nric):
-        self.calls.append((name, nric))
+    def __call__(self, name, phone, email):
+        """Like the real service: phone first, then email; a name only when neither was given."""
+        self.calls.append((name, phone, email))
         if self.error:
             raise self.error
-        if nric:
-            return self.by_id.get(nric, NOT_FOUND)
+        if phone or email:
+            return self.by_id.get(phone) or self.by_id.get(email) or NOT_FOUND
         return self.by_name.get(name, NOT_FOUND)
 
 
@@ -133,12 +136,12 @@ def kinds(events) -> list[str]:
     return out
 
 
-def test_nric_turn_looks_up_at_once_and_grounds_the_suggestion():
-    lookup, suggest = FakeLookup(by_id={"S1234567A": NRIC_MATCH}), FakeSuggest()
+def test_phone_turn_looks_up_at_once_and_grounds_the_suggestion():
+    lookup, suggest = FakeLookup(by_id={"91234567": PHONE_MATCH}), FakeSuggest()
     events = run(
         request(
-            "Staff: May I have your NRIC?",
-            "Customer: Sure, it's S one two three four five six seven A.",
+            "Staff: May I have your phone number?",
+            "Customer: Sure, it's nine one two three, four five six seven.",
         ),
         deps(lookup, suggest=suggest),
     )
@@ -152,29 +155,65 @@ def test_nric_turn_looks_up_at_once_and_grounds_the_suggestion():
         "suggestions:1",
         "done",
     ]
-    assert events[0]["patch"] == {"nric_worker_permit_id": "S1234567A"}
-    assert events[2]["lookup_key"] == "id:S1234567A" and events[2]["open_count"] == 1
-    # Records also re-tag the heard NRIC as verified.
+    assert events[0]["patch"] == {"contact_number": "91234567"}
+    assert events[1]["lookup_key"] == "id:91234567"
+    # The record adds the email, so the key covers both and the next turn does not look up again.
+    assert events[2]["lookup_key"] == CUSTOMER_KEY and events[2]["open_count"] == 1
+    # Records also re-tag the heard phone number as verified.
     assert events[3]["patch"] == CUSTOMER
-    assert lookup.calls == [(None, "S1234567A")]
+    assert lookup.calls == [(None, "91234567", None)]
     call = suggest.calls[0]
     assert call["cases"] == CASES
-    assert call["profile"]["record_match"] == "nric_worker_permit_id"
+    assert call["profile"]["record_match"] == "contact_number"
     assert call["transcript"].endswith(
-        "Customer: Sure, it's S one two three four five six seven A."
+        "Customer: Sure, it's nine one two three, four five six seven."
     )
 
 
+def test_email_match_is_verified():
+    lookup, suggest = (
+        FakeLookup(by_id={"katherine.liao@example.com": EMAIL_MATCH}),
+        FakeSuggest(),
+    )
+    events = run(
+        request("Customer: It's katherine dot liao at example dot com."),
+        deps(lookup, suggest=suggest),
+    )
+    assert lookup.calls == [(None, None, "katherine.liao@example.com")]
+    assert "customer:records" in kinds(events)
+    assert suggest.calls[0]["profile"]["record_match"] == "email"
+
+
+def test_email_heard_after_an_unmatched_phone_looks_up_again():
+    lookup = FakeLookup(by_id={"katherine.liao@example.com": EMAIL_MATCH})
+    events = run(
+        request(
+            "Customer: My email is katherine.liao@example.com.",
+            customer={"contact_number": "81111111"},
+            sources={"contact_number": "heard"},
+            history={"lookup_key": "id:81111111", "match_strategy": None, "cases": []},
+        ),
+        deps(lookup),
+    )
+    assert lookup.calls == [(None, "81111111", "katherine.liao@example.com")]
+    assert next(e for e in events if e["type"] == "history" and e["status"] == "ok")
+    # Records beat what was heard: the card now shows the number on file.
+    records = next(
+        e for e in events if e["type"] == "customer" and e["source"] == "records"
+    )
+    assert records["patch"]["contact_number"] == "+65 9123 4567"
+
+
 def test_known_identity_is_not_looked_up_again():
-    lookup, suggest = FakeLookup(by_id={"S1234567A": NRIC_MATCH}), FakeSuggest()
+    lookup, suggest = FakeLookup(by_id={"91234567": PHONE_MATCH}), FakeSuggest()
     events = run(
         request(
             "Customer: My employer cut my leave.",
             customer=CUSTOMER,
             sources=dict.fromkeys(CUSTOMER, "records"),
             history={
-                "lookup_key": "id:S1234567A",
-                "match_strategy": "nric_worker_permit_id",
+                "lookup_key": CUSTOMER_KEY,
+                "match_strategy": "contact_number",
                 "cases": CASES,
             },
         ),
@@ -192,31 +231,33 @@ def test_name_only_match_is_unverified():
         deps(lookup, suggest=suggest),
     )
 
-    assert lookup.calls == [("Katherine Liao", None)]
-    assert "customer:records" not in kinds(events)  # no prefill without an NRIC match
+    assert lookup.calls == [("Katherine Liao", None, None)]
+    assert "customer:records" not in kinds(
+        events
+    )  # no prefill without a phone / email match
     assert suggest.calls[0]["profile"]["record_match"] == "name"
 
 
-def test_staff_entered_nric_beats_what_was_heard():
-    lookup = FakeLookup(by_id={"S1111111A": NOT_FOUND})
+def test_staff_entered_phone_beats_what_was_heard():
+    lookup = FakeLookup()
     events = run(
         request(
-            "Customer: It's S1234567A.",
-            customer={"nric_worker_permit_id": "S1111111A"},
-            sources={"nric_worker_permit_id": "manual"},
+            "Customer: It's 9123 4567.",
+            customer={"contact_number": "81111111"},
+            sources={"contact_number": "manual"},
         ),
         deps(lookup),
     )
     assert "customer:heard" not in kinds(events)
-    assert lookup.calls == [(None, "S1111111A")]
+    assert lookup.calls == [(None, "81111111", None)]
 
 
-def test_nric_found_by_extraction_replaces_the_stale_suggestion():
-    lookup = FakeLookup(by_id={"S1234567A": NRIC_MATCH})
+def test_phone_found_by_extraction_replaces_the_stale_suggestion():
+    lookup = FakeLookup(by_id={"91234567": PHONE_MATCH})
     suggest = FakeSuggest(block_rounds=(1,))
     events = run(
         request("Customer: My employer cut my salary again."),
-        deps(lookup, make_extract({"nric_worker_permit_id": "S1234567A"}), suggest),
+        deps(lookup, make_extract({"contact_number": "91234567"}), suggest),
     )
 
     assert kinds(events) == [
@@ -234,10 +275,10 @@ def test_nric_found_by_extraction_replaces_the_stale_suggestion():
 
 
 def test_records_arriving_after_a_suggestion_add_a_second_round():
-    lookup = FakeLookup(by_id={"S1234567A": NRIC_MATCH})
+    lookup = FakeLookup(by_id={"91234567": PHONE_MATCH})
     events = run(
         request("Customer: My employer cut my salary again."),
-        deps(lookup, make_extract({"nric_worker_permit_id": "S1234567A"}, delay=0.05)),
+        deps(lookup, make_extract({"contact_number": "91234567"}, delay=0.05)),
     )
     rounds = [e["round"] for e in events if e["type"] == "suggestions"]
     assert rounds == [1, 2]
@@ -259,7 +300,7 @@ def test_extraction_only_runs_while_fields_are_missing():
 
 def test_failures_are_reported_in_band_and_done_still_comes_last():
     events = run(
-        request("Customer: It's S1234567A."),
+        request("Customer: It's 9123 4567."),
         deps(
             FakeLookup(error=RuntimeError("db down")),
             make_extract(error=RuntimeError("llm down")),
@@ -299,7 +340,7 @@ def test_client_disconnect_cancels_pending_work():
 
 
 def test_endpoint_streams_ndjson(client):
-    lookup = FakeLookup(by_id={"S1234567A": NRIC_MATCH})
+    lookup = FakeLookup(by_id={"91234567": PHONE_MATCH})
     app.dependency_overrides[get_assist_deps] = lambda: deps(lookup)
     try:
         r = client.post(
@@ -308,7 +349,7 @@ def test_endpoint_streams_ndjson(client):
                 "turns": [
                     {
                         "role": "customer",
-                        "text": "My NRIC is S1234567A, and my leave was cut.",
+                        "text": "My number is 9123 4567, and my leave was cut.",
                     }
                 ]
             },
@@ -322,6 +363,6 @@ def test_endpoint_streams_ndjson(client):
     assert events[0] == {
         "type": "customer",
         "source": "heard",
-        "patch": {"nric_worker_permit_id": "S1234567A"},
+        "patch": {"contact_number": "91234567"},
     }
     assert events[-1]["type"] == "done"

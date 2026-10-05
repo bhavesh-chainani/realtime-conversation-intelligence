@@ -7,17 +7,17 @@ export type ProfileState = { customer: CustomerData; sources: FieldSources };
 
 export const EMPTY_CUSTOMER: CustomerData = {
   name: "",
-  nric_worker_permit_id: "",
-  address: "",
+  contact_number: "",
+  email: "",
   purpose_of_call: "",
 };
 
 const FIELDS = Object.keys(EMPTY_CUSTOMER) as CustomerDataField[];
-export const IDENTITY_FIELDS: CustomerDataField[] = ["name", "nric_worker_permit_id"];
+export const IDENTITY_FIELDS: CustomerDataField[] = ["name", "contact_number", "email"];
 
 /**
  * Merge values from `source`. Staff edits always win; DB records beat anything heard or extracted;
- * the instant regex hears the NRIC exactly, so LLM reformatting may not replace it.
+ * the instant regex hears the phone number exactly, so LLM reformatting may not replace it.
  * Returns the same object when nothing changed.
  */
 export function applyCustomerPatch(
@@ -32,7 +32,7 @@ export function applyCustomerPatch(
     if (!FIELDS.includes(field) || !value) continue;
     const current = (next ?? state).sources[field];
     if (current === "manual" || (current === "records" && source !== "records")) continue;
-    if (source === "ai" && field === "nric_worker_permit_id" && current === "heard") continue;
+    if (source === "ai" && field === "contact_number" && current === "heard") continue;
     if ((next ?? state).customer[field] === value && current === source) continue;
     next ??= { customer: { ...state.customer }, sources: { ...state.sources } };
     next.customer[field] = value;

@@ -3,7 +3,7 @@
 Live call assistant for a Singapore legal-advice centre. Four parts:
 
 1. **Transcription + diarisation**: browser mic → `WS /ws/stt` relay → AssemblyAI (words) + Nemotron 3 Diarization (speaker per word).
-2. **Entity agent**: instant regex + LLM extraction of name / NRIC / address / purpose → customer DB lookup.
+2. **Entity agent**: instant regex + LLM extraction of name / contact number / email / purpose → customer DB lookup (phone or email match = verified; NRIC and address are deliberately not collected).
 3. **Suggestion agent** (principal agent): transcript + customer record → what Staff should say next, citing case IDs.
 4. **Orchestration**: `POST /assist` runs 2 and 3 for each customer turn and streams NDJSON events to the UI.
 
@@ -49,5 +49,5 @@ cd frontend && npm run format && npm run build
 - **Nemotron needs a GPU for live use.** The laptop CPU is too slow and erratic; run the backend on the AWS GPU server with `scripts/gpu.sh` (start / deploy / connect / stop; it costs about US$1/hour while running and stops itself when idle).
 - **Hugging Face is blocked on the PwC network.** Nemotron weights load from `data/models/Nemotron-3-Diarization`.
 - **The CA bundle (`SSL_CERT_FILE` on /mnt/c) takes seconds to load.** Reuse `assemblyai.ssl_context()`; never build an SSL context per request.
-- **AssemblyAI speech model is `u3-rt-pro`.** The standard model mishears spoken NRICs, which breaks the DB lookup.
+- **AssemblyAI speech model is `u3-rt-pro`.** The standard model drops digits from spoken numbers, which breaks the phone lookup.
 - `data/` (model weights, demo DB) and `.env` are not in git.

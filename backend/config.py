@@ -38,7 +38,7 @@ def _list(name: str, default: str = "") -> list[str]:
 # --- Transcription: AssemblyAI streaming (the words) ------------------------------------------
 
 ASSEMBLYAI_API_KEY = _str("ASSEMBLYAI_API_KEY")
-# u3-rt-pro: the standard model misheard spoken NRICs ("S1234567A" as "S124567A"), breaking the lookup.
+# u3-rt-pro: the standard model mishears spoken digit strings (it dropped digits from IDs), breaking the lookup.
 ASSEMBLYAI_SPEECH_MODEL = _str("ASSEMBLYAI_SPEECH_MODEL", "u3-rt-pro")
 # Extra terms to listen for, sent as `keyterms_prompt` (max 100).
 ASSEMBLYAI_KEYTERMS = _list("ASSEMBLYAI_KEYTERMS")[:100]
@@ -103,7 +103,7 @@ CUSTOMER_HISTORY_DATABASE_URL = _str("CUSTOMER_HISTORY_DATABASE_URL")
 CUSTOMER_HISTORY_VIEW = _str("CUSTOMER_HISTORY_VIEW", "public.customer_history_view")
 CUSTOMER_HISTORY_QUERY_TIMEOUT_MS = _int("CUSTOMER_HISTORY_QUERY_TIMEOUT_MS", 2500)
 CUSTOMER_HISTORY_MAX_ROWS = _int("CUSTOMER_HISTORY_MAX_ROWS", 10)
-# Optional extra columns returned with the customer (the demo view exposes: address).
+# Optional extra view columns returned with the customer (the demo view has none).
 CUSTOMER_HISTORY_EXTRA_COLUMNS = _list("CUSTOMER_HISTORY_EXTRA_COLUMNS")
 
 # --- Server -------------------------------------------------------------------------------------

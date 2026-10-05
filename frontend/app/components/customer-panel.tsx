@@ -72,13 +72,13 @@ export function CustomerPanel({
   historyMeta,
   isLoadingCustomerHistory,
 }: CustomerPanelProps) {
-  const canLookup = customerData.name.trim().length > 0 || customerData.nric_worker_permit_id.trim().length > 0;
+  const canLookup = [customerData.name, customerData.contact_number, customerData.email].some((v) => v.trim());
 
   const historyBadge = HISTORY_BADGES[customerHistoryStatus];
   const historyTone = HISTORY_TONES[customerHistoryStatus];
   const historyMessage =
     customerHistoryStatus === "idle"
-      ? "Looked up automatically once the caller's NRIC or full name is heard."
+      ? "Looked up automatically once the caller's phone number, email or full name is heard."
       : customerHistoryStatus === "loading"
         ? "Searching prior cases…"
         : customerHistoryMessage || "No customer history information is available yet.";
@@ -90,7 +90,7 @@ export function CustomerPanel({
     const count = customerHistoryCases.length;
     const cases = `${count} prior case${count === 1 ? "" : "s"}${historyMeta.openCount ? ` · ${historyMeta.openCount} open` : ""}`;
     standing = nameOnlyMatch
-      ? { tone: "warning", text: `Possible match · verify NRIC · ${cases}` }
+      ? { tone: "warning", text: `Possible match · verify phone or email · ${cases}` }
       : { tone: "success", text: `Returning customer · ${cases}` };
   } else if (customerHistoryStatus === "not_found") {
     standing = { tone: "neutral", text: "New customer · no prior cases" };
@@ -120,15 +120,16 @@ export function CustomerPanel({
         </div>
 
         <div className="field-group">
-          <FieldLabel htmlFor="cust-id" source={fieldSources.nric_worker_permit_id}>
-            NRIC / FIN
+          <FieldLabel htmlFor="cust-phone" source={fieldSources.contact_number}>
+            Contact number
           </FieldLabel>
           <input
-            id="cust-id"
+            id="cust-phone"
             className="field-input field-input--quiet"
-            type="text"
-            value={customerData.nric_worker_permit_id}
-            onChange={(event) => onCustomerDataChange("nric_worker_permit_id", event.target.value)}
+            type="tel"
+            inputMode="tel"
+            value={customerData.contact_number}
+            onChange={(event) => onCustomerDataChange("contact_number", event.target.value)}
             placeholder="—"
             autoComplete="off"
           />
@@ -136,15 +137,15 @@ export function CustomerPanel({
       </div>
 
       <div className="field-group">
-        <FieldLabel htmlFor="cust-address" source={fieldSources.address}>
-          Address
+        <FieldLabel htmlFor="cust-email" source={fieldSources.email}>
+          Email
         </FieldLabel>
         <input
-          id="cust-address"
+          id="cust-email"
           className="field-input field-input--quiet"
-          type="text"
-          value={customerData.address}
-          onChange={(event) => onCustomerDataChange("address", event.target.value)}
+          type="email"
+          value={customerData.email}
+          onChange={(event) => onCustomerDataChange("email", event.target.value)}
           placeholder="—"
           autoComplete="off"
         />
@@ -174,7 +175,7 @@ export function CustomerPanel({
               className="btn btn--ghost btn--sm"
               onClick={onLookup}
               disabled={isLoadingCustomerHistory || !canLookup}
-              title={!canLookup ? "Enter a customer name or NRIC / FIN first." : "Search prior cases again"}
+              title={!canLookup ? "Enter a customer name, phone or email first." : "Search prior cases again"}
             >
               {isLoadingCustomerHistory ? "Looking up…" : "Look up"}
             </button>

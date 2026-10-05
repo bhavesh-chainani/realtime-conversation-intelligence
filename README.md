@@ -1,8 +1,8 @@
 # Real-Time Conversation Intelligence
 
 Live assistant for staff on legal-assistance calls. It transcribes the call, works out who is speaking,
-recognises the caller from their NRIC / FIN, pulls their prior cases from the customer database, and suggests
-what staff should say next, citing those cases.
+recognises the caller from their phone number or email, pulls their prior cases from the customer database, and
+suggests what staff should say next, citing those cases.
 
 ## How it works
 
@@ -12,9 +12,9 @@ Browser mic ──PCM──▶ WS /ws/stt (backend relay) ──▶ AssemblyAI s
            ◀── finished turns, split wherever the speaker changes (A / B → Staff / Customer)
 
 Each customer turn ──▶ POST /assist (NDJSON stream, backend/orchestrator.py)
-  1. instant regex on the turn (NRIC, "my name is …") ──▶ customer DB lookup     → caller card, prior cases
+  1. instant regex on the turn (phone, email, "my name is …") ──▶ customer DB lookup → caller card, prior cases
   2. after a 250 ms debounce, in parallel:
-       entity agent      LLM extraction of name / NRIC / address / purpose (while fields are missing)
+       entity agent      LLM extraction of name / phone / email / purpose (while fields are missing)
        suggestion agent  transcript + customer record ──▶ what Staff should say next, citing case IDs
   3. if extraction reveals a new identity with a different record, the suggestion is redone with it
 ```
@@ -26,8 +26,11 @@ Each customer turn ──▶ POST /assist (NDJSON stream, backend/orchestrator.p
     `DIARIZATION_MAX_WAIT_MS` passes.
   - Without a loaded model, turns arrive unlabelled and staff assign roles in the UI (Next voice, Swap
     roles, or click a turn).
-- **Identity.** Only an NRIC match counts as verified and fills the caller card from the record. A name-only
-  match shows as a _possible match_, and the suggestion agent asks for the NRIC before discussing cases.
+- **Identity.** A phone or email match counts as verified and fills the caller card from the record. A name-only
+  match shows as a _possible match_, and the suggestion agent asks for a phone number or email before discussing
+  cases. NRICs and addresses are deliberately not collected.
+  - Phones are Singapore numbers compared on their 8 digits (`+65 9123 4567` = `91234567`); emails are compared
+    case-insensitively. The lookup tries phone, then email, then name.
 - **Field precedence.** Staff edits always win, then DB records, then what was heard (regex), then LLM
   extraction. The rule lives in `backend/profile.py` and `frontend/app/lib/customer-profile.ts`; both test
   suites check it against `tests/fixtures/profile_precedence.json`.
@@ -45,7 +48,7 @@ backend/
     suggestion_agent.py   what Staff should say next (the principal agent), with a static fallback
   prompts/<agent>/        system.md, user.md (str.format template); suggestion/fallback.json
   profile.py              field precedence, when to look up, records prefill
-  quick_entities.py       instant regex for spoken / written NRICs and self-introduced names
+  quick_entities.py       instant regex for spoken / written phones and emails, and self-introduced names
   customer_history.py     read-only Postgres lookup; POST /customer-history (manual Look up)
   stt_relay.py            WS /ws/stt: AssemblyAI words + Nemotron speakers
   assemblyai.py           AssemblyAI streaming connection
@@ -97,7 +100,8 @@ cd frontend && npm run dev                              # http://localhost:3000
 Open the app, click **Start session**, and speak with two voices into the mic:
 
 - The first new voice is Staff by default. Change it with **Next voice**, or fix it later with **Swap roles**.
-- Say an NRIC ("my IC is S1234567A") and the caller card fills from the database.
+- Say a phone number ("my number is nine one two three, four five six seven") or an email
+  ("katherine dot liao at example dot com") and the caller card fills from the database.
 - The next suggestion cites the caller's cases.
 
 A laptop CPU runs Nemotron too slowly for live calls (turns wait seconds for speakers); use the GPU host below.
@@ -111,7 +115,7 @@ A laptop CPU runs Nemotron too slowly for live calls (turns wait seconds for spe
 | `GET /stt/session`       | One-time ticket for the relay                                      |
 | `WS /ws/stt`             | The relay                                                          |
 | `POST /assist`           | Both agents for one customer turn, as an NDJSON event stream       |
-| `POST /customer-history` | Manual lookup by NRIC and/or name                                  |
+| `POST /customer-history` | Manual lookup by contact number, email and/or name                 |
 
 `/assist` events, one JSON object per line: `customer` (a patch to the caller card, with its source),
 `history` (`loading`, then the lookup result), `suggesting`, `suggestions`, `error` (non-fatal, per stage)
@@ -120,7 +124,10 @@ and `done`. The full schema is documented at the top of `backend/orchestrator.py
 ## Configuration
 
 - **`.env`** holds every setting; defaults and comments live in `backend/config.py`. AssemblyAI uses
-  `u3-rt-pro` by default because the standard model mishears spoken NRICs.
+  `u3-rt-pro` by default because the standard model drops digits from spoken numbers.
+- **Customer DB view** (`CUSTOMER_HISTORY_VIEW`, read-only): one row per case with `customer_name`,
+  `contact_number`, `email`, `case_id`, `company`, `case_type`, `case_status`, `case_summary`. Further columns
+  listed in `CUSTOMER_HISTORY_EXTRA_COLUMNS` are returned with the customer.
 - **`backend/prompts/<agent>/`**: each agent's system prompt and user template, editable without code
   changes. Only `user.md` is passed through `str.format`.
 

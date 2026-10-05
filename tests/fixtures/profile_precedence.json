@@ -4,15 +4,15 @@
     "values": {},
     "sources": {},
     "source": "ai",
-    "patch": { "name": "Katherine Liao", "address": "" },
+    "patch": { "name": "Katherine Liao", "email": "" },
     "accepted": { "name": "Katherine Liao" }
   },
   {
     "case": "staff edits always win",
-    "values": { "nric_worker_permit_id": "S1111111A" },
-    "sources": { "nric_worker_permit_id": "manual" },
+    "values": { "contact_number": "81111111" },
+    "sources": { "contact_number": "manual" },
     "source": "records",
-    "patch": { "nric_worker_permit_id": "S1234567A" },
+    "patch": { "contact_number": "91234567" },
     "accepted": {}
   },
   {
@@ -32,12 +32,20 @@
     "accepted": { "name": "Katherine Liao" }
   },
   {
-    "case": "ai may not reformat a heard NRIC",
-    "values": { "nric_worker_permit_id": "S1234567A" },
-    "sources": { "nric_worker_permit_id": "heard" },
+    "case": "ai may not reformat a heard contact number",
+    "values": { "contact_number": "91234567" },
+    "sources": { "contact_number": "heard" },
     "source": "ai",
-    "patch": { "nric_worker_permit_id": "S1234567B", "purpose_of_call": "Leave dispute" },
+    "patch": { "contact_number": "91234568", "purpose_of_call": "Leave dispute" },
     "accepted": { "purpose_of_call": "Leave dispute" }
+  },
+  {
+    "case": "ai may correct a heard email",
+    "values": { "email": "liao@example.com" },
+    "sources": { "email": "heard" },
+    "source": "ai",
+    "patch": { "email": "katherine.liao@example.com" },
+    "accepted": { "email": "katherine.liao@example.com" }
   },
   {
     "case": "ai may update other heard fields",
@@ -49,10 +57,10 @@
   },
   {
     "case": "same value from the same source is not a change",
-    "values": { "address": "12 Tampines Street 45" },
-    "sources": { "address": "ai" },
+    "values": { "email": "katherine.liao@example.com" },
+    "sources": { "email": "ai" },
     "source": "ai",
-    "patch": { "address": " 12 Tampines Street 45 " },
+    "patch": { "email": " katherine.liao@example.com " },
     "accepted": {}
   },
   {

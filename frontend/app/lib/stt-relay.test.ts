@@ -36,15 +36,15 @@ test("a merged turn becomes one segment per speaker", () => {
     type: "Turn",
     end_of_turn: true,
     segments: [
-      { speaker_label: "A", transcript: "May I have your NRIC?" },
-      { speaker_label: "B", transcript: "It's S1234567A." },
+      { speaker_label: "A", transcript: "May I have your phone number?" },
+      { speaker_label: "B", transcript: "It's 9123 4567." },
       { speaker_label: null, transcript: "Right." },
       { speaker_label: "B", transcript: "" },
     ],
   });
   assert.deepEqual(segments, [
-    { text: "May I have your NRIC?", speakerLabel: "A" },
-    { text: "It's S1234567A.", speakerLabel: "B" },
+    { text: "May I have your phone number?", speakerLabel: "A" },
+    { text: "It's 9123 4567.", speakerLabel: "B" },
     { text: "Right.", speakerLabel: null },
   ]);
   assert.equal(parseRelaySegments({ type: "Turn", end_of_turn: true }), null);

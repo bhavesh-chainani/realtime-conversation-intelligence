@@ -1,7 +1,7 @@
 """Fast, deterministic entity extraction from transcript text (no LLM).
 
-Runs on every customer turn before any LLM call (backend/orchestrator.py), so a spoken NRIC
-or self-introduced name starts the customer DB lookup within milliseconds.
+Runs on every customer turn before any LLM call (backend/orchestrator.py), so a spoken phone number,
+email or self-introduced name starts the customer DB lookup within milliseconds.
 """
 
 from __future__ import annotations
@@ -22,8 +22,17 @@ DIGIT_WORDS = {
 }
 REPEAT_WORDS = {"double": 2, "triple": 3}
 
-# Checksum is intentionally not enforced: the seeded demo DB uses dummy IDs.
-NRIC_PATTERN = re.compile(r"[stfgm]\d{7}[a-z]")
+# Singapore numbers: 8 digits starting 3 (VoIP), 6 (landline), 8 or 9 (mobile).
+PHONE_PATTERN = re.compile(r"[3689]\d{7}")
+EMAIL_PATTERN = re.compile(r"[a-z0-9][\w.+-]*@[a-z0-9-]+(?:\.[a-z0-9-]+)+")
+SPOKEN_EMAIL_WORDS = {
+    "dot": ".",
+    "underscore": "_",
+    "dash": "-",
+    "hyphen": "-",
+    "at": "@",
+}
+SPOKEN_EMAIL_TLDS = {"com", "sg", "net", "org", "edu", "gov", "co", "io"}
 INTRO_NAME_PATTERN = re.compile(
     r"\b(?:[Mm]y name is|[Mm]y name's|[Tt]his is|I am|I'm)\s+"
     r"((?:[A-Z][a-zA-Z'-]+)(?:\s+(?:[A-Z][a-zA-Z'-]+)){1,3})"
@@ -53,40 +62,48 @@ def _spoken_tokens(text: str) -> list[str]:
     return out
 
 
-def collapse_spelled_runs(tokens: list[str]) -> list[str]:
-    """Join runs of single letters / digit groups that contain a digit ("s 12 34567 a" -> "s1234567a")."""
-    out: list[str] = []
+def normalize_phone(value: str | None) -> str | None:
+    """A Singapore phone number as 8 digits ("+65 9123 4567" -> "91234567"), or None if it is not one."""
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) == 10 and digits.startswith("65"):
+        digits = digits[2:]
+    return digits if PHONE_PATTERN.fullmatch(digits) else None
+
+
+def normalize_email(value: str | None) -> str | None:
+    """A lowercased email with no whitespace, or None if it is not email-shaped."""
+    text = re.sub(r"\s+", "", value or "").lower()
+    return text if EMAIL_PATTERN.fullmatch(text) else None
+
+
+def extract_phone(text: str) -> str | None:
+    """Return the first Singapore phone number in free text (spoken or written), as 8 digits."""
     run: list[str] = []
-
-    def flush() -> None:
-        if len(run) >= 2 and any(t.isdigit() for t in run):
-            out.append("".join(run))
-        else:
-            out.extend(run)
-        run.clear()
-
-    for tok in tokens:
-        if (
-            tok.isdigit()
-            or (len(tok) == 1 and tok.isalpha())
-            or re.fullmatch(r"[a-z]?\d+[a-z]?", tok)
-        ):
+    for tok in [*_spoken_tokens(text or ""), ""]:
+        if tok.isdigit():
             run.append(tok)
-        else:
-            flush()
-            out.append(tok)
-    flush()
-    return out
+            continue
+        found = normalize_phone("".join(run)) if run else None
+        if found:
+            return found
+        run.clear()
+    return None
 
 
-def extract_nric(text: str) -> str | None:
-    """Return the first NRIC/FIN-shaped ID in free text (spoken or written), uppercased."""
+def extract_email(text: str) -> str | None:
+    """Return the first email in free text: written ("a.b@x.com") or spoken ("a dot b at x dot com")."""
     if not text:
         return None
-    for tok in collapse_spelled_runs(_spoken_tokens(text)):
-        match = NRIC_PATTERN.search(tok)
-        if match:
-            return match.group(0).upper()
+    match = EMAIL_PATTERN.search(text.lower())
+    if match:
+        return match.group(0)
+    spoken = re.sub(r"[,;]", " ", text.lower())
+    for word, symbol in SPOKEN_EMAIL_WORDS.items():
+        spoken = re.sub(rf"\s+{word}\s+", symbol, spoken)
+    match = EMAIL_PATTERN.search(spoken)
+    # Spoken forms must end in a common TLD, so "at work dot ..." style phrases are not emails.
+    if match and match.group(0).rsplit(".", 1)[-1] in SPOKEN_EMAIL_TLDS:
+        return match.group(0)
     return None
 
 
@@ -109,19 +126,28 @@ def customer_lines(transcript: str) -> list[str]:
     ]
 
 
-def extract_nric_from_transcript(transcript: str) -> str | None:
+def _latest_on_customer_lines(transcript: str, extract) -> str | None:
     """Scan Customer: lines only, latest first."""
     for line in reversed(customer_lines(transcript)):
-        found = extract_nric(line)
+        found = extract(line)
         if found:
             return found
     return None
 
 
+def extract_phone_from_transcript(transcript: str) -> str | None:
+    return _latest_on_customer_lines(transcript, extract_phone)
+
+
+def extract_email_from_transcript(transcript: str) -> str | None:
+    return _latest_on_customer_lines(transcript, extract_email)
+
+
 def quick_patch(text: str) -> dict[str, str]:
     """Identity fields heard in one line of customer speech, for the instant (pre-LLM) DB lookup."""
     patch = {
-        "nric_worker_permit_id": extract_nric(text),
+        "contact_number": extract_phone(text),
+        "email": extract_email(text),
         "name": extract_intro_name(text),
     }
     return {k: v for k, v in patch.items() if v}

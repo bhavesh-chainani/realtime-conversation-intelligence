@@ -32,7 +32,7 @@ def _use(monkeypatch, content: str) -> _FakeAsyncClient:
 def test_short_transcript_skips_the_llm(monkeypatch):
     fake = _use(monkeypatch, "{}")
     assert asyncio.run(extract_entities("hi")) == dict.fromkeys(
-        ["name", "nric_worker_permit_id", "address", "purpose_of_call"]
+        ["name", "contact_number", "email", "purpose_of_call"]
     )
     assert fake.calls == []
 
@@ -40,20 +40,20 @@ def test_short_transcript_skips_the_llm(monkeypatch):
 def test_values_are_normalized_and_placeholders_dropped(monkeypatch):
     fake = _use(
         monkeypatch,
-        '{"name": "  Raja   Kumar  ", "nric_worker_permit_id": " s123 4567a ", "address": "N/A",'
+        '{"name": "  Raja   Kumar  ", "contact_number": " +65 8234 5678 ", "email": "N/A",'
         ' "purpose_of_call": " Salary dispute with employer "}',
     )
 
     data = asyncio.run(
         extract_entities(
-            "Customer: My name is Raja Kumar, NRIC s123 4567a. Salary dispute."
+            "Customer: My name is Raja Kumar, my number is 8234 5678. Salary dispute."
         )
     )
 
     assert data == {
         "name": "Raja Kumar",
-        "nric_worker_permit_id": "S1234567A",
-        "address": None,
+        "contact_number": "82345678",
+        "email": None,
         "purpose_of_call": "Salary dispute with employer",
     }
     call = fake.calls[0]
@@ -62,20 +62,31 @@ def test_values_are_normalized_and_placeholders_dropped(monkeypatch):
     assert "Customer lines" in call["messages"][0]["content"]
 
 
-def test_malformed_id_falls_back_to_regex_on_customer_lines(monkeypatch):
+def test_malformed_contacts_fall_back_to_regex_on_customer_lines(monkeypatch):
     _use(
         monkeypatch,
-        '{"name": "Katherine Liao", "nric_worker_permit_id": "S one two", "address": null}',
+        '{"name": "Katherine Liao", "contact_number": "nine one two", "email": "katherine at example"}',
     )
 
     data = asyncio.run(
         extract_entities(
-            "Staff: Could I have your NRIC?\nCustomer: Sure, it's S, one two three four five six seven, A."
+            "Staff: Could I have your number and email?\n"
+            "Customer: Sure, nine one two three, four five six seven. katherine dot liao at example dot com."
         )
     )
 
-    assert data["nric_worker_permit_id"] == "S1234567A"
+    assert data["contact_number"] == "91234567"
+    assert data["email"] == "katherine.liao@example.com"
     assert data["name"] == "Katherine Liao"
+
+
+def test_malformed_contacts_are_kept_for_staff_when_nothing_better_is_heard(
+    monkeypatch,
+):
+    _use(monkeypatch, '{"contact_number": "9123 45", "email": "Katherine At Example"}')
+    data = asyncio.run(extract_entities("Customer: It's nine one two three four five."))
+    assert data["contact_number"] == "9123 45"
+    assert data["email"] == "Katherine At Example"
 
 
 def test_foreign_script_values_are_blanked(monkeypatch):

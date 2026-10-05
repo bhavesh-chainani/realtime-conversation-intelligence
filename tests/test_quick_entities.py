@@ -3,42 +3,90 @@ from __future__ import annotations
 import pytest
 
 from backend.quick_entities import (
+    extract_email,
+    extract_email_from_transcript,
     extract_intro_name,
-    extract_nric,
-    extract_nric_from_transcript,
+    extract_phone,
+    extract_phone_from_transcript,
+    normalize_email,
+    normalize_phone,
+    quick_patch,
 )
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        "Sure, it's S1234567A.",
-        "Sure, it's S, one two three four five six seven, A.",
-        "s 1234567 a",
-        "my nric is s 1,234,567 a",
-        "it's s 12 345 67 a",
+        "Sure, it's 91234567.",
+        "My number is 9123 4567.",
+        "It's +65 9123 4567",
+        "9123-4567",
+        "nine one two three, four five six seven",
+        "nine one two three four five six seven, thanks",
     ],
 )
-def test_extract_nric_spoken_and_written_forms(text):
-    assert extract_nric(text) == "S1234567A"
+def test_extract_phone_spoken_and_written_forms(text):
+    assert extract_phone(text) == "91234567"
 
 
-def test_extract_nric_fin_and_non_matches():
-    assert extract_nric("my permit is G 6690312 P") == "G6690312P"
-    assert extract_nric("G double six nine zero three one two P") == "G6690312P"
-    assert extract_nric("I have 3 kids and 12 days of leave") is None
-    assert extract_nric("") is None
+def test_extract_phone_repeats_and_non_matches():
+    assert extract_phone("double eight two three, four five six seven") == "88234567"
+    assert extract_phone("six two triple three oh one two") == "62333012"
+    assert extract_phone("I have 3 kids and 12 days of leave") is None
+    assert extract_phone("They paid SGD 1,840 after mediation") is None
+    assert extract_phone("It's 9123 456") is None  # 7 digits
+    assert extract_phone("12345678") is None  # SG numbers start with 3, 6, 8 or 9
+    assert extract_phone("") is None
 
 
-def test_extract_nric_does_not_enforce_checksum():
-    # S1234567A fails the official checksum but is a seeded demo DB ID.
-    assert extract_nric("S1234567A") == "S1234567A"
+def test_normalize_phone():
+    assert normalize_phone("+65 9123 4567") == "91234567"
+    assert normalize_phone("6591234567") == "91234567"
+    assert normalize_phone("9123") is None
+    assert normalize_phone(None) is None
 
 
-def test_extract_nric_from_transcript_uses_customer_lines_only():
-    transcript = "Staff: Is it S7612094B?\nCustomer: No, it's S1234567A."
-    assert extract_nric_from_transcript(transcript) == "S1234567A"
-    assert extract_nric_from_transcript("Staff: Is it S1234567A?") is None
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("It's katherine.liao@example.com.", "katherine.liao@example.com"),
+        ("Katherine.Liao@Example.com", "katherine.liao@example.com"),
+        ("katherine dot liao at example dot com", "katherine.liao@example.com"),
+        ("my email is kliao at gmail dot com, thanks", "kliao@gmail.com"),
+        ("raj underscore kumar at example dot com dot sg", "raj_kumar@example.com.sg"),
+        ("I was at the office", None),
+        ("I was at work dot yesterday", None),
+        ("", None),
+    ],
+)
+def test_extract_email(text, expected):
+    assert extract_email(text) == expected
+
+
+def test_normalize_email():
+    assert (
+        normalize_email(" Katherine.Liao@Example.com ") == "katherine.liao@example.com"
+    )
+    assert normalize_email("katherine at example") is None
+
+
+def test_extract_from_transcript_uses_customer_lines_only():
+    transcript = (
+        "Staff: Is it 94567890, or david.tan@example.com?\n"
+        "Customer: No, it's 9123 4567, katherine.liao@example.com."
+    )
+    assert extract_phone_from_transcript(transcript) == "91234567"
+    assert extract_email_from_transcript(transcript) == "katherine.liao@example.com"
+    assert extract_phone_from_transcript("Staff: Is it 91234567?") is None
+    assert extract_email_from_transcript("Staff: Is it a@example.com?") is None
+
+
+def test_quick_patch():
+    assert quick_patch("I'm Katherine Liao, my number is 9123 4567.") == {
+        "contact_number": "91234567",
+        "name": "Katherine Liao",
+    }
+    assert quick_patch("My salary was cut.") == {}
 
 
 @pytest.mark.parametrize(

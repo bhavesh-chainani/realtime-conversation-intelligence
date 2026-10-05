@@ -1,4 +1,4 @@
-"""Entity agent: extracts the caller's name, NRIC / FIN, address and purpose of call from the transcript.
+"""Entity agent: extracts the caller's name, contact number, email and purpose of call from the transcript.
 
 The orchestrator runs it alongside the instant regex (backend/quick_entities.py) and uses what it
 finds to look the caller up in the customer DB.
@@ -20,7 +20,12 @@ from ..llm import (
 )
 from ..profile import FIELDS
 from ..prompt_loader import system_prompt, user_prompt
-from ..quick_entities import NRIC_PATTERN, extract_nric_from_transcript
+from ..quick_entities import (
+    extract_email_from_transcript,
+    extract_phone_from_transcript,
+    normalize_email,
+    normalize_phone,
+)
 from ..text_guard import has_foreign_script
 
 logger = logging.getLogger(__name__)
@@ -69,9 +74,8 @@ async def extract_entities(transcript: str) -> dict[str, str | None]:
     data = normalize_payload(
         json.loads(strip_code_fences(response.choices[0].message.content or ""))
     )
-    data["nric_worker_permit_id"] = reconcile_id(
-        data["nric_worker_permit_id"], transcript
-    )
+    data["contact_number"] = reconcile_phone(data["contact_number"], transcript)
+    data["email"] = reconcile_email(data["email"], transcript)
     # Drop any field the model wrote partly in another script; staff see it blank instead.
     for name, value in data.items():
         if value and has_foreign_script(value):
@@ -88,21 +92,28 @@ def normalize_payload(payload: Any) -> dict[str, str | None]:
 def normalize_value(name: str, value: Any) -> str | None:
     if value is None:
         return None
-    text = str(value).strip()
-    text = (
-        re.sub(r"\s+", "", text).upper()
-        if name == "nric_worker_permit_id"
-        else re.sub(r"\s+", " ", text)
-    )
+    text = re.sub(r"\s+", " ", str(value).strip())
     if text.lower() in PLACEHOLDER_VALUES:
         return None
+    # A malformed phone / email is kept as said so staff can see and fix it.
+    if name == "contact_number":
+        return normalize_phone(text) or text
+    if name == "email":
+        return normalize_email(text) or text
     if name == "name" and text.lower() in GENERIC_NAMES:
         return None
     return text
 
 
-def reconcile_id(llm_value: str | None, transcript: str) -> str | None:
-    """Prefer a well-formed ID from the model; otherwise a regex hit on Customer lines."""
-    if llm_value and NRIC_PATTERN.fullmatch(llm_value.lower()):
+def reconcile_phone(llm_value: str | None, transcript: str) -> str | None:
+    """Prefer a well-formed phone number from the model; otherwise a regex hit on Customer lines."""
+    if normalize_phone(llm_value):
         return llm_value
-    return extract_nric_from_transcript(transcript) or llm_value
+    return extract_phone_from_transcript(transcript) or llm_value
+
+
+def reconcile_email(llm_value: str | None, transcript: str) -> str | None:
+    """Prefer a well-formed email from the model; otherwise a regex hit on Customer lines."""
+    if normalize_email(llm_value):
+        return llm_value
+    return extract_email_from_transcript(transcript) or llm_value

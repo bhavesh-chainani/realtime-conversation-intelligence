@@ -60,7 +60,7 @@ export function useAssist(backendUrl: string) {
   /** The caller card's Look up button. New records refresh the suggestion for the latest turn. */
   const lookup = useCallback(async () => {
     const before = casesKey(stateRef.current.history);
-    const { name, nric_worker_permit_id } = stateRef.current.customer;
+    const { name, contact_number, email } = stateRef.current.customer;
     dispatch({ type: "manualLookupStart" });
     const epoch = stateRef.current.epoch;
     let raw: Record<string, unknown>;
@@ -70,7 +70,8 @@ export function useAssist(backendUrl: string) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim() || undefined,
-          nric_worker_permit_id: nric_worker_permit_id.trim() || undefined,
+          contact_number: contact_number.trim() || undefined,
+          email: email.trim() || undefined,
         }),
       });
       raw = res.ok

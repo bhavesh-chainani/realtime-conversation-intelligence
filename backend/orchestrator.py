@@ -1,8 +1,8 @@
 """POST /assist: runs both agents for one customer turn and streams the results as NDJSON events.
 
 Order for each turn:
-1. The instant regex reads the latest customer line and, when it hears an NRIC or full name, looks the
-   caller up in the customer DB straight away (`customer` and `history` events within milliseconds).
+1. The instant regex reads the latest customer line and, when it hears a phone number, email or full name,
+   looks the caller up in the customer DB straight away (`customer` and `history` events within milliseconds).
 2. A short debounce: the browser aborts this request when the next fragment arrives, so a turn that
    is still being spoken costs no LLM call.
 3. The entity agent (LLM extraction, only while fields are missing) runs alongside the suggestion
@@ -38,7 +38,14 @@ from . import config as cfg
 from .agents.entity_agent import extract_entities
 from .agents.suggestion_agent import suggest_with_fallback
 from .customer_history import CustomerCase, is_open_case_status
-from .profile import Profile, Source, cases_key, next_lookup, records_prefill
+from .profile import (
+    Profile,
+    Source,
+    cases_key,
+    identity_key,
+    next_lookup,
+    records_prefill,
+)
 from .quick_entities import quick_patch
 
 logger = logging.getLogger(__name__)
@@ -79,8 +86,8 @@ class AssistRequest(BaseModel):
 @dataclass(frozen=True)
 class AssistDeps:
     lookup: Callable[
-        [str | None, str | None], dict[str, Any]
-    ]  # blocking; run in a thread
+        [str | None, str | None, str | None], dict[str, Any]
+    ]  # (name, phone, email); blocking, run in a thread
     extract: Callable[[str], Awaitable[dict[str, str | None]]]
     suggest: Callable[..., Awaitable[dict[str, Any]]]
     debounce_s: float = 0.25
@@ -94,8 +101,8 @@ def default_deps() -> AssistDeps:
 
     return AssistDeps(
         # Read the service at call time so tests can replace it.
-        lookup=lambda name, nric: customer_history.customer_history_service.lookup(
-            name, nric
+        lookup=lambda name, phone, email: customer_history.customer_history_service.lookup(
+            name, phone, email
         ),
         extract=extract_entities,
         suggest=suggest_with_fallback,
@@ -157,14 +164,16 @@ class _AssistRun:
             return None
         values = self.profile.values
         request = next_lookup(
-            self.lookup_key, values["name"], values["nric_worker_permit_id"]
+            self.lookup_key, values["name"], values["contact_number"], values["email"]
         )
         if not request:
             return None
         self.lookups += 1
         self.lookup_key = request.key
         task = asyncio.create_task(
-            asyncio.to_thread(self.deps.lookup, request.name, request.nric)
+            asyncio.to_thread(
+                self.deps.lookup, request.name, request.phone, request.email
+            )
         )
         self.tasks[task] = "lookup"
         self.lookup_keys[task] = request.key
@@ -182,6 +191,14 @@ class _AssistRun:
             events = [_error_event("lookup", exc)]
         else:
             events = []
+        prefill = records_prefill(result)
+        accepted = self.profile.apply(prefill, "records") if prefill else {}
+        if prefill and key == self.lookup_key:
+            # The record may add the other contact detail; key on what the card now holds so the next
+            # turn does not look the same caller up again.
+            values = self.profile.values
+            key = identity_key(values["contact_number"], values["email"]) or key
+            self.lookup_key = key
         status = result.get("status") or "error"
         ok = status == "ok"
         self.match = result.get("match_strategy") if ok else None
@@ -203,8 +220,7 @@ class _AssistRun:
                 or "No customer history found.",
             }
         )
-        prefill = records_prefill(result)
-        if prefill and (accepted := self.profile.apply(prefill, "records")):
+        if accepted:
             events.append(_customer_event("records", accepted))
         return events
 

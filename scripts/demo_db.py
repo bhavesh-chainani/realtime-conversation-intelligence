@@ -12,26 +12,20 @@ import psycopg
 
 PGDATA = Path(__file__).resolve().parent.parent / "data" / "demo_pg"
 
+# (customer_id, name, contact_number, email). Phones are stored in mixed formats on purpose: the lookup
+# compares the last 8 digits, as a real case system will not be consistent either.
 CUSTOMERS = [
-    ("Katherine Liao", "S1234567A", "12 Tampines Street 45, #08-112, Singapore 520012"),
-    (
-        "Rajesh Kumar",
-        "G5512873K",
-        "Blk 305 Jurong East Ave 1, #04-21, Singapore 600305",
-    ),
-    ("Maria Santos", "F7734219N", "88 Serangoon Road, #10-03, Singapore 218000"),
-    ("David Tan", "S7612094B", "21 Bishan Street 13, #12-45, Singapore 570021"),
-    (
-        "Nguyen Van An",
-        "G6690312P",
-        "Blk 110 Woodlands Drive 16, #02-88, Singapore 730110",
-    ),
+    ("CUST-0001", "Katherine Liao", "+65 9123 4567", "katherine.liao@example.com"),
+    ("CUST-0002", "Rajesh Kumar", "8234 5678", "rajesh.kumar@example.com"),
+    ("CUST-0003", "Maria Santos", "+6593456789", "maria.santos@example.com"),
+    ("CUST-0004", "David Tan", "9456-7890", "david.tan@example.com"),
+    ("CUST-0005", "Nguyen Van An", "8567 8901", "nguyen.vanan@example.com"),
 ]
 
-# (nric, case_id, company, case_type, case_status, case_summary)
+# (customer_id, case_id, company, case_type, case_status, case_summary)
 CASES = [
     (
-        "S1234567A",
+        "CUST-0001",
         "CASE-2025-10421",
         "Brightpath Logistics Pte Ltd",
         "Salary dispute",
@@ -39,7 +33,7 @@ CASES = [
         "Unpaid overtime for March to May 2025. Employer paid SGD 1,840 after mediation.",
     ),
     (
-        "S1234567A",
+        "CUST-0001",
         "CASE-2026-03117",
         "Brightpath Logistics Pte Ltd",
         "Leave entitlement",
@@ -47,7 +41,7 @@ CASES = [
         "Claims annual leave was forfeited without notice. Awaiting employer response.",
     ),
     (
-        "G5512873K",
+        "CUST-0002",
         "CASE-2025-08833",
         "Harbourline Construction Pte Ltd",
         "Workplace injury",
@@ -55,7 +49,7 @@ CASES = [
         "Hand injury on site in Aug 2025. WICA claim approved and compensation paid.",
     ),
     (
-        "G5512873K",
+        "CUST-0002",
         "CASE-2026-01954",
         "Harbourline Construction Pte Ltd",
         "Work permit renewal",
@@ -63,7 +57,7 @@ CASES = [
         "Renewal submitted Jan 2026. Medical check-up report still outstanding.",
     ),
     (
-        "G5512873K",
+        "CUST-0002",
         "CASE-2026-04402",
         "Harbourline Construction Pte Ltd",
         "Housing complaint",
@@ -71,7 +65,7 @@ CASES = [
         "Reported overcrowded dormitory conditions. Inspection scheduled.",
     ),
     (
-        "F7734219N",
+        "CUST-0003",
         "CASE-2025-11760",
         "Evergreen Home Services",
         "Employment transfer",
@@ -79,7 +73,7 @@ CASES = [
         "Transfer to new employer approved in Nov 2025 with previous employer's consent.",
     ),
     (
-        "S7612094B",
+        "CUST-0004",
         "CASE-2024-06215",
         "Novatech Solutions Pte Ltd",
         "Wrongful dismissal",
@@ -87,7 +81,7 @@ CASES = [
         "Dismissed during probation. Claim withdrawn after settlement of one month's salary.",
     ),
     (
-        "G6690312P",
+        "CUST-0005",
         "CASE-2026-02288",
         "Sunrise Marine Engineering",
         "Salary deduction",
@@ -103,14 +97,15 @@ DROP TABLE IF EXISTS demo.customer_cases;
 DROP TABLE IF EXISTS demo.customers;
 
 CREATE TABLE demo.customers (
-  nric_worker_permit_id TEXT PRIMARY KEY,
+  customer_id TEXT PRIMARY KEY,
   customer_name TEXT NOT NULL,
-  address TEXT
+  contact_number TEXT UNIQUE,
+  email TEXT UNIQUE
 );
 
 CREATE TABLE demo.customer_cases (
   case_id TEXT PRIMARY KEY,
-  nric_worker_permit_id TEXT NOT NULL REFERENCES demo.customers(nric_worker_permit_id),
+  customer_id TEXT NOT NULL REFERENCES demo.customers(customer_id),
   company TEXT,
   case_type TEXT,
   case_status TEXT,
@@ -118,10 +113,10 @@ CREATE TABLE demo.customer_cases (
 );
 
 CREATE VIEW public.customer_history_view AS
-SELECT c.customer_name, c.nric_worker_permit_id, c.address, k.case_id, k.company,
+SELECT c.customer_name, c.contact_number, c.email, k.case_id, k.company,
        k.case_type, k.case_status, k.case_summary
 FROM demo.customer_cases k
-JOIN demo.customers c USING (nric_worker_permit_id)
+JOIN demo.customers c USING (customer_id)
 ORDER BY k.case_id DESC;
 """
 
@@ -135,12 +130,13 @@ def main() -> None:
         conn.execute(SCHEMA_SQL)
         with conn.cursor() as cur:
             cur.executemany(
-                "INSERT INTO demo.customers VALUES (%s, %s, %s)",
-                [(nric, name, addr) for name, nric, addr in CUSTOMERS],
+                "INSERT INTO demo.customers (customer_id, customer_name, contact_number, email) "
+                "VALUES (%s, %s, %s, %s)",
+                CUSTOMERS,
             )
             cur.executemany(
                 "INSERT INTO demo.customer_cases "
-                "(nric_worker_permit_id, case_id, company, case_type, case_status, case_summary) "
+                "(customer_id, case_id, company, case_type, case_status, case_summary) "
                 "VALUES (%s, %s, %s, %s, %s, %s)",
                 CASES,
             )
@@ -150,7 +146,6 @@ def main() -> None:
 
     print(f"Seeded {len(CUSTOMERS)} customers, {count} cases.")
     print(f"CUSTOMER_HISTORY_DATABASE_URL={uri}")
-    print("CUSTOMER_HISTORY_EXTRA_COLUMNS=address")
 
 
 if __name__ == "__main__":

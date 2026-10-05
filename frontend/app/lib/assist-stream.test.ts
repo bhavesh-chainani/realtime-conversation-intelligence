@@ -23,16 +23,16 @@ test("multi-byte characters split across network chunks survive TextDecoder stre
 test("events are validated and normalised", () => {
   assert.equal(parseAssistEvent({ type: "nope" }), null);
   assert.equal(parseAssistEvent({ type: "customer", source: "guess", patch: {} }), null);
-  assert.deepEqual(parseAssistEvent({ type: "history", status: "loading", lookup_key: "id:S1234567A" }), {
+  assert.deepEqual(parseAssistEvent({ type: "history", status: "loading", lookup_key: "id:91234567" }), {
     type: "history",
     status: "loading",
-    lookupKey: "id:S1234567A",
+    lookupKey: "id:91234567",
   });
   const history = parseAssistEvent({
     type: "history",
     status: "ok",
-    lookup_key: "id:S1234567A",
-    match_strategy: "nric_worker_permit_id",
+    lookup_key: "id:91234567",
+    match_strategy: "contact_number",
     cases: [{ case_id: "CASE-1", status: "Open" }],
     open_count: 1,
     summary: "1 case",
@@ -40,8 +40,8 @@ test("events are validated and normalised", () => {
   assert.deepEqual(history, {
     type: "history",
     status: "ok",
-    lookupKey: "id:S1234567A",
-    matchedOn: "nric_worker_permit_id",
+    lookupKey: "id:91234567",
+    matchedOn: "contact_number",
     cases: [{ case_id: "CASE-1", company: "", type: "", status: "Open", summary: "" }],
     openCount: 1,
     summary: "1 case",

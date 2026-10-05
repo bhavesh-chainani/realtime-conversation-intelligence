@@ -6,20 +6,18 @@ tests/fixtures/profile_precedence.json is checked by both test suites so the two
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, NamedTuple
 
-FIELDS = ("name", "nric_worker_permit_id", "address", "purpose_of_call")
+from .quick_entities import normalize_email, normalize_phone
+
+FIELDS = ("name", "contact_number", "email", "purpose_of_call")
 
 # Where a value came from: the instant regex, LLM extraction, the customer DB, or a staff edit.
 Source = Literal["heard", "ai", "records", "manual"]
 
-NRIC_SHAPE = re.compile(r"[STFGM]\d{7}[A-Z]")
-
-
-def is_nric_shape(value: str | None) -> bool:
-    return bool(NRIC_SHAPE.fullmatch(re.sub(r"\s+", "", value or "").upper()))
+# Match strategies that prove who the caller is. A name match is only a possible match.
+VERIFIED_MATCHES = ("contact_number", "email")
 
 
 @dataclass
@@ -40,7 +38,8 @@ class Profile:
         """Merge `patch` and return the values that changed.
 
         Staff edits always win; DB records beat anything heard or extracted; the instant regex hears
-        the NRIC exactly, so LLM reformatting may not replace it.
+        the phone number exactly, so LLM reformatting may not replace it. (Email is not locked: the spoken-email
+        regex is heuristic, so the LLM may correct it.)
         """
         accepted: dict[str, str] = {}
         for name, raw in patch.items():
@@ -50,11 +49,7 @@ class Profile:
             current = self.sources.get(name)
             if current == "manual" or (current == "records" and source != "records"):
                 continue
-            if (
-                source == "ai"
-                and name == "nric_worker_permit_id"
-                and current == "heard"
-            ):
+            if source == "ai" and name == "contact_number" and current == "heard":
                 continue
             if self.values[name] == value and current == source:
                 continue
@@ -77,17 +72,29 @@ class Profile:
 class LookupRequest(NamedTuple):
     key: str
     name: str | None = None
-    nric: str | None = None
+    phone: str | None = None
+    email: str | None = None
 
 
-def next_lookup(previous_key: str | None, name: str, nric: str) -> LookupRequest | None:
-    """The DB lookup to run, or None. A valid ID always wins and supersedes an earlier name lookup;
-    a full name (2+ words) is used only until an ID lookup has happened. Each identity is looked up once.
+def identity_key(phone: str | None, email: str | None) -> str | None:
+    """Lookup key for the valid phone and / or email, e.g. "id:91234567|a@example.com"."""
+    parts = [p for p in (normalize_phone(phone), normalize_email(email)) if p]
+    return "id:" + "|".join(parts) if parts else None
+
+
+def next_lookup(
+    previous_key: str | None, name: str, phone: str, email: str
+) -> LookupRequest | None:
+    """The DB lookup to run, or None. A valid phone or email always wins and supersedes an earlier name
+    lookup; hearing the other one later looks up again. A full name (2+ words) is used only until a
+    phone / email lookup has happened. Each identity is looked up once.
     """
-    clean_id = re.sub(r"\s+", "", nric or "").upper()
-    if is_nric_shape(clean_id):
-        key = f"id:{clean_id}"
-        return None if key == previous_key else LookupRequest(key, nric=clean_id)
+    if key := identity_key(phone, email):
+        if key == previous_key:
+            return None
+        return LookupRequest(
+            key, phone=normalize_phone(phone), email=normalize_email(email)
+        )
     if previous_key and previous_key.startswith("id:"):
         return None
     clean_name = " ".join((name or "").split())
@@ -98,15 +105,15 @@ def next_lookup(previous_key: str | None, name: str, nric: str) -> LookupRequest
 
 
 def records_prefill(result: dict[str, Any]) -> dict[str, str] | None:
-    """Fields to fill from a lookup result. Only an NRIC match is a verified identity."""
+    """Fields to fill from a lookup result. Only a phone or email match is a verified identity."""
     customer = result.get("customer")
-    if result.get("match_strategy") != "nric_worker_permit_id" or not isinstance(
+    if result.get("match_strategy") not in VERIFIED_MATCHES or not isinstance(
         customer, dict
     ):
         return None
     prefill = {
         f: str(customer[f]).strip()
-        for f in ("name", "nric_worker_permit_id", "address")
+        for f in ("name", "contact_number", "email")
         if isinstance(customer.get(f), str) and customer[f].strip()
     }
     return prefill or None

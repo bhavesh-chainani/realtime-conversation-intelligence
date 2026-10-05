@@ -10,7 +10,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from . import config as cfg
-from .profile import next_lookup, records_prefill
+from .profile import identity_key, next_lookup, records_prefill
+from .quick_entities import normalize_email, normalize_phone
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,12 @@ NO_CUSTOMER_RECORD = (
     "CUSTOMER RECORD: not yet retrieved. Do not mention or guess at prior cases."
 )
 
+MATCH_LABELS = {
+    "contact_number": "contact number",
+    "email": "email",
+    "name": "customer name",
+}
+
 # Statuses that mean a case needs no further action; anything else counts as open.
 CLOSED_CASE_STATUSES = {"resolved", "closed", "approved", "withdrawn", "completed"}
 
@@ -50,7 +57,7 @@ def is_open_case_status(status: str | None) -> bool:
 def verified_case_ids(
     customer_profile: dict[str, Any] | None, customer_cases: list[dict[str, Any]] | None
 ) -> set[str]:
-    """Case IDs the model may cite. A name-only match is unverified, so none until the NRIC matches."""
+    """Case IDs the model may cite. A name-only match is unverified, so none until a phone or email matches."""
     if (customer_profile or {}).get("record_match") == "name":
         return set()
     return {
@@ -71,17 +78,25 @@ def format_customer_record(
 
     ident = " | ".join(
         f"{label}: {profile[key]}"
-        for key, label in (("name", "Name"), ("nric_worker_permit_id", "NRIC"))
+        for key, label in (
+            ("name", "Name"),
+            ("contact_number", "Phone"),
+            ("email", "Email"),
+        )
         if profile.get(key)
     )
     open_count = sum(1 for c in cases if is_open_case_status(c.get("status")))
-    if profile.get("record_match") == "name":
+    match = profile.get("record_match")
+    if match == "name":
         header = (
             "CUSTOMER RECORD (possible match by NAME ONLY - identity NOT verified yet; "
-            "ask for NRIC / FIN before discussing any case details):"
+            "ask for the caller's contact number or email before discussing any case details):"
         )
     else:
-        header = "CUSTOMER RECORD (verified from the case system, matched on NRIC):"
+        matched_on = MATCH_LABELS.get(match, "contact details")
+        header = (
+            f"CUSTOMER RECORD (verified from the case system, matched on {matched_on}):"
+        )
     lines = [header]
     if ident:
         lines.append(ident)
@@ -110,7 +125,8 @@ def format_customer_record(
 
 class CustomerHistoryLookupRequest(BaseModel):
     name: str | None = None
-    nric_worker_permit_id: str | None = None
+    contact_number: str | None = None
+    email: str | None = None
 
 
 class CustomerHistoryService:
@@ -124,21 +140,27 @@ class CustomerHistoryService:
         )
 
     def lookup(
-        self, name: str | None, nric_worker_permit_id: str | None
+        self, name: str | None, phone: str | None, email: str | None
     ) -> dict[str, Any]:
         clean_name = self._clean_value(name)
-        clean_id = self._clean_value(nric_worker_permit_id)
+        clean_phone = normalize_phone(phone) or ""
+        clean_email = normalize_email(email) or ""
+        searched = {
+            "name": clean_name or None,
+            "contact_number": clean_phone or None,
+            "email": clean_email or None,
+        }
 
-        if not clean_name and not clean_id:
-            logger.info("[customer-history] invalid input: missing name and id")
+        if not clean_name and not clean_phone and not clean_email:
+            logger.info("[customer-history] invalid input: no name, phone or email")
             return self._response(
                 status="invalid_input",
                 success=False,
                 found=False,
-                message="Enter a customer name or NRIC / Work Permit ID to search history.",
+                message="Enter a customer name, contact number or email to search history.",
                 history_summary="",
                 cases=[],
-                customer={"name": None, "nric_worker_permit_id": None},
+                customer=searched,
             )
 
         if not self.is_configured():
@@ -150,14 +172,11 @@ class CustomerHistoryService:
                 message="Customer history lookup is not configured on this backend.",
                 history_summary="",
                 cases=[],
-                customer={
-                    "name": clean_name or None,
-                    "nric_worker_permit_id": clean_id or None,
-                },
+                customer=searched,
             )
 
         try:
-            rows, matched_on = self._query_rows(clean_id, clean_name)
+            rows, matched_on = self._query_rows(clean_phone, clean_email, clean_name)
             # Open cases first: they matter most to the operator and the prompt.
             rows = sorted(
                 rows, key=lambda r: not is_open_case_status(r.get("case_status"))
@@ -175,10 +194,7 @@ class CustomerHistoryService:
                     success=True,
                     found=False,
                     match_strategy=matched_on,
-                    customer={
-                        "name": clean_name or None,
-                        "nric_worker_permit_id": clean_id or None,
-                    },
+                    customer=searched,
                     message="No prior cases found for the provided details.",
                     history_summary="No prior cases found for the provided details.",
                     cases=[],
@@ -187,18 +203,25 @@ class CustomerHistoryService:
             customer_name = self._first_non_empty(
                 *(row.get("customer_name") for row in rows), fallback=clean_name
             )
-            customer_id = self._first_non_empty(
-                *(row.get("nric_worker_permit_id") for row in rows), fallback=clean_id
+            customer_phone = self._first_non_empty(
+                *(row.get("contact_number") for row in rows), fallback=clean_phone
             )
-            summary = self._build_summary(customer_name, customer_id, matched_on, cases)
+            customer_email = self._first_non_empty(
+                *(row.get("email") for row in rows), fallback=clean_email
+            )
+            summary = self._build_summary(customer_name, matched_on, cases)
             customer: dict[str, Any] = {
                 "name": customer_name or None,
-                "nric_worker_permit_id": customer_id or None,
+                "contact_number": customer_phone or None,
+                "email": customer_email or None,
             }
             for column in self._extra_columns():
                 customer[column] = (
                     self._first_non_empty(*(row.get(column) for row in rows)) or None
                 )
+            if matched_on == "name":
+                # Unverified: do not reveal the record's contact details to whoever said the name.
+                customer = {**searched, "name": customer_name or None}
 
             return self._response(
                 status="ok",
@@ -221,23 +244,25 @@ class CustomerHistoryService:
                 message="Customer history lookup failed. Please try again.",
                 history_summary="",
                 cases=[],
-                customer={
-                    "name": clean_name or None,
-                    "nric_worker_permit_id": clean_id or None,
-                },
+                customer=searched,
                 error=str(exc),
             )
 
     def _query_rows(
-        self, clean_id: str, clean_name: str
+        self, clean_phone: str, clean_email: str, clean_name: str
     ) -> tuple[list[dict[str, Any]], str]:
+        """Rows for the first of phone, email, name that matches, and which one matched.
+
+        Phones are compared on their last 8 digits, so "+65 9123 4567" in the DB matches "91234567".
+        """
         relation = self._relation_sql(cfg.CUSTOMER_HISTORY_VIEW)
         max_rows = max(1, int(cfg.CUSTOMER_HISTORY_MAX_ROWS))
         columns = sql.SQL(", ").join(
             sql.Identifier(col)
             for col in (
                 "customer_name",
-                "nric_worker_permit_id",
+                "contact_number",
+                "email",
                 "case_id",
                 "company",
                 "case_type",
@@ -247,44 +272,36 @@ class CustomerHistoryService:
             )
         )
 
+        attempts = [
+            (strategy, condition, value)
+            for strategy, condition, value in (
+                (
+                    "contact_number",
+                    "RIGHT(REGEXP_REPLACE(contact_number, '\\D', '', 'g'), 8) = %s",
+                    clean_phone,
+                ),
+                ("email", "LOWER(TRIM(email)) = %s", clean_email),
+                ("name", "LOWER(TRIM(customer_name)) = LOWER(TRIM(%s))", clean_name),
+            )
+            if value
+        ]
         with self._connect() as conn:
             with conn.cursor() as cur:
-                if clean_id:
-                    logger.info("[customer-history] attempting id lookup")
+                for strategy, condition, value in attempts:
+                    logger.info("[customer-history] attempting %s lookup", strategy)
                     cur.execute(
                         sql.SQL(
-                            """
-                            SELECT {columns}
-                            FROM {relation}
-                            WHERE UPPER(REPLACE(nric_worker_permit_id, ' ', '')) = UPPER(REPLACE(%s, ' ', ''))
-                            LIMIT %s
-                            """
+                            "SELECT {columns} FROM {relation} WHERE "
+                            + condition
+                            + " LIMIT %s"
                         ).format(columns=columns, relation=relation),
-                        (clean_id, max_rows),
+                        (value, max_rows),
                     )
                     rows = cur.fetchall()
                     if rows:
-                        return rows, "nric_worker_permit_id"
+                        return rows, strategy
 
-                if clean_name:
-                    logger.info("[customer-history] attempting name lookup")
-                    cur.execute(
-                        sql.SQL(
-                            """
-                            SELECT {columns}
-                            FROM {relation}
-                            WHERE LOWER(TRIM(customer_name)) = LOWER(TRIM(%s))
-                            LIMIT %s
-                            """
-                        ).format(columns=columns, relation=relation),
-                        (clean_name, max_rows),
-                    )
-                    rows = cur.fetchall()
-                    if rows:
-                        return rows, "name"
-
-        attempted = "nric_worker_permit_id" if clean_id else "name"
-        return [], attempted
+        return [], attempts[0][0]
 
     def _connect(self):
         if psycopg is None or dict_row is None:
@@ -301,7 +318,7 @@ class CustomerHistoryService:
         )
 
     def _extra_columns(self) -> list[str]:
-        """Validated optional columns (e.g. address) configured for this deployment."""
+        """Validated optional columns configured for this deployment."""
         return [
             col
             for col in cfg.CUSTOMER_HISTORY_EXTRA_COLUMNS
@@ -332,21 +349,12 @@ class CustomerHistoryService:
         }
 
     def _build_summary(
-        self,
-        customer_name: str,
-        customer_id: str,
-        matched_on: str,
-        cases: list[dict[str, str]],
+        self, customer_name: str, matched_on: str, cases: list[dict[str, str]]
     ) -> str:
         label = customer_name or "Customer"
-        if customer_id:
-            label = f"{label} ({customer_id})"
-
         base = f"{label} has {len(cases)} matching case{'s' if len(cases) != 1 else ''} in customer history."
-        if matched_on == "nric_worker_permit_id":
-            base += " Matched on NRIC / Work Permit ID."
-        elif matched_on == "name":
-            base += " Matched on customer name."
+        if matched_on in MATCH_LABELS:
+            base += f" Matched on {MATCH_LABELS[matched_on]}."
 
         first_summary = self._clean_value(cases[0].get("summary")) if cases else ""
         if first_summary:
@@ -374,10 +382,19 @@ customer_history_service = CustomerHistoryService()
 @router.post("/customer-history")
 def lookup_customer_history(req: CustomerHistoryLookupRequest) -> dict[str, Any]:
     """Manual Look up from the caller card. Live calls look the caller up inside POST /assist."""
-    result = customer_history_service.lookup(req.name, req.nric_worker_permit_id)
-    searched = next_lookup(None, req.name or "", req.nric_worker_permit_id or "")
-    return {
-        **result,
-        "lookup_key": searched.key if searched else None,
-        "prefill": records_prefill(result),
-    }
+    result = customer_history_service.lookup(req.name, req.contact_number, req.email)
+    searched = next_lookup(
+        None, req.name or "", req.contact_number or "", req.email or ""
+    )
+    prefill = records_prefill(result)
+    key = searched.key if searched else None
+    if prefill:
+        # Key on the record's phone / email, which the card will now hold (see orchestrator.finish_lookup).
+        key = (
+            identity_key(
+                prefill.get("contact_number") or req.contact_number,
+                prefill.get("email") or req.email,
+            )
+            or key
+        )
+    return {**result, "lookup_key": key, "prefill": prefill}
