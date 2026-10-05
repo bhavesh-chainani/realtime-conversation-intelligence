@@ -151,3 +151,12 @@ def quick_patch(text: str) -> dict[str, str]:
         "name": extract_intro_name(text),
     }
     return {k: v for k, v in patch.items() if v}
+
+
+def quick_patch_from_lines(texts: list[str]) -> dict[str, str]:
+    """Identity fields heard across several lines of customer speech; the latest mention of each wins."""
+    patch: dict[str, str] = {}
+    for text in reversed(texts):
+        for key, value in quick_patch(text).items():
+            patch.setdefault(key, value)
+    return patch

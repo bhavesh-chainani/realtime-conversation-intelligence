@@ -438,3 +438,30 @@ def test_suggestion_sees_what_staff_can_see_now():
         deps(suggest=suggest),
     )
     assert suggest.calls[0]["previous"] == ["May I have your name?", "b", "c"]
+
+
+def test_identity_from_an_earlier_customer_line_fills_a_blank_card():
+    lookup, suggest = FakeLookup(), FakeSuggest()
+    events = run(
+        request(
+            "Customer: Hi, I'm Ahmad Rahim, my boss deducted 400 dollars.",
+            "Staff: May I have your contact number and email address?",
+            "Customer: It's 8111 2222.",
+        ),
+        deps(lookup, suggest=suggest),
+    )
+    assert events[0]["patch"] == {"name": "Ahmad Rahim", "contact_number": "81112222"}
+    assert suggest.calls[0]["profile"]["name"] == "Ahmad Rahim"
+
+
+def test_earlier_lines_do_not_override_what_the_card_has():
+    events = run(
+        request(
+            "Customer: I'm Ahmad Rahim.",
+            "Customer: My salary was cut.",
+            customer={"name": "Ahmad bin Rahim"},
+            sources={"name": "manual"},
+        ),
+        deps(),
+    )
+    assert "customer:heard" not in kinds(events)

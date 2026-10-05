@@ -11,6 +11,7 @@ from backend.quick_entities import (
     normalize_email,
     normalize_phone,
     quick_patch,
+    quick_patch_from_lines,
 )
 
 
@@ -101,3 +102,15 @@ def test_quick_patch():
 )
 def test_extract_intro_name(text, expected):
     assert extract_intro_name(text) == expected
+
+
+def test_quick_patch_from_lines_latest_mention_wins():
+    lines = [
+        "I'm Ahmad Rahim, my boss deducted 400 dollars.",
+        "My old number was 8111 2222.",
+        "Sorry, it's 8111 3333 now.",
+    ]
+    assert quick_patch_from_lines(lines) == {
+        "contact_number": "81113333",
+        "name": "Ahmad Rahim",
+    }

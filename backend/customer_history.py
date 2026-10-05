@@ -45,24 +45,6 @@ CARD_FIELDS = (
     ("purpose_of_call", "Purpose of call"),
 )
 
-# What the suggestion agent is told about the history check, by orchestrator lookup status.
-HISTORY_CHECK = {
-    "pending": "in progress. Do not mention prior cases yet, and do not ask for more identity details.",
-    "verified": "done, verified (matched on {matched_on}). Do not ask for identity details again.",
-    "name": (
-        "possible match by NAME ONLY, not verified. Ask for the caller's contact number to confirm "
-        "before discussing any case details."
-    ),
-    "new_caller": (
-        "done, no prior cases found. Treat this as a new caller and do not ask for more identity details."
-    ),
-    "not_found_by_name": (
-        "no record under that name. Ask for the caller's contact number to check again "
-        "(the name may be recorded differently)."
-    ),
-    "unavailable": "the case system could not be checked. Carry on without history.",
-}
-
 MATCH_LABELS = {
     "contact_number": "contact number",
     "email": "email",
@@ -90,31 +72,73 @@ def verified_case_ids(
     }
 
 
+def _missing_identity(profile: dict[str, Any]) -> list[str]:
+    """Identity details still to ask for: the history check uses the contact number and email."""
+    missing = [] if profile.get("name") else ["full name"]
+    for key, label, valid in (
+        ("contact_number", "contact number", normalize_phone),
+        ("email", "email address", normalize_email),
+    ):
+        if not profile.get(key):
+            missing.append(label)
+        elif not valid(profile[key]):
+            missing.append(f"a complete {label} (the one on the card looks incomplete)")
+    return missing
+
+
+def _joined(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
 def format_caller_card(profile: dict[str, Any] | None) -> str:
-    """What Staff already know about the caller, and where the history check stands."""
+    """What Staff already know about the caller, and where the history check stands.
+
+    Every state names the identity details still missing, so the agent asks for them together, once.
+    """
     profile = profile or {}
     known = " | ".join(
         f"{label}: {profile.get(key) or 'not given'}" for key, label in CARD_FIELDS
     )
+    missing = _missing_identity(profile)
+    ask = f"Ask for the caller's {_joined(missing)} in one question" if missing else ""
     has_contact = bool(
         normalize_phone(profile.get("contact_number"))
         or normalize_email(profile.get("email"))
     )
     status = profile.get("lookup_status") or "not_started"
-    if status == "not_found":
-        status = "new_caller" if has_contact else "not_found_by_name"
-    if status == "not_started":
-        if profile.get("contact_number") and not has_contact:
-            needs = "a complete contact number (the one on the card looks incomplete)"
-        elif profile.get("name"):
-            needs = "contact number"
-        else:
-            needs = "full name and contact number"
-        check = f"not done yet. It needs the caller's {needs}."
-    else:
+    if status == "pending":
+        check = "in progress. Do not mention prior cases yet. " + (
+            f"{ask}." if missing else "Do not ask for more identity details."
+        )
+    elif status == "verified":
         matched_on = MATCH_LABELS.get(profile.get("record_match"), "contact details")
-        check = HISTORY_CHECK.get(status, HISTORY_CHECK["unavailable"]).format(
-            matched_on=matched_on
+        check = f"done, verified (matched on {matched_on}). Do not ask for identity details again."
+    elif status == "name":
+        needs = [m for m in missing if m != "full name"] or ["contact number"]
+        check = (
+            "possible match by NAME ONLY, not verified. Ask for the caller's "
+            f"{_joined(needs)} to confirm before discussing any case details."
+        )
+    elif status == "not_found" and has_contact:
+        check = "done, no prior cases found for the details given. " + (
+            f"{ask}, to check once more and complete the record."
+            if missing
+            else "Treat this as a new caller and do not ask for more identity details."
+        )
+    elif status == "not_found":
+        check = (
+            "no record under that name (it may be recorded differently). "
+            f"{ask}, to check again."  # without a valid phone / email, both are missing
+        )
+    elif status == "unavailable":
+        check = "the case system could not be checked. Carry on without history." + (
+            f" Still {ask[0].lower()}{ask[1:]}, for the record." if missing else ""
+        )
+    else:
+        check = "not done yet. " + (
+            f"{ask}, so the history check can run."
+            if missing
+            else "It runs once a valid contact number or email is given."
         )
     return (
         "CALLER CARD (details Staff already have; never ask for these again):\n"

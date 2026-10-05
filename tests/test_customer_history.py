@@ -216,32 +216,60 @@ def test_name_only_match_does_not_reveal_contact_details(monkeypatch):
     }
 
 
-def test_caller_card_lists_what_is_known_and_what_the_check_needs():
+def test_caller_card_lists_what_is_known_and_what_to_ask_for():
     card = format_caller_card({})
-    assert "Name: not given | Contact number: not given" in card
-    assert "needs the caller's full name and contact number" in card
+    assert "Name: not given | Contact number: not given | Email: not given" in card
+    assert (
+        "Ask for the caller's full name, contact number and email address in one question"
+        in card
+    )
 
-    card = format_caller_card({"name": "Katherine", "lookup_status": "not_started"})
-    assert "Name: Katherine" in card and "needs the caller's contact number" in card
+    card = format_caller_card(
+        {"name": "Katherine Liao", "lookup_status": "not_started"}
+    )
+    assert "Name: Katherine Liao" in card
+    assert (
+        "Ask for the caller's contact number and email address in one question" in card
+    )
 
     card = format_caller_card(
         {"contact_number": "9123 45", "lookup_status": "not_started"}
     )
-    assert "complete contact number" in card
+    assert "a complete contact number" in card
 
 
 def test_caller_card_history_check_states():
     def check(**profile):
         return format_caller_card(profile).split("HISTORY CHECK: ", 1)[1]
 
-    assert check(lookup_status="pending").startswith("in progress")
+    # A phone was heard and is being looked up: still collect the email meanwhile.
+    pending = check(
+        lookup_status="pending", name="Rajesh Kumar", contact_number="82345678"
+    )
+    assert (
+        pending.startswith("in progress")
+        and "Ask for the caller's email address" in pending
+    )
     assert "verified (matched on email)" in check(
         lookup_status="verified", record_match="email"
     )
-    assert "NAME ONLY" in check(lookup_status="name", name="Katherine Liao")
-    # Not found by phone: a new caller. Not found by name only: ask for a contact number.
-    assert "new caller" in check(lookup_status="not_found", contact_number="81112222")
-    assert "Ask for the caller's contact number" in check(
+    by_name = check(lookup_status="name", name="Katherine Liao")
+    assert (
+        "NAME ONLY" in by_name
+        and "contact number and email address to confirm" in by_name
+    )
+    # Not found by phone: ask for the email to check once more; with both, a new caller.
+    assert "Ask for the caller's email address" in check(
+        lookup_status="not_found", name="A B", contact_number="81112222"
+    )
+    assert "new caller" in check(
+        lookup_status="not_found",
+        name="A B",
+        contact_number="81112222",
+        email="a@b.com",
+    )
+    # Not found by name only: ask for both contact details.
+    assert "contact number and email address in one question, to check again" in check(
         lookup_status="not_found", name="Katherine Liao"
     )
     assert "could not be checked" in check(lookup_status="unavailable")

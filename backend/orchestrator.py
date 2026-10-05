@@ -46,7 +46,7 @@ from .profile import (
     next_lookup,
     records_prefill,
 )
-from .quick_entities import quick_patch
+from .quick_entities import quick_patch, quick_patch_from_lines
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +236,15 @@ class _AssistRun:
             events.append(_customer_event("records", accepted))
         return events
 
+    def heard_patch(self, trigger: str) -> dict[str, str]:
+        """Identity heard in the latest line, plus any field still blank that an earlier customer line
+        gave (e.g. a name said two turns before the phone number)."""
+        earlier = quick_patch_from_lines(
+            [t.text for t in self.turns if t.role == "customer"]
+        )
+        blank = {k: v for k, v in earlier.items() if not self.profile.values[k]}
+        return {**blank, **quick_patch(trigger)}
+
     def lookup_status(self) -> str:
         """Where the history check stands, as the suggestion agent should see it."""
         if "lookup" in self.tasks.values() or self.history_status == "loading":
@@ -309,7 +318,7 @@ class _AssistRun:
             trigger = next(
                 (t.text for t in reversed(self.turns) if t.role != "staff"), ""
             )
-            if heard := self.profile.apply(quick_patch(trigger), "heard"):
+            if heard := self.profile.apply(self.heard_patch(trigger), "heard"):
                 yield _customer_event("heard", heard)
             if loading := self.start_lookup():
                 yield loading

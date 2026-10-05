@@ -105,7 +105,7 @@ def test_without_history_prompt_says_not_retrieved(monkeypatch):
     assert "CUSTOMER RECORD: none" in prompt
     assert (
         "CALLER CARD" in prompt
-        and "needs the caller's full name and contact number" in prompt
+        and "full name, contact number and email address" in prompt
     )
     assert "SUGGESTION STAFF CAN SEE NOW (from the previous turn):\nnone" in prompt
     assert body["suggestions"][0]["source"] == "conversation"
@@ -178,5 +178,5 @@ def test_previous_suggestion_and_caller_card_are_in_the_prompt(monkeypatch):
     assert (
         "Name: Katherine Liao | Contact number: 81112222 | Email: not given" in prompt
     )
-    assert "new caller" in prompt
+    assert "Ask for the caller's email address" in prompt
     assert "- May I have your full name and a contact number?" in prompt
