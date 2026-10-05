@@ -28,9 +28,13 @@ class Profile:
     sources: dict[str, Source] = field(default_factory=dict)
 
     @classmethod
-    def from_request(cls, customer: dict[str, str], sources: dict[str, Source]) -> Profile:
+    def from_request(
+        cls, customer: dict[str, str], sources: dict[str, Source]
+    ) -> Profile:
         values = {f: (customer.get(f) or "").strip() for f in FIELDS}
-        return cls(values, {f: s for f, s in sources.items() if f in FIELDS and values[f]})
+        return cls(
+            values, {f: s for f, s in sources.items() if f in FIELDS and values[f]}
+        )
 
     def apply(self, patch: dict[str, str | None], source: Source) -> dict[str, str]:
         """Merge `patch` and return the values that changed.
@@ -46,7 +50,11 @@ class Profile:
             current = self.sources.get(name)
             if current == "manual" or (current == "records" and source != "records"):
                 continue
-            if source == "ai" and name == "nric_worker_permit_id" and current == "heard":
+            if (
+                source == "ai"
+                and name == "nric_worker_permit_id"
+                and current == "heard"
+            ):
                 continue
             if self.values[name] == value and current == source:
                 continue
@@ -92,7 +100,9 @@ def next_lookup(previous_key: str | None, name: str, nric: str) -> LookupRequest
 def records_prefill(result: dict[str, Any]) -> dict[str, str] | None:
     """Fields to fill from a lookup result. Only an NRIC match is a verified identity."""
     customer = result.get("customer")
-    if result.get("match_strategy") != "nric_worker_permit_id" or not isinstance(customer, dict):
+    if result.get("match_strategy") != "nric_worker_permit_id" or not isinstance(
+        customer, dict
+    ):
         return None
     prefill = {
         f: str(customer[f]).strip()

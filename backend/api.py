@@ -16,7 +16,9 @@ from .orchestrator import router as assist_router
 from .stt_relay import issue_ticket
 from .stt_relay import router as stt_relay_router
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,10 @@ async def ready():
     """What is configured and loaded. `ready` means a live call can be transcribed and assisted."""
     llm_configured = bool(llm_runtime_config()["llm_configured"])
     transcription_configured = bool(cfg.ASSEMBLYAI_API_KEY)
-    diarization: dict = {"ready": nemotron.get_diarizer() is not None, "mode": cfg.DIARIZATION_MODE}
+    diarization: dict = {
+        "ready": nemotron.get_diarizer() is not None,
+        "mode": cfg.DIARIZATION_MODE,
+    }
     if nemotron.load_error():
         diarization["error"] = nemotron.load_error()
     return {
@@ -70,7 +75,10 @@ async def ready():
 async def stt_session():
     """A one-time ticket for the live transcription relay (/ws/stt)."""
     if not cfg.ASSEMBLYAI_API_KEY:
-        raise HTTPException(status_code=503, detail="Transcription not configured: set ASSEMBLYAI_API_KEY")
+        raise HTTPException(
+            status_code=503,
+            detail="Transcription not configured: set ASSEMBLYAI_API_KEY",
+        )
     return {"path": "/ws/stt", "ticket": issue_ticket()}
 
 

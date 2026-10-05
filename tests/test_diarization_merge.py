@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-from backend.diarization.merge import WordSpeaker, majority, smooth, split_by_speaker, word_speakers
+from backend.diarization.merge import (
+    WordSpeaker,
+    majority,
+    smooth,
+    split_by_speaker,
+    word_speakers,
+)
 
 
-def activity(spans: list[tuple[int, int, int]], total_ms: int, speakers: int = 2) -> list[list[float]]:
+def activity(
+    spans: list[tuple[int, int, int]], total_ms: int, speakers: int = 2
+) -> list[list[float]]:
     """10 ms frames; each (start_ms, end_ms, speaker) span is active at 0.9, everything else 0.05."""
     frames = [[0.05] * speakers for _ in range(total_ms // 10)]
     for start, end, spk in spans:
@@ -48,7 +56,10 @@ def test_smooth_fills_unattributed_words_from_neighbours():
 def test_split_merged_turn_at_speaker_change():
     words = [word("Thank", 0, 100), word("you.", 100, 200), word("Okay.", 400, 600)]
     segments = split_by_speaker(words, [0, 0, 1])
-    assert [(s["speaker"], s["text"]) for s in segments] == [(0, "Thank you."), (1, "Okay.")]
+    assert [(s["speaker"], s["text"]) for s in segments] == [
+        (0, "Thank you."),
+        (1, "Okay."),
+    ]
 
 
 def test_majority_ignores_unattributed():

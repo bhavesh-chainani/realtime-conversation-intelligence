@@ -44,7 +44,10 @@ NOT_FOUND = {"status": "not_found", "cases": [], "message": "No prior cases foun
 
 class FakeLookup:
     def __init__(
-        self, by_id: dict | None = None, by_name: dict | None = None, error: Exception | None = None
+        self,
+        by_id: dict | None = None,
+        by_name: dict | None = None,
+        error: Exception | None = None,
     ):
         self.by_id, self.by_name, self.error = by_id or {}, by_name or {}, error
         self.calls: list[tuple[str | None, str | None]] = []
@@ -69,7 +72,9 @@ class FakeSuggest:
 
     async def __call__(self, transcript, max_suggestions, profile, cases):
         round_ = len(self.calls) + 1
-        self.calls.append({"transcript": transcript, "profile": profile, "cases": cases})
+        self.calls.append(
+            {"transcript": transcript, "profile": profile, "cases": cases}
+        )
         if round_ in self.block_rounds:
             try:
                 await self.gate.wait()
@@ -79,7 +84,9 @@ class FakeSuggest:
         return {"suggestions": [{"topic": f"round {round_}"}], "timings": {"llm_ms": 1}}
 
 
-def make_extract(result: dict | None = None, delay: float = 0, error: Exception | None = None):
+def make_extract(
+    result: dict | None = None, delay: float = 0, error: Exception | None = None
+):
     calls: list[str] = []
 
     async def extract(transcript):
@@ -130,7 +137,8 @@ def test_nric_turn_looks_up_at_once_and_grounds_the_suggestion():
     lookup, suggest = FakeLookup(by_id={"S1234567A": NRIC_MATCH}), FakeSuggest()
     events = run(
         request(
-            "Staff: May I have your NRIC?", "Customer: Sure, it's S one two three four five six seven A."
+            "Staff: May I have your NRIC?",
+            "Customer: Sure, it's S one two three four five six seven A.",
         ),
         deps(lookup, suggest=suggest),
     )
@@ -152,7 +160,9 @@ def test_nric_turn_looks_up_at_once_and_grounds_the_suggestion():
     call = suggest.calls[0]
     assert call["cases"] == CASES
     assert call["profile"]["record_match"] == "nric_worker_permit_id"
-    assert call["transcript"].endswith("Customer: Sure, it's S one two three four five six seven A.")
+    assert call["transcript"].endswith(
+        "Customer: Sure, it's S one two three four five six seven A."
+    )
 
 
 def test_known_identity_is_not_looked_up_again():
@@ -162,7 +172,11 @@ def test_known_identity_is_not_looked_up_again():
             "Customer: My employer cut my leave.",
             customer=CUSTOMER,
             sources=dict.fromkeys(CUSTOMER, "records"),
-            history={"lookup_key": "id:S1234567A", "match_strategy": "nric_worker_permit_id", "cases": CASES},
+            history={
+                "lookup_key": "id:S1234567A",
+                "match_strategy": "nric_worker_permit_id",
+                "cases": CASES,
+            },
         ),
         deps(lookup, suggest=suggest),
     )
@@ -173,7 +187,10 @@ def test_known_identity_is_not_looked_up_again():
 
 def test_name_only_match_is_unverified():
     lookup, suggest = FakeLookup(by_name={"Katherine Liao": NAME_MATCH}), FakeSuggest()
-    events = run(request("Customer: Hi, my name is Katherine Liao."), deps(lookup, suggest=suggest))
+    events = run(
+        request("Customer: Hi, my name is Katherine Liao."),
+        deps(lookup, suggest=suggest),
+    )
 
     assert lookup.calls == [("Katherine Liao", None)]
     assert "customer:records" not in kinds(events)  # no prefill without an NRIC match
@@ -229,7 +246,10 @@ def test_records_arriving_after_a_suggestion_add_a_second_round():
 def test_extraction_only_runs_while_fields_are_missing():
     extract = make_extract()
     full = {**CUSTOMER, "purpose_of_call": "Leave dispute"}
-    run(request("Customer: Thanks.", customer=full, sources=dict.fromkeys(full, "ai")), deps(extract=extract))
+    run(
+        request("Customer: Thanks.", customer=full, sources=dict.fromkeys(full, "ai")),
+        deps(extract=extract),
+    )
     run(request("Customer: Thanks.", extract=False), deps(extract=extract))
     assert extract.calls == []
 
@@ -240,10 +260,18 @@ def test_extraction_only_runs_while_fields_are_missing():
 def test_failures_are_reported_in_band_and_done_still_comes_last():
     events = run(
         request("Customer: It's S1234567A."),
-        deps(FakeLookup(error=RuntimeError("db down")), make_extract(error=RuntimeError("llm down"))),
+        deps(
+            FakeLookup(error=RuntimeError("db down")),
+            make_extract(error=RuntimeError("llm down")),
+        ),
     )
     assert "error:lookup" in kinds(events) and "error:extract" in kinds(events)
-    assert next(e for e in events if e["type"] == "history" and e["status"] != "loading")["status"] == "error"
+    assert (
+        next(e for e in events if e["type"] == "history" and e["status"] != "loading")[
+            "status"
+        ]
+        == "error"
+    )
     assert "suggestions:1" in kinds(events) and kinds(events)[-1] == "done"
 
 
@@ -256,7 +284,9 @@ def test_client_disconnect_cancels_pending_work():
     suggest = FakeSuggest(block_rounds=(1,))
 
     async def scenario():
-        stream = run_assist(request("Customer: My employer cut my salary again."), deps(suggest=suggest))
+        stream = run_assist(
+            request("Customer: My employer cut my salary again."), deps(suggest=suggest)
+        )
         async for event in stream:
             if event["type"] == "suggesting":
                 break
@@ -274,7 +304,14 @@ def test_endpoint_streams_ndjson(client):
     try:
         r = client.post(
             "/assist",
-            json={"turns": [{"role": "customer", "text": "My NRIC is S1234567A, and my leave was cut."}]},
+            json={
+                "turns": [
+                    {
+                        "role": "customer",
+                        "text": "My NRIC is S1234567A, and my leave was cut.",
+                    }
+                ]
+            },
         )
     finally:
         app.dependency_overrides.clear()

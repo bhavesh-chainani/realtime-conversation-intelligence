@@ -5,9 +5,17 @@ from pathlib import Path
 
 import pytest
 
-from backend.profile import Profile, cases_key, is_nric_shape, next_lookup, records_prefill
+from backend.profile import (
+    Profile,
+    cases_key,
+    is_nric_shape,
+    next_lookup,
+    records_prefill,
+)
 
-PRECEDENCE = json.loads((Path(__file__).parent / "fixtures" / "profile_precedence.json").read_text())
+PRECEDENCE = json.loads(
+    (Path(__file__).parent / "fixtures" / "profile_precedence.json").read_text()
+)
 
 
 @pytest.mark.parametrize("case", PRECEDENCE, ids=[c["case"] for c in PRECEDENCE])
@@ -20,7 +28,10 @@ def test_field_precedence(case):
 def test_missing_and_suggestion_payload():
     profile = Profile.from_request({"name": "Katherine Liao"}, {"name": "heard"})
     assert profile.missing() == ["nric_worker_permit_id", "address", "purpose_of_call"]
-    assert profile.suggestion_payload("name") == {"name": "Katherine Liao", "record_match": "name"}
+    assert profile.suggestion_payload("name") == {
+        "name": "Katherine Liao",
+        "record_match": "name",
+    }
     assert profile.suggestion_payload(None) == {"name": "Katherine Liao"}
 
 
@@ -51,7 +62,9 @@ def test_records_prefill_only_on_nric_match():
         "address": "12 Tampines",
         "x": 1,
     }
-    assert records_prefill({"match_strategy": "nric_worker_permit_id", "customer": customer}) == {
+    assert records_prefill(
+        {"match_strategy": "nric_worker_permit_id", "customer": customer}
+    ) == {
         "name": "Katherine Liao",
         "nric_worker_permit_id": "S1234567A",
         "address": "12 Tampines",

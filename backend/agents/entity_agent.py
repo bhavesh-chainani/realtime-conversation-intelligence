@@ -12,7 +12,12 @@ import re
 from typing import Any
 
 from .. import config as cfg
-from ..llm import get_async_llm_client, get_extraction_model, llm_extra_params, strip_code_fences
+from ..llm import (
+    get_async_llm_client,
+    get_extraction_model,
+    llm_extra_params,
+    strip_code_fences,
+)
 from ..profile import FIELDS
 from ..prompt_loader import system_prompt, user_prompt
 from ..quick_entities import NRIC_PATTERN, extract_nric_from_transcript
@@ -54,12 +59,19 @@ async def extract_entities(transcript: str) -> dict[str, str | None]:
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt("entity")},
-            {"role": "user", "content": user_prompt("entity", conversation_transcript=transcript)},
+            {
+                "role": "user",
+                "content": user_prompt("entity", conversation_transcript=transcript),
+            },
         ],
         **llm_extra_params(),
     )
-    data = normalize_payload(json.loads(strip_code_fences(response.choices[0].message.content or "")))
-    data["nric_worker_permit_id"] = reconcile_id(data["nric_worker_permit_id"], transcript)
+    data = normalize_payload(
+        json.loads(strip_code_fences(response.choices[0].message.content or ""))
+    )
+    data["nric_worker_permit_id"] = reconcile_id(
+        data["nric_worker_permit_id"], transcript
+    )
     # Drop any field the model wrote partly in another script; staff see it blank instead.
     for name, value in data.items():
         if value and has_foreign_script(value):
@@ -77,7 +89,11 @@ def normalize_value(name: str, value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
-    text = re.sub(r"\s+", "", text).upper() if name == "nric_worker_permit_id" else re.sub(r"\s+", " ", text)
+    text = (
+        re.sub(r"\s+", "", text).upper()
+        if name == "nric_worker_permit_id"
+        else re.sub(r"\s+", " ", text)
+    )
     if text.lower() in PLACEHOLDER_VALUES:
         return None
     if name == "name" and text.lower() in GENERIC_NAMES:

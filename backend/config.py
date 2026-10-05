@@ -23,7 +23,12 @@ def _float(name: str, default: float) -> float:
 
 
 def _bool(name: str, default: bool) -> bool:
-    return _str(name, "true" if default else "false").lower() in {"1", "true", "yes", "on"}
+    return _str(name, "true" if default else "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _list(name: str, default: str = "") -> list[str]:
@@ -40,7 +45,9 @@ ASSEMBLYAI_KEYTERMS = _list("ASSEMBLYAI_KEYTERMS")[:100]
 # Turn detection. Shorter end-of-turn silence makes finished lines appear sooner (~1.0 s vs ~1.6 s
 # with u3-rt-pro) without hurting accuracy.
 ASSEMBLYAI_STREAM_PARAMS = {
-    "min_end_of_turn_silence_when_confident": str(_int("ASSEMBLYAI_END_OF_TURN_SILENCE_MS", 240)),
+    "min_end_of_turn_silence_when_confident": str(
+        _int("ASSEMBLYAI_END_OF_TURN_SILENCE_MS", 240)
+    ),
     "max_turn_silence": str(_int("ASSEMBLYAI_MAX_TURN_SILENCE_MS", 1000)),
 }
 
@@ -51,7 +58,11 @@ ASSEMBLYAI_STREAM_PARAMS = {
 _default_diar_model = REPO_ROOT / "data" / "models" / "Nemotron-3-Diarization"
 DIARIZATION_MODEL = _str(
     "DIARIZATION_MODEL",
-    str(_default_diar_model) if _default_diar_model.exists() else "nvidia/Nemotron-3-Diarization",
+    (
+        str(_default_diar_model)
+        if _default_diar_model.exists()
+        else "nvidia/Nemotron-3-Diarization"
+    ),
 )
 DIARIZATION_DEVICE = _str("DIARIZATION_DEVICE", "cpu").lower()
 _diar_on_gpu = DIARIZATION_DEVICE.startswith("cuda")
@@ -61,7 +72,9 @@ DIARIZATION_MODE = _str("DIARIZATION_MODE", "low_latency" if _diar_on_gpu else "
 DIARIZATION_INT8 = _bool("DIARIZATION_INT8", not _diar_on_gpu)
 DIARIZATION_THREADS = _int("DIARIZATION_THREADS", 4)
 # Longest a finished turn waits for the diariser to catch up before it is sent anyway.
-DIARIZATION_MAX_WAIT_MS = _int("DIARIZATION_MAX_WAIT_MS", 1500 if _diar_on_gpu else 6000)
+DIARIZATION_MAX_WAIT_MS = _int(
+    "DIARIZATION_MAX_WAIT_MS", 1500 if _diar_on_gpu else 6000
+)
 # Signs the one-time tickets that let the browser open the relay WebSocket. Set it when running
 # more than one backend instance; otherwise a per-process random secret is fine.
 STT_TICKET_SECRET = _str("STT_TICKET_SECRET") or os.urandom(32).hex()

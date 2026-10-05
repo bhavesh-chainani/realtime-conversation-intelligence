@@ -22,7 +22,13 @@ FRAME_MS = 10  # one speaker-probability row per 10 ms of audio
 
 class NemotronDiarizer:
     def __init__(self, model: str, device: str, mode: str, int8: bool, threads: int):
-        self.model_name, self.device, self.mode, self.int8, self.threads = model, device, mode, int8, threads
+        self.model_name, self.device, self.mode, self.int8, self.threads = (
+            model,
+            device,
+            mode,
+            int8,
+            threads,
+        )
         self.ready = False
         self.error: str | None = None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="diarizer")
@@ -39,11 +45,20 @@ class NemotronDiarizer:
         processor = AutoProcessor.from_pretrained(self.model_name)
         if self.mode not in processor.streaming_modes:
             chunk, right = (int(v) for v in self.mode.split("x"))
-            processor.streaming_modes = {**processor.streaming_modes, self.mode: (chunk, right)}
+            processor.streaming_modes = {
+                **processor.streaming_modes,
+                self.mode: (chunk, right),
+            }
         processor.set_streaming_mode(self.mode)
-        model = AutoModelForAudioFrameClassification.from_pretrained(self.model_name).eval().to(self.device)
+        model = (
+            AutoModelForAudioFrameClassification.from_pretrained(self.model_name)
+            .eval()
+            .to(self.device)
+        )
         if self.int8 and self.device == "cpu":
-            model = torch.ao.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+            model = torch.ao.quantization.quantize_dynamic(
+                model, {torch.nn.Linear}, dtype=torch.qint8
+            )
         self._model, self._processor = model, processor
         # The first forward pass is several times slower (kernel setup): pay it now, not on a call.
         warm = NemotronSession(self, SAMPLE_RATE)
@@ -127,7 +142,9 @@ class NemotronSession:
     def close(self) -> None:
         """Diarise the remaining audio (blocks until done; call off the event loop)."""
         if self._resampler is not None:
-            tail = self._resampler.resample_chunk(self._np.zeros(0, dtype=self._np.float32), last=True)
+            tail = self._resampler.resample_chunk(
+                self._np.zeros(0, dtype=self._np.float32), last=True
+            )
             with self._lock:
                 self._audio = self._np.concatenate([self._audio, tail])
         self._engine.executor.submit(self._drain, True).result()
@@ -137,14 +154,20 @@ class NemotronSession:
         if self._first:
             start, size = 0, p.num_samples_first_audio_chunk
         else:
-            start, size = p.audio_chunk_start(self._mel_idx), p.num_samples_per_audio_chunk
+            start, size = (
+                p.audio_chunk_start(self._mel_idx),
+                p.num_samples_per_audio_chunk,
+            )
         with self._lock:
             end = self._offset + len(self._audio)
             lo = start - self._offset
             if end >= start + size:
                 return self._audio[lo : lo + size].copy(), False
             # A last chunk needs at least one encoder frame of audio.
-            if final and end - start > p.subsampling_factor * p.feature_extractor.hop_length:
+            if (
+                final
+                and end - start > p.subsampling_factor * p.feature_extractor.hop_length
+            ):
                 return self._audio[lo:].copy(), True
         return None
 
@@ -153,7 +176,9 @@ class NemotronSession:
         try:
             while not self._finished and (nxt := self._next_chunk(final)):
                 chunk, last = nxt
-                rows, self._cache = self._engine.step(chunk, self._cache, self._first, last)
+                rows, self._cache = self._engine.step(
+                    chunk, self._cache, self._first, last
+                )
                 self.probs.extend(rows)
                 if last:
                     self._finished = True
@@ -166,7 +191,9 @@ class NemotronSession:
                     if drop > 0:
                         self._audio = self._audio[drop:]
                         self._offset = keep_from
-        except Exception as exc:  # the relay falls back to AssemblyAI labels for this call
+        except (
+            Exception
+        ) as exc:  # the relay falls back to AssemblyAI labels for this call
             logger.exception("Diarization step failed")
             self.failed = str(exc)[:200]
         finally:
@@ -200,5 +227,7 @@ def load_diarizer() -> NemotronDiarizer:
         _diarizer.load()
     except Exception as exc:
         _diarizer.error = str(exc)[:300]
-        logger.exception("Nemotron diarizer failed to load; turns will arrive without speakers")
+        logger.exception(
+            "Nemotron diarizer failed to load; turns will arrive without speakers"
+        )
     return _diarizer

@@ -33,7 +33,9 @@ class _FakeAsyncClient:
 
         async def create(**kwargs):
             self.calls.append(kwargs)
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
 
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
 
@@ -63,7 +65,9 @@ def _model_reply(linked: list[str]) -> str:
 
 
 def _use(monkeypatch, fake: _FakeAsyncClient) -> None:
-    monkeypatch.setattr("backend.agents.suggestion_agent.get_async_llm_client", lambda: fake)
+    monkeypatch.setattr(
+        "backend.agents.suggestion_agent.get_async_llm_client", lambda: fake
+    )
 
 
 def test_customer_record_is_rendered_into_prompt(monkeypatch):
@@ -73,7 +77,10 @@ def test_customer_record_is_rendered_into_prompt(monkeypatch):
     body = asyncio.run(
         generate_suggestions(
             TRANSCRIPT,
-            customer_profile={"name": "Katherine Liao", "nric_worker_permit_id": "S1234567A"},
+            customer_profile={
+                "name": "Katherine Liao",
+                "nric_worker_permit_id": "S1234567A",
+            },
             customer_cases=CASES,
         )
     )
@@ -102,7 +109,9 @@ def test_name_only_match_is_flagged_unverified(monkeypatch):
     _use(monkeypatch, fake)
 
     body = asyncio.run(
-        generate_suggestions(TRANSCRIPT, customer_profile={"record_match": "name"}, customer_cases=CASES)
+        generate_suggestions(
+            TRANSCRIPT, customer_profile={"record_match": "name"}, customer_cases=CASES
+        )
     )
 
     assert "NAME ONLY" in fake.user_prompt()
@@ -110,7 +119,10 @@ def test_name_only_match_is_flagged_unverified(monkeypatch):
 
 
 def test_hallucinated_case_ids_are_dropped(monkeypatch):
-    _use(monkeypatch, _FakeAsyncClient(_model_reply(["CASE-9999-00000", "CASE-2025-10421"])))
+    _use(
+        monkeypatch,
+        _FakeAsyncClient(_model_reply(["CASE-9999-00000", "CASE-2025-10421"])),
+    )
 
     body = asyncio.run(generate_suggestions(TRANSCRIPT, customer_cases=CASES))
 
@@ -118,7 +130,10 @@ def test_hallucinated_case_ids_are_dropped(monkeypatch):
 
 
 def test_agent_can_decline_to_suggest(monkeypatch):
-    _use(monkeypatch, _FakeAsyncClient(json.dumps({"should_suggest": False, "suggestions": []})))
+    _use(
+        monkeypatch,
+        _FakeAsyncClient(json.dumps({"should_suggest": False, "suggestions": []})),
+    )
 
     body = asyncio.run(generate_suggestions(TRANSCRIPT))
 

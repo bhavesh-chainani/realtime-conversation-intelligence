@@ -50,7 +50,9 @@ class _FakeService:
 
 
 def test_customer_history_endpoint_happy_path(client, monkeypatch):
-    monkeypatch.setattr("backend.customer_history.customer_history_service", _FakeService())
+    monkeypatch.setattr(
+        "backend.customer_history.customer_history_service", _FakeService()
+    )
 
     r = client.post(
         "/customer-history",
@@ -70,7 +72,9 @@ def test_customer_history_endpoint_happy_path(client, monkeypatch):
 
 
 def test_customer_history_endpoint_no_match(client, monkeypatch):
-    monkeypatch.setattr("backend.customer_history.customer_history_service", _FakeService())
+    monkeypatch.setattr(
+        "backend.customer_history.customer_history_service", _FakeService()
+    )
 
     r = client.post("/customer-history", json={"name": "Unknown Person"})
 
@@ -119,7 +123,9 @@ def test_lookup_returns_extra_columns_open_count_and_open_cases_first(monkeypatc
         },
     ]
     monkeypatch.setattr(cfg, "CUSTOMER_HISTORY_DATABASE_URL", "postgresql://fake")
-    monkeypatch.setattr(cfg, "CUSTOMER_HISTORY_EXTRA_COLUMNS", ["address", "bad column;"])
+    monkeypatch.setattr(
+        cfg, "CUSTOMER_HISTORY_EXTRA_COLUMNS", ["address", "bad column;"]
+    )
     monkeypatch.setattr(
         customer_history_service,
         "_query_rows",
@@ -133,4 +139,7 @@ def test_lookup_returns_extra_columns_open_count_and_open_cases_first(monkeypatc
     assert "bad column;" not in body["customer"]
     assert body["open_count"] == 1
     assert body["companies"] == ["Brightpath Logistics Pte Ltd"]
-    assert [c["case_id"] for c in body["cases"]] == ["CASE-2026-03117", "CASE-2025-10421"]
+    assert [c["case_id"] for c in body["cases"]] == [
+        "CASE-2026-03117",
+        "CASE-2025-10421",
+    ]

@@ -59,7 +59,9 @@ def _sign(payload: bytes) -> str:
 
 
 def issue_ticket() -> str:
-    body = json.dumps({"e": int(time.time()) + TICKET_TTL_SECONDS, "n": secrets.token_hex(8)})
+    body = json.dumps(
+        {"e": int(time.time()) + TICKET_TTL_SECONDS, "n": secrets.token_hex(8)}
+    )
     payload = base64.urlsafe_b64encode(body.encode())
     return f"{payload.decode()}.{_sign(payload)}"
 
@@ -86,14 +88,27 @@ def redeem_ticket(ticket: str) -> None:
 
 
 def _labelled_turn(msg: dict, labels: list[str | None], source: str) -> dict:
-    words = [{**w, "speaker": label} for w, label in zip(msg.get("words") or [], labels, strict=False)]
+    words = [
+        {**w, "speaker": label}
+        for w, label in zip(msg.get("words") or [], labels, strict=False)
+    ]
     if words:
         segments = [
-            {"speaker_label": seg["speaker"], "transcript": seg["text"], "words": seg["words"]}
+            {
+                "speaker_label": seg["speaker"],
+                "transcript": seg["text"],
+                "words": seg["words"],
+            }
             for seg in split_by_speaker(words, labels)
         ]
     else:
-        segments = [{"speaker_label": None, "transcript": msg.get("transcript", ""), "words": []}]
+        segments = [
+            {
+                "speaker_label": None,
+                "transcript": msg.get("transcript", ""),
+                "words": [],
+            }
+        ]
     return {
         **msg,
         "words": words,
@@ -107,7 +122,10 @@ def diarize_turn(msg: dict, probs: list[list[float]], source: str = "nemotron") 
     """Label each word with its Nemotron speaker. Words past the diariser's coverage take the
     nearest active frame, or None."""
     words = msg.get("words") or []
-    labels = [None if s is None else chr(ord("A") + s) for s in smooth(word_speakers(words, probs))]
+    labels = [
+        None if s is None else chr(ord("A") + s)
+        for s in smooth(word_speakers(words, probs))
+    ]
     return _labelled_turn(msg, labels, source)
 
 
@@ -121,11 +139,17 @@ def unlabelled_turn(msg: dict) -> dict:
 
 
 def _origin_allowed(origin: str | None) -> bool:
-    return origin is None or "*" in cfg.BACKEND_CORS_ORIGINS or origin in cfg.BACKEND_CORS_ORIGINS
+    return (
+        origin is None
+        or "*" in cfg.BACKEND_CORS_ORIGINS
+        or origin in cfg.BACKEND_CORS_ORIGINS
+    )
 
 
 class Relay:
-    def __init__(self, browser: WebSocket, aai: Any, diar: Any | None, max_wait_ms: int):
+    def __init__(
+        self, browser: WebSocket, aai: Any, diar: Any | None, max_wait_ms: int
+    ):
         self.browser, self.aai, self.diar = browser, aai, diar
         self.max_wait = max_wait_ms / 1000
         # turn_order -> latest formatted final, in case AssemblyAI re-sends a turn.
@@ -136,10 +160,14 @@ class Relay:
         self.stats = {"nemotron": 0, "partial": 0, "none": 0}
 
     async def run(self) -> None:
-        upstream, downstream = asyncio.create_task(self._upstream()), asyncio.create_task(self._downstream())
+        upstream, downstream = asyncio.create_task(
+            self._upstream()
+        ), asyncio.create_task(self._downstream())
         emitter = asyncio.create_task(self._emit_finals())
         try:
-            done, _ = await asyncio.wait({upstream, downstream}, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                {upstream, downstream}, return_when=asyncio.FIRST_COMPLETED
+            )
             if upstream in done and upstream.result() == "terminate":
                 # The caller ended the stream: let AssemblyAI finish the last turn, send the held
                 # turns, then confirm with Termination.
@@ -148,7 +176,10 @@ class Relay:
                     if self.diar is not None and self.unsent:
                         # Diarise the audio tail too short to fill a streaming chunk.
                         with suppress(asyncio.TimeoutError):
-                            await asyncio.wait_for(asyncio.to_thread(self.diar.close), timeout=self.max_wait)
+                            await asyncio.wait_for(
+                                asyncio.to_thread(self.diar.close),
+                                timeout=self.max_wait,
+                            )
                     while self.unsent and time.monotonic() < deadline:
                         await asyncio.sleep(0.05)
                     await self.browser.send_json({"type": "Termination"})
@@ -173,7 +204,10 @@ class Relay:
                     await self.aai.send(msg["bytes"])
                     if self.diar is not None:
                         self.diar.feed(msg["bytes"])
-                elif msg.get("text") and json.loads(msg["text"]).get("type") == "Terminate":
+                elif (
+                    msg.get("text")
+                    and json.loads(msg["text"]).get("type") == "Terminate"
+                ):
                     reason = "terminate"
                     break
         except WebSocketDisconnect:
@@ -221,7 +255,9 @@ class Relay:
         while True:
             order, received = await self.queue.get()
             words = self.held[order].get("words") or []
-            need_ms = max((w.get("end") or 0) for w in words) + END_MARGIN_MS if words else 0
+            need_ms = (
+                max((w.get("end") or 0) for w in words) + END_MARGIN_MS if words else 0
+            )
             diar = self.diar
             while (
                 diar is not None

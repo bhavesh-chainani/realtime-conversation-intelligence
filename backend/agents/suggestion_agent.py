@@ -14,7 +14,13 @@ from typing import Any
 
 from .. import config as cfg
 from ..customer_history import format_customer_record, verified_case_ids
-from ..llm import get_async_llm_client, get_suggestion_model, llm_extra_params, str_list, strip_code_fences
+from ..llm import (
+    get_async_llm_client,
+    get_suggestion_model,
+    llm_extra_params,
+    str_list,
+    strip_code_fences,
+)
 from ..prompt_loader import fallback_suggestions, system_prompt, user_prompt
 from ..text_guard import ForeignScriptError, contains_foreign_script
 
@@ -35,7 +41,9 @@ def validate_suggestion(suggestion: Any) -> dict[str, Any] | None:
         "type": suggestion.get("type", "General Suggestion"),
         "topic": suggestion.get(
             "topic",
-            suggestion.get("text", "Follow up with the caller to gather more information."),
+            suggestion.get(
+                "text", "Follow up with the caller to gather more information."
+            ),
         ),
         "confidence": confidence,
         "details": suggestion.get("details", {}),
@@ -44,7 +52,9 @@ def validate_suggestion(suggestion: Any) -> dict[str, Any] | None:
         validated["details"] = {}
     details = validated["details"]
 
-    details.setdefault("possibleConversation", "Could you provide more details about your situation?")
+    details.setdefault(
+        "possibleConversation", "Could you provide more details about your situation?"
+    )
     details.setdefault("priority", suggestion.get("priority", "medium"))
 
     linked = suggestion.get("linked_records")
@@ -110,7 +120,9 @@ async def generate_suggestions(
             dropped_foreign += 1
             continue
         # Only keep case IDs that really exist in the record we sent.
-        linked = [cid for cid in validated.get("linked_records", []) if cid in known_case_ids]
+        linked = [
+            cid for cid in validated.get("linked_records", []) if cid in known_case_ids
+        ]
         validated["linked_records"] = linked
         validated["source"] = "history" if linked else "conversation"
         suggestions.append(validated)
@@ -147,7 +159,9 @@ async def suggest_with_fallback(
             customer_cases=customer_cases,
         )
     except Exception as exc:
-        logger.warning("Suggestion agent failed, using fallback: %s: %s", type(exc).__name__, exc)
+        logger.warning(
+            "Suggestion agent failed, using fallback: %s: %s", type(exc).__name__, exc
+        )
         body = {
             "suggestions": fallback_suggestions()[:max_suggestions],
             "error": str(exc) or type(exc).__name__,

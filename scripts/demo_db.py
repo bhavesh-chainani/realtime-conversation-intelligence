@@ -14,10 +14,18 @@ PGDATA = Path(__file__).resolve().parent.parent / "data" / "demo_pg"
 
 CUSTOMERS = [
     ("Katherine Liao", "S1234567A", "12 Tampines Street 45, #08-112, Singapore 520012"),
-    ("Rajesh Kumar", "G5512873K", "Blk 305 Jurong East Ave 1, #04-21, Singapore 600305"),
+    (
+        "Rajesh Kumar",
+        "G5512873K",
+        "Blk 305 Jurong East Ave 1, #04-21, Singapore 600305",
+    ),
     ("Maria Santos", "F7734219N", "88 Serangoon Road, #10-03, Singapore 218000"),
     ("David Tan", "S7612094B", "21 Bishan Street 13, #12-45, Singapore 570021"),
-    ("Nguyen Van An", "G6690312P", "Blk 110 Woodlands Drive 16, #02-88, Singapore 730110"),
+    (
+        "Nguyen Van An",
+        "G6690312P",
+        "Blk 110 Woodlands Drive 16, #02-88, Singapore 730110",
+    ),
 ]
 
 # (nric, case_id, company, case_type, case_status, case_summary)
@@ -136,7 +144,9 @@ def main() -> None:
                 "VALUES (%s, %s, %s, %s, %s, %s)",
                 CASES,
             )
-        count = conn.execute("SELECT COUNT(*) FROM public.customer_history_view").fetchone()[0]
+        count = conn.execute(
+            "SELECT COUNT(*) FROM public.customer_history_view"
+        ).fetchone()[0]
 
     print(f"Seeded {len(CUSTOMERS)} customers, {count} cases.")
     print(f"CUSTOMER_HISTORY_DATABASE_URL={uri}")

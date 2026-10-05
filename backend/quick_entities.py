@@ -66,7 +66,11 @@ def collapse_spelled_runs(tokens: list[str]) -> list[str]:
         run.clear()
 
     for tok in tokens:
-        if tok.isdigit() or (len(tok) == 1 and tok.isalpha()) or re.fullmatch(r"[a-z]?\d+[a-z]?", tok):
+        if (
+            tok.isdigit()
+            or (len(tok) == 1 and tok.isalpha())
+            or re.fullmatch(r"[a-z]?\d+[a-z]?", tok)
+        ):
             run.append(tok)
         else:
             flush()
@@ -116,5 +120,8 @@ def extract_nric_from_transcript(transcript: str) -> str | None:
 
 def quick_patch(text: str) -> dict[str, str]:
     """Identity fields heard in one line of customer speech, for the instant (pre-LLM) DB lookup."""
-    patch = {"nric_worker_permit_id": extract_nric(text), "name": extract_intro_name(text)}
+    patch = {
+        "nric_worker_permit_id": extract_nric(text),
+        "name": extract_intro_name(text),
+    }
     return {k: v for k, v in patch.items() if v}
