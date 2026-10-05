@@ -43,8 +43,9 @@ scripts/gpu.sh stop       # stop the instance; disk, .env, weights and demo DB a
   - Ask before launching or resizing anything: both cost money.
   - The account's vCPU quota for G instances blocks 8-vCPU sizes such as g6.2xlarge (`VcpuLimitExceeded`).
     The user would need to request a quota increase.
-- **The previous server is kept stopped as `rci-gpu-old`** (`i-099caacb64a77b8e6`, zone 2a), together with
-  AMI `ami-0409883812559ce71`. Delete them only when the user says so.
+- **Backup image:** AMI `ami-0409883812559ce71` is a snapshot of the server from 2026-10-05 (the previous
+  zone-2a instance it came from has been deleted). Launching a copy from it in another zone is the fallback
+  when capacity runs out. Delete it only when the user says so.
 
 ## Using it for a live call
 
