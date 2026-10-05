@@ -3,7 +3,7 @@
 export type SpeakerRole = "staff" | "customer" | "unknown";
 
 /** How a turn's speaker was decided: voice diarization, or corrected by staff. */
-export type RoleSource = "diarization" | "manual";
+type RoleSource = "diarization" | "manual";
 
 export type Turn = {
   id: string;
@@ -11,14 +11,14 @@ export type Turn = {
   speakerLabel: string | null;
   role: SpeakerRole;
   roleSource: RoleSource;
-  turnOrder?: number;
-  /** performance.now() when the turn was finalized; latency is measured from here. */
+  /** performance.now() when the final (speaker-labelled) turn arrived. */
   committedAt: number;
+  /** performance.now() when the caller stopped speaking, i.e. before the speaker wait; latency is measured from here. */
+  endedAt?: number;
 };
 
 export type Suggestion = {
   type?: string;
-  text?: string;
   topic?: string;
   confidence?: number;
   linked_records?: string[];
@@ -31,7 +31,10 @@ export type Suggestion = {
 
 export type SuggestionMeta = {
   origin: "live" | "fallback";
-  latencyMs: number | null;
+  /** From the end of the customer's turn to the suggestion. */
+  latencyMs: number;
+  /** Part of latencyMs spent waiting for the diariser to confirm the speaker. */
+  speakerMs: number;
   llmMs?: number;
   model?: string;
 };
@@ -54,19 +57,11 @@ export type CustomerHistoryCase = {
   type: string;
   status: string;
   summary: string;
+  /** YYYY-MM-DD, or "" when unknown. */
+  opened_on: string;
+  next_action: string;
+  follow_up_due: string;
 };
 
 export type CustomerHistoryStatus =
   "idle" | "loading" | "invalid_input" | "not_configured" | "not_found" | "ok" | "error";
-
-export type HistoryMeta = {
-  openCount: number;
-  matchedOn: string | null;
-};
-
-const CLOSED_CASE_STATUSES = new Set(["resolved", "closed", "approved", "withdrawn", "completed"]);
-
-/** Mirrors backend customer_history.is_open_case_status. */
-export function isOpenCaseStatus(status: string): boolean {
-  return !CLOSED_CASE_STATUSES.has(status.trim().toLowerCase());
-}

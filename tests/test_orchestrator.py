@@ -7,14 +7,14 @@ import json
 from typing import Any
 
 from backend.api import app
-from backend.orchestrator import AssistDeps, AssistRequest, get_assist_deps, run_assist
+from backend.orchestrator import AssistDeps, AssistRequest, default_deps, run_assist
 
 CUSTOMER = {
     "name": "Katherine Liao",
     "contact_number": "+65 9123 4567",
-    "email": "katherine.liao@example.com",
+    "email": "katherine.liao@gmail.com",
 }
-CUSTOMER_KEY = "id:91234567|katherine.liao@example.com"
+CUSTOMER_KEY = "id:91234567|katherine.liao@gmail.com"
 CASES = [
     {
         "case_id": "CASE-2026-03117",
@@ -22,6 +22,9 @@ CASES = [
         "type": "Leave",
         "status": "Open",
         "summary": "x",
+        "opened_on": "2026-08-26",
+        "next_action": "Centre to chase HR",
+        "follow_up_due": "2026-10-08",
     },
     {
         "case_id": "CASE-2025-10421",
@@ -29,6 +32,9 @@ CASES = [
         "type": "Salary",
         "status": "Resolved",
         "summary": "y",
+        "opened_on": "2025-09-01",
+        "next_action": "",
+        "follow_up_due": "",
     },
 ]
 PHONE_MATCH = {
@@ -92,9 +98,7 @@ class FakeSuggest:
         return {"suggestions": [{"topic": f"round {round_}"}], "timings": {"llm_ms": 1}}
 
 
-def make_extract(
-    result: dict | None = None, delay: float = 0, error: Exception | None = None
-):
+def make_extract(result: dict | None = None, delay: float = 0, error: Exception | None = None):
     calls: list[str] = []
 
     async def extract(transcript):
@@ -113,7 +117,6 @@ def deps(lookup=None, extract=None, suggest=None) -> AssistDeps:
         lookup=lookup or FakeLookup(),
         extract=extract or make_extract(),
         suggest=suggest or FakeSuggest(),
-        debounce_s=0,
         lookup_wait_s=0.2,
     )
 
@@ -170,42 +173,38 @@ def test_phone_turn_looks_up_at_once_and_grounds_the_suggestion():
     call = suggest.calls[0]
     assert call["cases"] == CASES
     assert call["profile"]["record_match"] == "contact_number"
-    assert call["transcript"].endswith(
-        "Customer: Sure, it's nine one two three, four five six seven."
-    )
+    assert call["transcript"].endswith("Customer: Sure, it's nine one two three, four five six seven.")
 
 
 def test_email_match_is_verified():
     lookup, suggest = (
-        FakeLookup(by_id={"katherine.liao@example.com": EMAIL_MATCH}),
+        FakeLookup(by_id={"katherine.liao@gmail.com": EMAIL_MATCH}),
         FakeSuggest(),
     )
     events = run(
-        request("Customer: It's katherine dot liao at example dot com."),
+        request("Customer: It's katherine dot liao at gmail dot com."),
         deps(lookup, suggest=suggest),
     )
-    assert lookup.calls == [(None, None, "katherine.liao@example.com")]
+    assert lookup.calls == [(None, None, "katherine.liao@gmail.com")]
     assert "customer:records" in kinds(events)
     assert suggest.calls[0]["profile"]["record_match"] == "email"
 
 
 def test_email_heard_after_an_unmatched_phone_looks_up_again():
-    lookup = FakeLookup(by_id={"katherine.liao@example.com": EMAIL_MATCH})
+    lookup = FakeLookup(by_id={"katherine.liao@gmail.com": EMAIL_MATCH})
     events = run(
         request(
-            "Customer: My email is katherine.liao@example.com.",
+            "Customer: My email is katherine.liao@gmail.com.",
             customer={"contact_number": "81111111"},
             sources={"contact_number": "heard"},
             history={"lookup_key": "id:81111111", "match_strategy": None, "cases": []},
         ),
         deps(lookup),
     )
-    assert lookup.calls == [(None, "81111111", "katherine.liao@example.com")]
+    assert lookup.calls == [(None, "81111111", "katherine.liao@gmail.com")]
     assert next(e for e in events if e["type"] == "history" and e["status"] == "ok")
     # Records beat what was heard: the card now shows the number on file.
-    records = next(
-        e for e in events if e["type"] == "customer" and e["source"] == "records"
-    )
+    records = next(e for e in events if e["type"] == "customer" and e["source"] == "records")
     assert records["patch"]["contact_number"] == "+65 9123 4567"
 
 
@@ -237,9 +236,7 @@ def test_name_only_match_is_unverified():
     )
 
     assert lookup.calls == [("Katherine Liao", None, None)]
-    assert "customer:records" not in kinds(
-        events
-    )  # no prefill without a phone / email match
+    assert "customer:records" not in kinds(events)  # no prefill without a phone / email match
     assert suggest.calls[0]["profile"]["record_match"] == "name"
 
 
@@ -312,12 +309,7 @@ def test_failures_are_reported_in_band_and_done_still_comes_last():
         ),
     )
     assert "error:lookup" in kinds(events) and "error:extract" in kinds(events)
-    assert (
-        next(e for e in events if e["type"] == "history" and e["status"] != "loading")[
-            "status"
-        ]
-        == "error"
-    )
+    assert next(e for e in events if e["type"] == "history" and e["status"] != "loading")["status"] == "error"
     assert "suggestions:1" in kinds(events) and kinds(events)[-1] == "done"
 
 
@@ -330,9 +322,7 @@ def test_client_disconnect_cancels_pending_work():
     suggest = FakeSuggest(block_rounds=(1,))
 
     async def scenario():
-        stream = run_assist(
-            request("Customer: My employer cut my salary again."), deps(suggest=suggest)
-        )
+        stream = run_assist(request("Customer: My employer cut my salary again."), deps(suggest=suggest))
         async for event in stream:
             if event["type"] == "suggesting":
                 break
@@ -346,7 +336,7 @@ def test_client_disconnect_cancels_pending_work():
 
 def test_endpoint_streams_ndjson(client):
     lookup = FakeLookup(by_id={"91234567": PHONE_MATCH})
-    app.dependency_overrides[get_assist_deps] = lambda: deps(lookup)
+    app.dependency_overrides[default_deps] = lambda: deps(lookup)
     try:
         r = client.post(
             "/assist",
@@ -399,31 +389,17 @@ def test_suggestion_is_told_where_the_history_check_stands():
         == "name"
     )
     assert (
-        _status_seen(
-            request("Customer: It's 9123 4567."), FakeLookup(error=RuntimeError("db"))
-        )
+        _status_seen(request("Customer: It's 9123 4567."), FakeLookup(error=RuntimeError("db")))
         == "unavailable"
     )
     # Earlier turns' results, as the client reports them.
     earlier = {"lookup_key": "id:81112222", "cases": []}
     assert (
-        _status_seen(
-            request("Customer: Thanks.", history={**earlier, "status": "not_found"})
-        )
-        == "not_found"
+        _status_seen(request("Customer: Thanks.", history={**earlier, "status": "not_found"})) == "not_found"
     )
+    assert _status_seen(request("Customer: Thanks.", history={**earlier, "status": "error"})) == "unavailable"
     assert (
-        _status_seen(
-            request("Customer: Thanks.", history={**earlier, "status": "error"})
-        )
-        == "unavailable"
-    )
-    assert (
-        _status_seen(
-            request(
-                "Customer: Thanks.", history={"lookup_key": None, "status": "loading"}
-            )
-        )
+        _status_seen(request("Customer: Thanks.", history={"lookup_key": None, "status": "loading"}))
         == "pending"
     )
 

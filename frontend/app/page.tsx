@@ -6,19 +6,19 @@ import { CustomerPanel } from "./components/customer-panel";
 import { SessionHeader } from "./components/session-header";
 import { SuggestionsPanel } from "./components/suggestions-panel";
 import { TranscriptPanel } from "./components/transcript-panel";
+import { WrapUpPanel } from "./components/wrapup-panel";
 import { useAssist } from "./hooks/useAssist.ts";
 import { useCallClock } from "./hooks/useCallClock.ts";
 import { useLiveTranscript } from "./hooks/useLiveTranscript.ts";
+import { useWrapUp } from "./hooks/useWrapUp.ts";
 import { getBackendUrl } from "./lib/backend-url.ts";
-import type { Turn } from "./lib/types.ts";
 
 export default function Page() {
   const backendUrl = useMemo(getBackendUrl, []);
   const assist = useAssist(backendUrl);
   const clock = useCallClock();
-  const { run } = assist;
-  const onCustomerTurn = useCallback((turn: Turn, turns: Turn[]) => run(turn, turns), [run]);
-  const transcript = useLiveTranscript(backendUrl, onCustomerTurn);
+  const wrapUp = useWrapUp(backendUrl);
+  const transcript = useLiveTranscript(backendUrl, assist.run);
 
   const transcriptListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -34,12 +34,27 @@ export default function Page() {
     transcript.close();
     assist.end();
     clock.end();
+    void wrapUp.draft({
+      turns: transcript.turns,
+      customer: assist.customer,
+      history: assist.history,
+    });
   };
   const newCall = () => {
     transcript.reset();
     assist.reset();
+    wrapUp.reset();
     clock.reset();
   };
+  // Stable callbacks, so the memoised panels skip the re-render on every mic-level update.
+  const { lookup, customer } = assist;
+  const onLookup = useCallback(() => void lookup(), [lookup]);
+  const { save } = wrapUp;
+  const onSave = useCallback(async () => {
+    const result = await save(customer);
+    // Show the saved case on the caller card, as the next call will see it.
+    if (result?.status === "saved") void lookup();
+  }, [save, customer, lookup]);
 
   const roleMap = Object.entries(transcript.speakerRoleMap);
   const mappedStaffLabel = roleMap.find(([, r]) => r === "staff")?.[0];
@@ -57,7 +72,7 @@ export default function Page() {
       : "Ready";
 
   return (
-    <div className="shell shell--workspace">
+    <div className="shell">
       <SessionHeader
         isLive={transcript.isListening}
         isConnecting={transcript.isConnecting}
@@ -67,14 +82,12 @@ export default function Page() {
         micLevel={transcript.micLevel}
         canEndCall={callActive && transcript.turns.length > 0}
         onEndCall={endCall}
-        canPause={callActive && transcript.isListening}
-        canResume={callActive && !transcript.isListening}
         onPause={transcript.stop}
+        canResume={callActive && !transcript.isListening && !transcript.isConnecting}
         onResume={listen}
         canStartNewCall={clock.endedAt !== null}
         onNewCall={newCall}
         onStart={listen}
-        onStop={transcript.close}
       />
 
       <main className="workspace-grid">
@@ -93,26 +106,39 @@ export default function Page() {
         />
 
         <aside className="panel assistance-rail" aria-label="Operator assistance workspace">
-          <SuggestionsPanel
-            suggestions={assist.suggestions}
-            meta={assist.suggestionMeta}
-            cases={assist.history.cases}
-            hasTranscript={hasTranscript}
-            isLive={transcript.isListening}
-            isFetchingSuggestions={assist.fetching}
-          />
+          {wrapUp.status !== "idle" ? (
+            <WrapUpPanel
+              status={wrapUp.status}
+              wrapup={wrapUp.wrapup}
+              message={wrapUp.message}
+              saving={wrapUp.saving}
+              saved={wrapUp.saved}
+              onEdit={wrapUp.edit}
+              onRetry={wrapUp.retry}
+              onSave={() => void onSave()}
+            />
+          ) : (
+            <SuggestionsPanel
+              suggestions={assist.suggestions}
+              meta={assist.suggestionMeta}
+              cases={assist.history.cases}
+              hasTranscript={hasTranscript}
+              isLive={transcript.isListening}
+              isFetchingSuggestions={assist.fetching}
+            />
+          )}
 
           <CustomerPanel
             customerData={assist.customer}
             fieldSources={assist.sources}
             citedIds={citedIds}
             onCustomerDataChange={assist.editField}
-            onLookup={() => void assist.lookup()}
+            onLookup={onLookup}
             customerHistoryStatus={assist.history.status}
             customerHistoryMessage={assist.history.summary}
             customerHistoryCases={assist.history.cases}
-            historyMeta={assist.history.meta}
-            isLoadingCustomerHistory={assist.history.status === "loading"}
+            matchedOn={assist.history.matchedOn}
+            openCount={assist.history.openCount}
           />
         </aside>
       </main>

@@ -11,7 +11,6 @@ export function useCallClock() {
     /** Start the clock, or carry on after a pause. */
     start: useCallback(() => {
       setStartedAt((prev) => prev ?? Date.now());
-      setEndedAt(null);
     }, []),
     end: useCallback(() => setEndedAt(Date.now()), []),
     reset: useCallback(() => {

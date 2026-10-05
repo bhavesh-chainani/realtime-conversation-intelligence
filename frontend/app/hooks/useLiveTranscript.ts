@@ -10,19 +10,18 @@ import {
   type PendingTurn,
   type RelaySegment,
 } from "../lib/stt-relay.ts";
-import { newTurnId, resolveSpeakerRole, swapRoles, type KnownRole, type SpeakerRoleMap } from "../lib/transcript.ts";
+import {
+  newTurnId,
+  otherRole,
+  resolveSpeakerRole,
+  swapRoles,
+  type KnownRole,
+  type SpeakerRoleMap,
+} from "../lib/transcript.ts";
 import type { Turn } from "../lib/types.ts";
 
-type FinalTurnInput = {
-  text: string;
-  speakerLabel: string | null;
-  turnOrder?: number;
-  /** Relay turns arrive after the next speaker's live text has started: leave it on screen. */
-  keepLive?: boolean;
-};
-
-/** Called for every finished turn that is not Staff (unlabelled turns may be the customer too). */
-export type CustomerTurnHandler = (turn: Turn, turns: Turn[]) => void;
+/** Called once per finished turn that is not Staff (unlabelled turns may be the customer too). */
+type CustomerTurnHandler = (turn: Turn, turns: Turn[]) => void;
 
 export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTurnHandler) {
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -57,9 +56,6 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     roleMapRef.current = map;
     setSpeakerRoleMap(map);
   };
-  const setNextVoice = (staff: boolean) => {
-    nextVoiceIsStaffRef.current = staff;
-  };
   const setPending = (next: PendingTurn[]) => {
     pendingRef.current = next;
     setPendingTurns(next);
@@ -76,22 +72,26 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     return resolved.role === "unknown" ? null : resolved.role;
   };
 
-  const ingestFinalTurn = (input: FinalTurnInput) => {
-    if (!input.keepLive) clearLive();
-    const text = input.text.trim();
-    if (!text) return;
-    const turn: Turn = {
-      id: newTurnId(),
-      text,
-      speakerLabel: input.speakerLabel,
-      role: labelRoleFor(input.speakerLabel) ?? "unknown",
-      roleSource: "diarization",
-      turnOrder: input.turnOrder,
-      committedAt: performance.now(),
-    };
-    const next = [...turnsRef.current, turn];
+  /** Adds finished speaker segments as turns, then asks for guidance once, on the last non-Staff one.
+   * `heldMs` is how long the relay held them for the diariser, so latency counts from when speech ended. */
+  const ingestFinal = (segments: RelaySegment[], heldMs = 0) => {
+    const now = performance.now();
+    const added: Turn[] = segments
+      .filter((seg) => seg.text.trim())
+      .map((seg) => ({
+        id: newTurnId(),
+        text: seg.text.trim(),
+        speakerLabel: seg.speakerLabel,
+        role: labelRoleFor(seg.speakerLabel) ?? "unknown",
+        roleSource: "diarization",
+        committedAt: now,
+        endedAt: now - heldMs,
+      }));
+    if (added.length === 0) return;
+    const next = [...turnsRef.current, ...added];
     commitTurns(next);
-    if (turn.role !== "staff") onCustomerTurnRef.current(turn, next);
+    const customerTurn = [...added].reverse().find((t) => t.role !== "staff");
+    if (customerTurn) onCustomerTurnRef.current(customerTurn, next);
   };
 
   /** Releases the mic and socket. Safe to call repeatedly. */
@@ -134,7 +134,7 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
       return;
     }
     if (d.type !== "Turn") return;
-    const segments: RelaySegment[] | null = parseRelaySegments(d);
+    const segments = parseRelaySegments(d);
     if (!segments) {
       // Partial text has no speaker yet: Nemotron labels a turn once it is finished.
       liveRef.current = String(d.transcript || "").trim();
@@ -143,7 +143,8 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     }
     const turnOrder = typeof d.turn_order === "number" ? d.turn_order : undefined;
     setPending(pendingRef.current.filter((p) => p.turnOrder !== turnOrder));
-    segments.forEach((seg) => ingestFinalTurn({ ...seg, turnOrder, keepLive: true }));
+    // The next speaker's live text may already be on screen: leave it.
+    ingestFinal(segments, typeof d.held_ms === "number" ? d.held_ms : 0);
   };
   const handleMessageRef = useRef(handleMessage);
   handleMessageRef.current = handleMessage;
@@ -156,7 +157,7 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     setSttDropped(false);
     // A new stream may assign A/B differently: forget the old label map.
     setRoleMap({});
-    setNextVoice(true);
+    nextVoiceIsStaffRef.current = true;
 
     const session = fetch(`${backendUrl}/stt/session`).then((res) => {
       if (!res.ok) throw new Error(`STT session status ${res.status}`);
@@ -204,7 +205,6 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
       setSttDropped(true);
       close();
     };
-    ws.onerror = () => setIsListening(false);
     ws.onmessage = (evt) => {
       try {
         handleMessageRef.current(JSON.parse(evt.data as string) as Record<string, unknown>);
@@ -218,7 +218,7 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
   const stop = useCallback(() => {
     if (wsRef.current) {
       const unfinished = [...pendingRef.current.map((p) => p.text), liveRef.current];
-      for (const text of unfinished) ingestFinalTurn({ text, speakerLabel: null });
+      ingestFinal(unfinished.map((text) => ({ text, speakerLabel: null })));
     }
     close();
   }, [close]);
@@ -227,19 +227,14 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     close();
     commitTurns([]);
     setRoleMap({});
-    setNextVoice(true);
+    nextVoiceIsStaffRef.current = true;
     setSttDropped(false);
   }, [close]);
 
   const swapSpeakerRoles = useCallback(() => {
     setRoleMap(swapRoles(roleMapRef.current));
-    commitTurns(
-      turnsRef.current.map((t) => ({
-        ...t,
-        role: t.role === "staff" ? "customer" : t.role === "customer" ? "staff" : t.role,
-      }))
-    );
-    setNextVoice(!nextVoiceIsStaffRef.current);
+    commitTurns(turnsRef.current.map((t) => (t.role === "unknown" ? t : { ...t, role: otherRole(t.role) })));
+    nextVoiceIsStaffRef.current = !nextVoiceIsStaffRef.current;
   }, []);
 
   /** Staff correction of one turn; correcting the latest turn to Customer asks for guidance on it. */

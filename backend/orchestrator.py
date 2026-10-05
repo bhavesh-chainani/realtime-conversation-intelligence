@@ -3,8 +3,9 @@
 Order for each turn:
 1. The instant regex reads the latest customer line and, when it hears a phone number, email or full name,
    looks the caller up in the customer DB straight away (`customer` and `history` events within milliseconds).
-2. A short debounce: the browser aborts this request when the next fragment arrives, so a turn that
-   is still being spoken costs no LLM call.
+2. No debounce: a newer turn can only arrive after more speech and silence, and the browser aborts
+   this request when it does (which cancels its LLM calls). The first suggestion waits up to
+   `lookup_wait_s` for a lookup started on this turn, so it can use the record.
 3. The entity agent (LLM extraction, only while fields are missing) runs alongside the suggestion
    agent. If extraction reveals a new identity whose DB record differs, the suggestion is redone with
    the new record (`round` 2).
@@ -35,9 +36,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import config as cfg
+from . import customer_history
 from .agents.entity_agent import extract_entities
 from .agents.suggestion_agent import suggest_with_fallback
-from .customer_history import CustomerCase, is_open_case_status
+from .customer_history import CustomerCase, case_rows
 from .profile import (
     Profile,
     Source,
@@ -70,9 +72,7 @@ class HistoryState(BaseModel):
     lookup_key: str | None = None
     match_strategy: str | None = None
     cases: list[CustomerCase] = []
-    status: str | None = (
-        None  # the client's history status: "loading", "not_found", "error", ...
-    )
+    status: str | None = None  # the client's history status: "loading", "not_found", "error", ...
 
 
 class AssistRequest(BaseModel):
@@ -80,9 +80,7 @@ class AssistRequest(BaseModel):
     customer: dict[str, str] = {}
     sources: dict[str, Source] = {}
     history: HistoryState | None = None
-    extract: bool = Field(
-        True, description="False when re-suggesting after a manual lookup"
-    )
+    extract: bool = Field(True, description="False when re-suggesting after a manual lookup")
     max_suggestions: int | None = None
     previous_suggestions: list[str] = Field(
         [],
@@ -97,20 +95,12 @@ class AssistDeps:
     ]  # (name, phone, email); blocking, run in a thread
     extract: Callable[[str], Awaitable[dict[str, str | None]]]
     suggest: Callable[..., Awaitable[dict[str, Any]]]
-    debounce_s: float = 0.25
-    lookup_wait_s: float = (
-        0.7  # how long past the debounce the first suggestion waits for a lookup
-    )
+    lookup_wait_s: float = 0.7  # how long the first suggestion waits for a lookup started this turn
 
 
 def default_deps() -> AssistDeps:
-    from . import customer_history
-
     return AssistDeps(
-        # Read the service at call time so tests can replace it.
-        lookup=lambda name, phone, email: customer_history.customer_history_service.lookup(
-            name, phone, email
-        ),
+        lookup=customer_history.customer_history_service.lookup,
         extract=extract_entities,
         suggest=suggest_with_fallback,
     )
@@ -119,9 +109,7 @@ def default_deps() -> AssistDeps:
 def format_transcript(turns: list[AssistTurn], window: int | None = None) -> str:
     """Role-labelled transcript; with `window`, only the latest turns plus a count of the rest."""
     shown = turns[-window:] if window else turns
-    body = "\n".join(
-        f"{ROLE_LABELS[t.role]}: {t.text.strip()}" for t in shown if t.text.strip()
-    )
+    body = "\n".join(f"{ROLE_LABELS[t.role]}: {t.text.strip()}" for t in shown if t.text.strip())
     omitted = len(turns) - len(shown)
     return f"[Earlier: {omitted} turns omitted]\n{body}" if omitted > 0 else body
 
@@ -135,38 +123,25 @@ def _error_event(stage: str, exc: BaseException) -> dict[str, Any]:
     return {"type": "error", "stage": stage, "message": str(exc) or type(exc).__name__}
 
 
-def _cases(result: dict[str, Any]) -> list[dict[str, str]]:
-    return [
-        {
-            k: str(row.get(k) or "")
-            for k in ("case_id", "company", "type", "status", "summary")
-        }
-        for row in result.get("cases") or []
-        if isinstance(row, dict)
-    ]
-
-
 class _AssistRun:
     def __init__(self, req: AssistRequest, deps: AssistDeps):
         self.req, self.deps = req, deps
         self.turns = req.turns[-MAX_TURNS:]
         self.profile = Profile.from_request(req.customer, req.sources)
         history = req.history or HistoryState()
-        self.lookup_key = (
-            history.lookup_key
-        )  # last identity looked up (or being looked up)
+        self.lookup_key = history.lookup_key  # last identity looked up (or being looked up)
         self.match = history.match_strategy
-        self.cases = [c.model_dump() for c in history.cases]
+        self.cases = case_rows([c.model_dump() for c in history.cases])
         self.history_status = history.status
-        self.previous = [
-            s.strip()[:400] for s in req.previous_suggestions if s.strip()
-        ][:3]
+        self.previous = [s.strip()[:400] for s in req.previous_suggestions if s.strip()][:3]
         self.tasks: dict[asyncio.Task, str] = {}
         self.lookup_keys: dict[asyncio.Task, str] = {}
         self.lookups = 0
         self.suggest_task: asyncio.Task | None = None
         self.suggest_round = 0
         self.suggest_key: str | None = None
+        self.started = time.perf_counter()
+        self.timeline: dict[str, float] = {}  # ms since the request arrived, for the per-turn log
 
     # --- lookup ---------------------------------------------------------------------------
 
@@ -174,17 +149,13 @@ class _AssistRun:
         if self.lookups >= MAX_LOOKUPS:
             return None
         values = self.profile.values
-        request = next_lookup(
-            self.lookup_key, values["name"], values["contact_number"], values["email"]
-        )
+        request = next_lookup(self.lookup_key, values["name"], values["contact_number"], values["email"])
         if not request:
             return None
         self.lookups += 1
         self.lookup_key = request.key
         task = asyncio.create_task(
-            asyncio.to_thread(
-                self.deps.lookup, request.name, request.phone, request.email
-            )
+            asyncio.to_thread(self.deps.lookup, request.name, request.phone, request.email)
         )
         self.tasks[task] = "lookup"
         self.lookup_keys[task] = request.key
@@ -195,10 +166,7 @@ class _AssistRun:
         try:
             result = task.result()
         except Exception as exc:
-            result = {
-                "status": "error",
-                "message": "Unable to obtain customer history at the moment.",
-            }
+            result = {"status": "error", "summary": "Unable to obtain customer history at the moment."}
             events = [_error_event("lookup", exc)]
         else:
             events = []
@@ -214,7 +182,7 @@ class _AssistRun:
         self.history_status = status
         ok = status == "ok"
         self.match = result.get("match_strategy") if ok else None
-        self.cases = _cases(result) if ok else []
+        self.cases = case_rows(result.get("cases")) if ok else []
         events.append(
             {
                 "type": "history",
@@ -222,14 +190,8 @@ class _AssistRun:
                 "lookup_key": key,
                 "match_strategy": self.match,
                 "cases": self.cases,
-                "open_count": (
-                    result.get("open_count")
-                    if isinstance(result.get("open_count"), int)
-                    else sum(is_open_case_status(c["status"]) for c in self.cases)
-                ),
-                "summary": result.get("history_summary")
-                or result.get("message")
-                or "No customer history found.",
+                "open_count": result.get("open_count", 0) if ok else 0,
+                "summary": result.get("summary") or "No customer history found.",
             }
         )
         if accepted:
@@ -239,9 +201,7 @@ class _AssistRun:
     def heard_patch(self, trigger: str) -> dict[str, str]:
         """Identity heard in the latest line, plus any field still blank that an earlier customer line
         gave (e.g. a name said two turns before the phone number)."""
-        earlier = quick_patch_from_lines(
-            [t.text for t in self.turns if t.role == "customer"]
-        )
+        earlier = quick_patch_from_lines([t.text for t in self.turns if t.role == "customer"])
         blank = {k: v for k, v in earlier.items() if not self.profile.values[k]}
         return {**blank, **quick_patch(trigger)}
 
@@ -266,6 +226,7 @@ class _AssistRun:
             self.suggest_task.cancel()
             self.tasks.pop(self.suggest_task, None)
         self.suggest_round += 1
+        self.timeline.setdefault("suggest_started", self._elapsed_ms())
         self.suggest_key = cases_key(self.match, self.cases)
         self.suggest_task = asyncio.create_task(
             self.deps.suggest(
@@ -280,10 +241,7 @@ class _AssistRun:
         return {"type": "suggesting", "round": self.suggest_round}
 
     def records_changed(self) -> bool:
-        return (
-            self.suggest_key is not None
-            and cases_key(self.match, self.cases) != self.suggest_key
-        )
+        return self.suggest_key is not None and cases_key(self.match, self.cases) != self.suggest_key
 
     def finish_extract(self, task: asyncio.Task) -> list[dict[str, Any]]:
         try:
@@ -297,14 +255,18 @@ class _AssistRun:
             events.append(loading)
         return events
 
-    def finish_suggest(self, task: asyncio.Task, round_: int) -> dict[str, Any]:
+    def _elapsed_ms(self) -> float:
+        return round((time.perf_counter() - self.started) * 1000)
+
+    def finish_suggest(self, task: asyncio.Task) -> dict[str, Any]:
         try:
             body = task.result()
         except Exception as exc:
             return _error_event("suggest", exc)
+        self.timeline.setdefault("suggestion", self._elapsed_ms())
         return {
             "type": "suggestions",
-            "round": round_,
+            "round": self.suggest_round,
             "suggestions": body.get("suggestions") or [],
             "fallback": bool(body.get("fallback")),
             "timings": body.get("timings") or {},
@@ -313,82 +275,67 @@ class _AssistRun:
     # --- the turn -------------------------------------------------------------------------
 
     async def events(self) -> AsyncIterator[dict[str, Any]]:
-        started = time.perf_counter()
         try:
-            trigger = next(
-                (t.text for t in reversed(self.turns) if t.role != "staff"), ""
-            )
+            trigger = next((t.text for t in reversed(self.turns) if t.role != "staff"), "")
             if heard := self.profile.apply(self.heard_patch(trigger), "heard"):
                 yield _customer_event("heard", heard)
             if loading := self.start_lookup():
                 yield loading
 
-            # The DB result goes out as soon as it lands; the LLM calls wait out the debounce and up to
-            # lookup_wait_s for the record, so the first suggestion can use it.
-            debounce_end = time.perf_counter() + self.deps.debounce_s
+            # The DB result goes out as soon as it lands (a few ms); the first suggestion waits up to
+            # lookup_wait_s for it, so it can use the record.
             lookups = [t for t, kind in self.tasks.items() if kind == "lookup"]
             if lookups:
-                await asyncio.wait(
-                    lookups, timeout=self.deps.debounce_s + self.deps.lookup_wait_s
-                )
+                await asyncio.wait(lookups, timeout=self.deps.lookup_wait_s)
                 for task in lookups:
                     if task.done():
                         del self.tasks[task]
                         for event in self.finish_lookup(task):
                             yield event
-            if (remaining := debounce_end - time.perf_counter()) > 0:
-                await asyncio.sleep(remaining)
 
-            if self.req.extract and self.profile.missing():
-                self.tasks[
-                    asyncio.create_task(
-                        self.deps.extract(format_transcript(self.turns))
-                    )
-                ] = "extract"
+            # Suggestion first: it is what Staff wait for, and it should get the warm gateway connection.
             if suggesting := self.start_suggest():
                 yield suggesting
+            if self.req.extract and self.profile.missing():
+                window = format_transcript(self.turns, SUGGESTION_WINDOW_TURNS)
+                self.tasks[asyncio.create_task(self.deps.extract(window))] = "extract"
 
             while self.tasks:
-                done, _ = await asyncio.wait(
-                    self.tasks, return_when=asyncio.FIRST_COMPLETED
-                )
+                done, _ = await asyncio.wait(self.tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     kind = self.tasks.pop(task, None)
                     if kind == "lookup":
                         for event in self.finish_lookup(task):
                             yield event
-                        if self.records_changed() and (
-                            suggesting := self.start_suggest()
-                        ):
+                        if self.records_changed() and (suggesting := self.start_suggest()):
                             yield suggesting
                     elif kind == "extract":
                         for event in self.finish_extract(task):
                             yield event
                     elif kind == "suggest" and not task.cancelled():
-                        yield self.finish_suggest(task, self.suggest_round)
+                        yield self.finish_suggest(task)
         except Exception as exc:
             yield _error_event("assist", exc)
         finally:
             for task in self.tasks:
                 task.cancel()
-        yield {
-            "type": "done",
-            "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
-        }
+        elapsed = self._elapsed_ms()
+        logger.info(
+            "[assist] turn: suggestion started +%sms, shown +%sms, done +%sms (%s rounds)",
+            self.timeline.get("suggest_started", "-"),
+            self.timeline.get("suggestion", "-"),
+            elapsed,
+            self.suggest_round,
+        )
+        yield {"type": "done", "elapsed_ms": elapsed}
 
 
 def run_assist(req: AssistRequest, deps: AssistDeps) -> AsyncIterator[dict[str, Any]]:
     return _AssistRun(req, deps).events()
 
 
-def get_assist_deps() -> AssistDeps:
-    return default_deps()
-
-
 @router.post("/assist")
-async def assist(
-    req: AssistRequest, deps: AssistDeps = Depends(get_assist_deps)
-) -> StreamingResponse:
+async def assist(req: AssistRequest, deps: AssistDeps = Depends(default_deps)) -> StreamingResponse:
     async def lines() -> AsyncIterator[str]:
         async for event in run_assist(req, deps):
             yield json.dumps(event, ensure_ascii=False) + "\n"

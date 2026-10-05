@@ -1,4 +1,7 @@
-import { isOpenCaseStatus, type CustomerHistoryCase, type Suggestion, type SuggestionMeta } from "../lib/types.ts";
+import { memo } from "react";
+
+import { isOpenCaseStatus } from "../lib/cases.ts";
+import type { CustomerHistoryCase, Suggestion, SuggestionMeta } from "../lib/types.ts";
 
 type SuggestionsPanelProps = {
   suggestions: Suggestion[];
@@ -15,38 +18,39 @@ function formatSeconds(ms: number): string {
 
 function latencyLabel(meta: SuggestionMeta): string {
   if (meta.origin === "fallback") return "Fallback guidance";
-  const total = meta.latencyMs != null ? formatSeconds(meta.latencyMs) : "";
-  const llm = typeof meta.llmMs === "number" ? ` (LLM ${formatSeconds(meta.llmMs)})` : "";
-  return `Live · ${total}${llm}`;
+  const parts = [
+    meta.speakerMs >= 50 ? `speaker ${formatSeconds(meta.speakerMs)}` : "",
+    typeof meta.llmMs === "number" ? `AI ${formatSeconds(meta.llmMs)}` : "",
+  ].filter(Boolean);
+  return `Live · ${formatSeconds(meta.latencyMs)}${parts.length ? ` (${parts.join(" · ")})` : ""}`;
 }
 
-/** Case chips with status; open cases are highlighted. */
-function RecordChips({ ids, cases, label }: { ids: string[]; cases: CustomerHistoryCase[]; label: string }) {
-  const caseById = new Map(cases.map((c) => [c.case_id, c]));
-  const shown = ids.filter((id) => caseById.has(id) || cases.length === 0);
+/** The cases a suggestion relies on, with status; open cases are highlighted. */
+function RecordChips({ ids, cases }: { ids: string[]; cases: CustomerHistoryCase[] }) {
+  // The backend only keeps IDs that are in the record, so every chip has a case.
+  const shown = ids
+    .map((id) => cases.find((c) => c.case_id === id))
+    .filter((c): c is CustomerHistoryCase => c !== undefined);
   if (shown.length === 0) return null;
   return (
-    <div className="record-links" aria-label={label}>
-      <span className="record-links__label">{label}</span>
-      {shown.map((id) => {
-        const c = caseById.get(id);
-        const open = c ? isOpenCaseStatus(c.status) : false;
-        return (
-          <span
-            key={id}
-            className={`record-chip${open ? " record-chip--open" : ""}`}
-            title={c ? `${c.type} · ${c.company} · ${c.summary}` : id}
-          >
-            {id}
-            {c ? <span className="record-chip__status">{c.status}</span> : null}
-          </span>
-        );
-      })}
+    <div className="record-links" aria-label="Based on">
+      <span className="record-links__label">Based on</span>
+      {shown.map((c) => (
+        <span
+          key={c.case_id}
+          className={`record-chip${isOpenCaseStatus(c.status) ? " record-chip--open" : ""}`}
+          title={`${c.type} · ${c.company} · ${c.summary}`}
+        >
+          {c.case_id}
+          <span className="record-chip__status">{c.status}</span>
+        </span>
+      ))}
     </div>
   );
 }
 
-export function SuggestionsPanel({
+/** Memoised: the page re-renders on every mic-level update, this panel only when its inputs change. */
+export const SuggestionsPanel = memo(function SuggestionsPanel({
   suggestions,
   meta,
   cases,
@@ -82,11 +86,10 @@ export function SuggestionsPanel({
           {emptyMessage}
         </div>
       ) : (
-        suggestions.map((suggestion, index) => {
+        suggestions.map((suggestion) => {
           const details = suggestion.details || {};
-          const topic = suggestion.topic || suggestion.text || "Follow up on the current conversation";
-          const phrasing = details.possibleConversation || suggestion.text || "";
-          const highPriority = String(details.priority || "").toLowerCase() === "high";
+          const topic = suggestion.topic || "";
+          const phrasing = details.possibleConversation || "";
           const confidence =
             typeof suggestion.confidence === "number" && Number.isFinite(suggestion.confidence)
               ? `${Math.round(suggestion.confidence * 100)}% confidence`
@@ -95,8 +98,8 @@ export function SuggestionsPanel({
           return (
             <article
               // Content-based key replays the entrance animation whenever the guidance changes.
-              key={`${index}-${topic}-${phrasing.slice(0, 40)}`}
-              className={`hero-card${highPriority ? " hero-card--priority" : ""}`}
+              key={`${topic}-${phrasing.slice(0, 40)}`}
+              className={`hero-card${String(details.priority).toLowerCase() === "high" ? " hero-card--priority" : ""}`}
             >
               <div className="hero-card__tags">
                 {suggestion.type ? <span className="tag tag--accent">{suggestion.type}</span> : null}
@@ -105,11 +108,11 @@ export function SuggestionsPanel({
               </div>
               <h3 className="hero-card__topic">{topic}</h3>
               {phrasing ? <p className="hero-card__quote">“{phrasing}”</p> : null}
-              <RecordChips ids={suggestion.linked_records || []} cases={cases} label="Based on" />
+              <RecordChips ids={suggestion.linked_records || []} cases={cases} />
             </article>
           );
         })
       )}
     </section>
   );
-}
+});

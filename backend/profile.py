@@ -26,13 +26,9 @@ class Profile:
     sources: dict[str, Source] = field(default_factory=dict)
 
     @classmethod
-    def from_request(
-        cls, customer: dict[str, str], sources: dict[str, Source]
-    ) -> Profile:
+    def from_request(cls, customer: dict[str, str], sources: dict[str, Source]) -> Profile:
         values = {f: (customer.get(f) or "").strip() for f in FIELDS}
-        return cls(
-            values, {f: s for f, s in sources.items() if f in FIELDS and values[f]}
-        )
+        return cls(values, {f: s for f, s in sources.items() if f in FIELDS and values[f]})
 
     def apply(self, patch: dict[str, str | None], source: Source) -> dict[str, str]:
         """Merge `patch` and return the values that changed.
@@ -83,14 +79,12 @@ class LookupRequest(NamedTuple):
 
 
 def identity_key(phone: str | None, email: str | None) -> str | None:
-    """Lookup key for the valid phone and / or email, e.g. "id:91234567|a@example.com"."""
+    """Lookup key for the valid phone and / or email, e.g. "id:91234567|a@gmail.com"."""
     parts = [p for p in (normalize_phone(phone), normalize_email(email)) if p]
     return "id:" + "|".join(parts) if parts else None
 
 
-def next_lookup(
-    previous_key: str | None, name: str, phone: str, email: str
-) -> LookupRequest | None:
+def next_lookup(previous_key: str | None, name: str, phone: str, email: str) -> LookupRequest | None:
     """The DB lookup to run, or None. A valid phone or email always wins and supersedes an earlier name
     lookup; hearing the other one later looks up again. A full name (2+ words) is used only until a
     phone / email lookup has happened. Each identity is looked up once.
@@ -98,9 +92,7 @@ def next_lookup(
     if key := identity_key(phone, email):
         if key == previous_key:
             return None
-        return LookupRequest(
-            key, phone=normalize_phone(phone), email=normalize_email(email)
-        )
+        return LookupRequest(key, phone=normalize_phone(phone), email=normalize_email(email))
     if previous_key and previous_key.startswith("id:"):
         return None
     clean_name = " ".join((name or "").split())
@@ -113,9 +105,7 @@ def next_lookup(
 def records_prefill(result: dict[str, Any]) -> dict[str, str] | None:
     """Fields to fill from a lookup result. Only a phone or email match is a verified identity."""
     customer = result.get("customer")
-    if result.get("match_strategy") not in VERIFIED_MATCHES or not isinstance(
-        customer, dict
-    ):
+    if result.get("match_strategy") not in VERIFIED_MATCHES or not isinstance(customer, dict):
         return None
     prefill = {
         f: str(customer[f]).strip()

@@ -41,11 +41,11 @@
   },
   {
     "case": "ai may correct a heard email",
-    "values": { "email": "liao@example.com" },
+    "values": { "email": "liao@gmail.com" },
     "sources": { "email": "heard" },
     "source": "ai",
-    "patch": { "email": "katherine.liao@example.com" },
-    "accepted": { "email": "katherine.liao@example.com" }
+    "patch": { "email": "katherine.liao@gmail.com" },
+    "accepted": { "email": "katherine.liao@gmail.com" }
   },
   {
     "case": "ai may update other heard fields",
@@ -57,10 +57,10 @@
   },
   {
     "case": "same value from the same source is not a change",
-    "values": { "email": "katherine.liao@example.com" },
+    "values": { "email": "katherine.liao@gmail.com" },
     "sources": { "email": "ai" },
     "source": "ai",
-    "patch": { "email": " katherine.liao@example.com " },
+    "patch": { "email": " katherine.liao@gmail.com " },
     "accepted": {}
   },
   {

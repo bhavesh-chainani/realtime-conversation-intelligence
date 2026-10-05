@@ -45,9 +45,7 @@ def word_speakers(
                 second = means[ranked[1]] if len(ranked) > 1 else 0.0
                 out.append(WordSpeaker(best, means[best] - second))
                 continue
-        out.append(
-            WordSpeaker(_nearest_active(probs, lo, hi, search_ms // frame_ms), 0.0)
-        )
+        out.append(WordSpeaker(_nearest_active(probs, lo, hi, search_ms // frame_ms), 0.0))
     return out
 
 
@@ -70,12 +68,7 @@ def smooth(labels: list[WordSpeaker], min_margin: float = 0.25) -> list[int | No
     speakers = [w.speaker for w in labels]
     for i in range(1, len(speakers) - 1):
         prev, nxt = speakers[i - 1], speakers[i + 1]
-        if (
-            prev is not None
-            and prev == nxt
-            and speakers[i] != prev
-            and labels[i].margin < min_margin
-        ):
+        if prev is not None and prev == nxt and speakers[i] != prev and labels[i].margin < min_margin:
             speakers[i] = prev
     # Unattributed words join the speaker before them (or after, at the start of a turn).
     for i in range(1, len(speakers)):
@@ -96,9 +89,7 @@ def split_by_speaker(words: list[dict], speakers: list[int | None]) -> list[dict
         else:
             segments.append({"speaker": speaker, "words": [word]})
     for seg in segments:
-        seg["text"] = " ".join(
-            str(w.get("text", "")).strip() for w in seg["words"]
-        ).strip()
+        seg["text"] = " ".join(str(w.get("text", "")).strip() for w in seg["words"]).strip()
     return segments
 
 

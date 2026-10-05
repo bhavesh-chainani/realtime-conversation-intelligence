@@ -1,6 +1,8 @@
-{caller_card}
+TODAY: {today}
 
 {customer_record}
+
+{caller_card}
 
 SUGGESTION STAFF CAN SEE NOW (from the previous turn):
 {previous_suggestions}

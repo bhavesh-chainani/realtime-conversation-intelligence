@@ -45,6 +45,7 @@ PLACEHOLDER_VALUES = {
     "not stated",
     "unspecified",
 }
+EXTRACTION_MAX_TOKENS = 300  # four short fields; purpose_of_call is the longest
 GENERIC_NAMES = {"customer", "caller", "unknown customer"}
 
 
@@ -57,9 +58,12 @@ async def extract_entities(transcript: str) -> dict[str, str | None]:
     if not client:
         raise ValueError("LLM client is not configured")
 
-    response = await client.chat.completions.create(
+    # Not on the critical path, but it shares the gateway with the suggestion: keep it short, and no
+    # client retries (the next customer turn extracts again anyway).
+    response = await client.with_options(max_retries=0).chat.completions.create(
         model=get_extraction_model(),
-        temperature=cfg.SUGGESTION_TEMPERATURE,
+        temperature=0,
+        max_completion_tokens=EXTRACTION_MAX_TOKENS,
         timeout=cfg.EXTRACTION_TIMEOUT_SECONDS,
         response_format={"type": "json_object"},
         messages=[
@@ -69,11 +73,9 @@ async def extract_entities(transcript: str) -> dict[str, str | None]:
                 "content": user_prompt("entity", conversation_transcript=transcript),
             },
         ],
-        **llm_extra_params(),
+        **llm_extra_params(get_extraction_model()),
     )
-    data = normalize_payload(
-        json.loads(strip_code_fences(response.choices[0].message.content or ""))
-    )
+    data = normalize_payload(json.loads(strip_code_fences(response.choices[0].message.content or "")))
     data["contact_number"] = reconcile_phone(data["contact_number"], transcript)
     data["email"] = reconcile_email(data["email"], transcript)
     # Drop any field the model wrote partly in another script; staff see it blank instead.

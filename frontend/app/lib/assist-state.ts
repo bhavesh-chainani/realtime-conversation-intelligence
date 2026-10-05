@@ -5,6 +5,7 @@ import {
   applyManualEdit,
   EMPTY_CUSTOMER,
   IDENTITY_FIELDS,
+  trimmedCustomer,
   type FieldSources,
 } from "./customer-profile.ts";
 import { toAssistTurns } from "./transcript.ts";
@@ -13,20 +14,20 @@ import type {
   CustomerDataField,
   CustomerHistoryCase,
   CustomerHistoryStatus,
-  HistoryMeta,
   Suggestion,
   SuggestionMeta,
   Turn,
 } from "./types.ts";
 
 /** Operators get one focused suggestion at a time. */
-export const MAX_SUGGESTIONS = 1;
+const MAX_SUGGESTIONS = 1;
 
-export type HistoryState = {
+type HistoryState = {
   status: CustomerHistoryStatus;
   summary: string;
   cases: CustomerHistoryCase[];
-  meta: HistoryMeta | null;
+  /** Open cases in the record (0 unless matched). */
+  openCount: number;
   lookupKey: string | null;
   matchedOn: string | null;
 };
@@ -47,10 +48,12 @@ export type AssistState = {
   streamEpoch: number;
   /** performance.now() when the turn behind the current stream was committed (suggestion latency). */
   committedAt: number;
+  /** performance.now() when the caller stopped speaking (≤ committedAt). */
+  endedAt: number;
 };
 
 export type AssistAction =
-  | { type: "streamStart"; gen: number; committedAt: number }
+  | { type: "streamStart"; gen: number; committedAt: number; endedAt?: number }
   | { type: "event"; gen: number; event: AssistEvent; at: number }
   | { type: "streamEnd"; gen: number }
   | { type: "manualEdit"; field: CustomerDataField; value: string }
@@ -62,7 +65,7 @@ const IDLE_HISTORY: HistoryState = {
   status: "idle",
   summary: "",
   cases: [],
-  meta: null,
+  openCount: 0,
   lookupKey: null,
   matchedOn: null,
 };
@@ -79,6 +82,7 @@ export const initialAssistState: AssistState = {
   epoch: 0,
   streamEpoch: 0,
   committedAt: 0,
+  endedAt: 0,
 };
 
 function historyFrom(result: HistoryResult): HistoryState {
@@ -86,7 +90,7 @@ function historyFrom(result: HistoryResult): HistoryState {
     status: result.status,
     summary: result.summary,
     cases: result.cases,
-    meta: result.status === "ok" ? { openCount: result.openCount, matchedOn: result.matchedOn } : null,
+    openCount: result.status === "ok" ? result.openCount : 0,
     lookupKey: result.lookupKey,
     matchedOn: result.matchedOn,
   };
@@ -125,7 +129,8 @@ function applyEvent(state: AssistState, event: AssistEvent, at: number): AssistS
         suggestions: list,
         suggestionMeta: {
           origin: event.fallback ? "fallback" : "live",
-          latencyMs: at - state.committedAt,
+          latencyMs: at - state.endedAt,
+          speakerMs: state.committedAt - state.endedAt,
           llmMs: event.fallback ? undefined : event.timings.llm_ms,
           model: event.fallback ? undefined : event.timings.model,
         },
@@ -141,7 +146,13 @@ function applyEvent(state: AssistState, event: AssistEvent, at: number): AssistS
 export function assistReducer(state: AssistState, action: AssistAction): AssistState {
   switch (action.type) {
     case "streamStart":
-      return { ...state, gen: action.gen, streamEpoch: state.epoch, committedAt: action.committedAt };
+      return {
+        ...state,
+        gen: action.gen,
+        streamEpoch: state.epoch,
+        committedAt: action.committedAt,
+        endedAt: Math.min(action.endedAt ?? action.committedAt, action.committedAt),
+      };
     case "event":
       return action.gen === state.gen ? applyEvent(state, action.event, action.at) : state;
     case "streamEnd": {
@@ -188,13 +199,9 @@ export function casesKey(history: HistoryState): string {
 }
 
 export function buildAssistRequest(state: AssistState, turns: Turn[], extract: boolean) {
-  const customer: Record<string, string> = {};
-  for (const [field, value] of Object.entries(state.customer)) {
-    if (value.trim()) customer[field] = value.trim();
-  }
   return {
     turns: toAssistTurns(turns),
-    customer,
+    customer: trimmedCustomer(state.customer),
     sources: state.sources,
     history: {
       lookup_key: state.history.lookupKey,

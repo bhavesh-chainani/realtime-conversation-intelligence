@@ -12,9 +12,7 @@ from backend.profile import (
     records_prefill,
 )
 
-PRECEDENCE = json.loads(
-    (Path(__file__).parent / "fixtures" / "profile_precedence.json").read_text()
-)
+PRECEDENCE = json.loads((Path(__file__).parent / "fixtures" / "profile_precedence.json").read_text())
 
 
 @pytest.mark.parametrize("case", PRECEDENCE, ids=[c["case"] for c in PRECEDENCE])
@@ -43,12 +41,12 @@ def test_lookup_guard_name_first_contact_supersedes_no_repeats():
     assert by_phone == ("id:91234567", None, "91234567", None)
     assert next_lookup(by_phone.key, "Katherine Liao", "9123 4567", "") is None
     # Hearing the email as well looks up again with both.
-    both = next_lookup(by_phone.key, "Katherine Liao", "91234567", "K.Liao@Example.com")
+    both = next_lookup(by_phone.key, "Katherine Liao", "91234567", "K.Liao@Gmail.com")
     assert both == (
-        "id:91234567|k.liao@example.com",
+        "id:91234567|k.liao@gmail.com",
         None,
         "91234567",
-        "k.liao@example.com",
+        "k.liao@gmail.com",
     )
     # After a phone / email lookup, a name change alone does not trigger a name lookup.
     assert next_lookup(by_phone.key, "Katherine Tan", "", "") is None
@@ -57,11 +55,11 @@ def test_lookup_guard_name_first_contact_supersedes_no_repeats():
 
 
 def test_email_alone_triggers_a_lookup():
-    assert next_lookup(None, "", "", "katherine.liao@example.com") == (
-        "id:katherine.liao@example.com",
+    assert next_lookup(None, "", "", "katherine.liao@gmail.com") == (
+        "id:katherine.liao@gmail.com",
         None,
         None,
-        "katherine.liao@example.com",
+        "katherine.liao@gmail.com",
     )
 
 
@@ -70,13 +68,13 @@ def test_records_prefill_only_on_phone_or_email_match(strategy):
     customer = {
         "name": "Katherine Liao",
         "contact_number": "+65 9123 4567",
-        "email": "katherine.liao@example.com",
+        "email": "katherine.liao@gmail.com",
         "x": 1,
     }
     assert records_prefill({"match_strategy": strategy, "customer": customer}) == {
         "name": "Katherine Liao",
         "contact_number": "+65 9123 4567",
-        "email": "katherine.liao@example.com",
+        "email": "katherine.liao@gmail.com",
     }
     assert records_prefill({"match_strategy": "name", "customer": customer}) is None
     assert records_prefill({"status": "not_found"}) is None

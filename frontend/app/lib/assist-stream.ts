@@ -1,4 +1,5 @@
 // Client for POST /assist: an NDJSON stream of events for one customer turn (see backend/orchestrator.py).
+import { obj, str } from "./parse.ts";
 import type { CustomerHistoryCase, CustomerHistoryStatus, FieldSource, Suggestion } from "./types.ts";
 
 export type HistoryResult = {
@@ -14,10 +15,9 @@ export type AssistEvent =
   | { type: "customer"; source: FieldSource; patch: Record<string, string> }
   | { type: "history"; status: "loading"; lookupKey: string | null }
   | ({ type: "history" } & HistoryResult)
-  | { type: "suggesting"; round: number }
+  | { type: "suggesting" }
   | {
       type: "suggestions";
-      round: number;
       suggestions: Suggestion[];
       fallback: boolean;
       timings: { llm_ms?: number; model?: string };
@@ -60,23 +60,22 @@ function parseLines(lines: string[]): unknown[] {
   return out;
 }
 
-function str(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
 /** A /customer-history response or /assist history event, normalised for the caller card. */
 export function parseHistoryResult(raw: Record<string, unknown>): HistoryResult {
   const status = (HISTORY_STATUSES.has(str(raw.status)) ? raw.status : "error") as CustomerHistoryStatus;
   const cases: CustomerHistoryCase[] =
     status === "ok" && Array.isArray(raw.cases)
       ? raw.cases.map((row) => {
-          const c = (row ?? {}) as Record<string, unknown>;
+          const c = obj(row);
           return {
             case_id: str(c.case_id),
             company: str(c.company),
             type: str(c.type),
             status: str(c.status),
             summary: str(c.summary),
+            opened_on: str(c.opened_on),
+            next_action: str(c.next_action),
+            follow_up_due: str(c.follow_up_due),
           };
         })
       : [];
@@ -86,7 +85,7 @@ export function parseHistoryResult(raw: Record<string, unknown>): HistoryResult 
     matchedOn: status === "ok" ? str(raw.match_strategy) || null : null,
     cases,
     openCount: typeof raw.open_count === "number" ? raw.open_count : 0,
-    summary: str(raw.summary) || str(raw.history_summary) || str(raw.message) || "No customer history found.",
+    summary: str(raw.summary) || "No customer history found.",
   };
 }
 
@@ -101,11 +100,10 @@ export function parseAssistEvent(raw: unknown): AssistEvent | null {
       if (ev.status === "loading") return { type: "history", status: "loading", lookupKey: str(ev.lookup_key) || null };
       return { type: "history", ...parseHistoryResult(ev) };
     case "suggesting":
-      return { type: "suggesting", round: Number(ev.round) || 1 };
+      return { type: "suggesting" };
     case "suggestions":
       return {
         type: "suggestions",
-        round: Number(ev.round) || 1,
         suggestions: Array.isArray(ev.suggestions) ? (ev.suggestions as Suggestion[]) : [],
         fallback: Boolean(ev.fallback),
         timings: (ev.timings ?? {}) as { llm_ms?: number; model?: string },

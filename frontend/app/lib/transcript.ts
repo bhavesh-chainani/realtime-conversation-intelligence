@@ -29,17 +29,19 @@ export function resolveSpeakerRole(
 
   const assigned = new Set(Object.values(map));
   const firstRole: KnownRole = nextVoiceIsStaff ? "staff" : "customer";
-  const secondRole: KnownRole = firstRole === "staff" ? "customer" : "staff";
+  const secondRole = otherRole(firstRole);
   for (const role of [firstRole, secondRole]) {
     if (!assigned.has(role)) return { role, map: { ...map, [label]: role } };
   }
   return { role: "unknown", map };
 }
 
+export function otherRole(role: KnownRole): KnownRole {
+  return role === "staff" ? "customer" : "staff";
+}
+
 export function swapRoles(map: SpeakerRoleMap): SpeakerRoleMap {
-  return Object.fromEntries(
-    Object.entries(map).map(([label, role]) => [label, role === "staff" ? "customer" : "staff"])
-  );
+  return Object.fromEntries(Object.entries(map).map(([label, role]) => [label, otherRole(role)]));
 }
 
 export function toAssistTurns(turns: Turn[]): Array<{ role: SpeakerRole; text: string }> {

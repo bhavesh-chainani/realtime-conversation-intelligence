@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { memo, type RefObject } from "react";
 
 import type { PendingTurn } from "../lib/stt-relay.ts";
 import type { SpeakerRole, Turn } from "../lib/types.ts";
@@ -27,17 +27,12 @@ function roleDisplayName(role: SpeakerRole): string {
 
 /** Short explanation of how the speaker was decided (technical view). */
 function attribution(turn: Turn): string {
-  switch (turn.roleSource) {
-    case "diarization":
-      return turn.speakerLabel ? `diarised ${turn.speakerLabel}` : "diarised";
-    case "manual":
-      return "set by staff";
-    default:
-      return "";
-  }
+  if (turn.roleSource === "manual") return "set by staff";
+  return turn.speakerLabel ? `diarised ${turn.speakerLabel}` : "diarised";
 }
 
-export function TranscriptPanel({
+/** Memoised: the page re-renders on every mic-level update, this panel only when its inputs change. */
+export const TranscriptPanel = memo(function TranscriptPanel({
   turns,
   live,
   pending,
@@ -64,7 +59,7 @@ export function TranscriptPanel({
         </div>
       </div>
 
-      <div className="control-bar control-bar--compact" role="group" aria-label="Speaker role controls">
+      <div className="control-bar" role="group" aria-label="Speaker role controls">
         <div className="control-bar__content">
           <p className="control-bar__hint">
             Speakers from voice diarization; the first voice is taken as Staff. Click a turn to correct it.
@@ -136,4 +131,4 @@ export function TranscriptPanel({
       </div>
     </section>
   );
-}
+});

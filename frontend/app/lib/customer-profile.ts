@@ -3,7 +3,7 @@
 import type { CustomerData, CustomerDataField, FieldSource } from "./types.ts";
 
 export type FieldSources = Partial<Record<CustomerDataField, FieldSource>>;
-export type ProfileState = { customer: CustomerData; sources: FieldSources };
+type ProfileState = { customer: CustomerData; sources: FieldSources };
 
 export const EMPTY_CUSTOMER: CustomerData = {
   name: "",
@@ -14,6 +14,13 @@ export const EMPTY_CUSTOMER: CustomerData = {
 
 const FIELDS = Object.keys(EMPTY_CUSTOMER) as CustomerDataField[];
 export const IDENTITY_FIELDS: CustomerDataField[] = ["name", "contact_number", "email"];
+
+/** The filled-in fields, trimmed, as sent to the backend. */
+export function trimmedCustomer(customer: CustomerData): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [field, value] of Object.entries(customer)) if (value.trim()) out[field] = value.trim();
+  return out;
+}
 
 /**
  * Merge values from `source`. Staff edits always win; DB records beat anything heard or extracted;

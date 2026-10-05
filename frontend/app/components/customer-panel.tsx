@@ -1,18 +1,18 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
-import {
-  isOpenCaseStatus,
-  type CustomerData,
-  type CustomerDataField,
-  type CustomerHistoryCase,
-  type CustomerHistoryStatus,
-  type FieldSource,
-  type HistoryMeta,
+import { formatDueDate, isOpenCaseStatus, isOverdue, todayIso } from "../lib/cases.ts";
+import { IDENTITY_FIELDS, type FieldSources } from "../lib/customer-profile.ts";
+import type {
+  CustomerData,
+  CustomerDataField,
+  CustomerHistoryCase,
+  CustomerHistoryStatus,
+  FieldSource,
 } from "../lib/types.ts";
 
 type CustomerPanelProps = {
   customerData: CustomerData;
-  fieldSources: Partial<Record<CustomerDataField, FieldSource>>;
+  fieldSources: FieldSources;
   /** Case IDs cited by the current suggestion. */
   citedIds: Set<string>;
   onCustomerDataChange: (field: CustomerDataField, value: string) => void;
@@ -20,8 +20,9 @@ type CustomerPanelProps = {
   customerHistoryStatus: CustomerHistoryStatus;
   customerHistoryMessage: string;
   customerHistoryCases: CustomerHistoryCase[];
-  historyMeta: HistoryMeta | null;
-  isLoadingCustomerHistory: boolean;
+  /** How the record was matched ("name" = unverified), and its open cases; set when status is "ok". */
+  matchedOn: string | null;
+  openCount: number;
 };
 
 const SOURCE_LABELS: Record<FieldSource, string> = {
@@ -60,7 +61,8 @@ function FieldLabel({ htmlFor, source, children }: { htmlFor: string; source?: F
   );
 }
 
-export function CustomerPanel({
+/** Memoised: the page re-renders on every mic-level update, this panel only when its inputs change. */
+export const CustomerPanel = memo(function CustomerPanel({
   customerData,
   fieldSources,
   citedIds,
@@ -69,10 +71,11 @@ export function CustomerPanel({
   customerHistoryStatus,
   customerHistoryMessage,
   customerHistoryCases,
-  historyMeta,
-  isLoadingCustomerHistory,
+  matchedOn,
+  openCount,
 }: CustomerPanelProps) {
-  const canLookup = [customerData.name, customerData.contact_number, customerData.email].some((v) => v.trim());
+  const canLookup = IDENTITY_FIELDS.some((field) => customerData[field].trim());
+  const isLoading = customerHistoryStatus === "loading";
 
   const historyBadge = HISTORY_BADGES[customerHistoryStatus];
   const historyTone = HISTORY_TONES[customerHistoryStatus];
@@ -83,15 +86,15 @@ export function CustomerPanel({
         ? "Searching prior cases…"
         : customerHistoryMessage || "No customer history information is available yet.";
   const showCases = customerHistoryStatus === "ok" && customerHistoryCases.length > 0;
-  const nameOnlyMatch = historyMeta?.matchedOn === "name";
-
+  const today = todayIso();
   let standing: { tone: string; text: string } | null = null;
-  if (historyMeta && showCases) {
+  if (showCases) {
     const count = customerHistoryCases.length;
-    const cases = `${count} prior case${count === 1 ? "" : "s"}${historyMeta.openCount ? ` · ${historyMeta.openCount} open` : ""}`;
-    standing = nameOnlyMatch
-      ? { tone: "warning", text: `Possible match · verify phone or email · ${cases}` }
-      : { tone: "success", text: `Returning customer · ${cases}` };
+    const cases = `${count} prior case${count === 1 ? "" : "s"}${openCount ? ` · ${openCount} open` : ""}`;
+    standing =
+      matchedOn === "name"
+        ? { tone: "warning", text: `Possible match · verify phone or email · ${cases}` }
+        : { tone: "success", text: `Returning customer · ${cases}` };
   } else if (customerHistoryStatus === "not_found") {
     standing = { tone: "neutral", text: "New customer · no prior cases" };
   }
@@ -174,10 +177,10 @@ export function CustomerPanel({
               type="button"
               className="btn btn--ghost btn--sm"
               onClick={onLookup}
-              disabled={isLoadingCustomerHistory || !canLookup}
+              disabled={isLoading || !canLookup}
               title={!canLookup ? "Enter a customer name, phone or email first." : "Search prior cases again"}
             >
-              {isLoadingCustomerHistory ? "Looking up…" : "Look up"}
+              {isLoading ? "Looking up…" : "Look up"}
             </button>
           </div>
         </div>
@@ -187,6 +190,7 @@ export function CustomerPanel({
             {customerHistoryCases.map((row, index) => {
               const open = isOpenCaseStatus(row.status);
               const cited = citedIds.has(row.case_id);
+              const overdue = open && isOverdue(row.follow_up_due, today);
               return (
                 <li
                   key={`${row.case_id || "case"}-${index}`}
@@ -201,6 +205,14 @@ export function CustomerPanel({
                   </div>
                   <div className="case-item__meta">{[row.type, row.company].filter(Boolean).join(" · ")}</div>
                   {row.summary ? <p className="case-item__summary">{row.summary}</p> : null}
+                  {open && (row.next_action || row.follow_up_due) ? (
+                    <p className={`case-item__next${overdue ? " case-item__next--overdue" : ""}`}>
+                      {row.next_action ? `Next: ${row.next_action}` : "Follow-up"}
+                      {row.follow_up_due
+                        ? ` · due ${formatDueDate(row.follow_up_due)}${overdue ? " (overdue)" : ""}`
+                        : ""}
+                    </p>
+                  ) : null}
                 </li>
               );
             })}
@@ -211,4 +223,4 @@ export function CustomerPanel({
       </section>
     </section>
   );
-}
+});

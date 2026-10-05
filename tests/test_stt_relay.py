@@ -17,9 +17,7 @@ from backend.stt_relay import (
     unlabelled_turn,
 )
 
-FIXTURE = json.loads(
-    (Path(__file__).parent / "fixtures" / "aai_turn_merged_speakers.json").read_text()
-)
+FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "aai_turn_merged_speakers.json").read_text())
 ROLE_CHANNEL = {
     "staff": 0,
     "customer": 1,
@@ -127,9 +125,7 @@ class FakeDiarizer:
 def aai_messages() -> list[dict]:
     # Without speaker_labels AssemblyAI sends no speakers; strip the fixture's to match.
     turn = {k: v for k, v in FIXTURE["turn"].items() if k != "speaker_label"}
-    turn["words"] = [
-        {k: v for k, v in w.items() if k != "speaker"} for w in turn["words"]
-    ]
+    turn["words"] = [{k: v for k, v in w.items() if k != "speaker"} for w in turn["words"]]
     return [
         {"type": "Begin", "id": "s1"},
         {
@@ -145,9 +141,7 @@ def aai_messages() -> list[dict]:
     ]
 
 
-def run_session(
-    client, monkeypatch, session: FakeSession | None
-) -> tuple[list[dict], FakeAssemblyAI]:
+def run_session(client, monkeypatch, session: FakeSession | None) -> tuple[list[dict], FakeAssemblyAI]:
     fake = FakeAssemblyAI(aai_messages())
 
     @asynccontextmanager
@@ -156,13 +150,9 @@ def run_session(
         yield fake
 
     monkeypatch.setattr(stt_relay.assemblyai, "connect", connect)
-    monkeypatch.setattr(
-        stt_relay, "get_diarizer", lambda: FakeDiarizer(session) if session else None
-    )
+    monkeypatch.setattr(stt_relay, "get_diarizer", lambda: FakeDiarizer(session) if session else None)
     received = []
-    with client.websocket_connect(
-        f"/ws/stt?ticket={issue_ticket()}&sample_rate=48000"
-    ) as ws:
+    with client.websocket_connect(f"/ws/stt?ticket={issue_ticket()}&sample_rate=48000") as ws:
         while True:
             msg = ws.receive_json()
             received.append(msg)
@@ -187,6 +177,7 @@ def test_relay_holds_final_turn_then_sends_speaker_segments(client, monkeypatch)
     ]  # unformatted and re-sent finals dropped
     final = received[-1]
     assert final["diarization"] == "nemotron"
+    assert isinstance(final["held_ms"], int) and final["held_ms"] >= 0
     assert [s["speaker_label"] for s in final["segments"]] == ["A", "B", "A"]
     # the same audio reached both AssemblyAI and the diariser
     assert b"\x01\x00" * 800 in fake.received and session.fed == 1600
@@ -197,9 +188,9 @@ def test_relay_sends_partial_labels_when_diariser_lags(client, monkeypatch):
     received, _ = run_session(client, monkeypatch, FakeSession(truth_probs()[:1000]))
     final = received[-1]
     assert final["diarization"] == "partial"
-    assert (
-        final["segments"][0]["speaker_label"] == "A"
-    )  # the words the diariser did hear
+    # Held until DIARIZATION_MAX_WAIT_MS ran out, and says so.
+    assert final["held_ms"] >= 100
+    assert final["segments"][0]["speaker_label"] == "A"  # the words the diariser did hear
 
 
 def test_relay_without_diariser_sends_unlabelled_turns(client, monkeypatch):
@@ -217,9 +208,7 @@ def test_terminate_still_delivers_turns_waiting_for_labels(client, monkeypatch):
         yield fake
 
     monkeypatch.setattr(stt_relay.assemblyai, "connect", connect)
-    monkeypatch.setattr(
-        stt_relay, "get_diarizer", lambda: FakeDiarizer(FakeSession([]))
-    )
+    monkeypatch.setattr(stt_relay, "get_diarizer", lambda: FakeDiarizer(FakeSession([])))
     with client.websocket_connect(f"/ws/stt?ticket={issue_ticket()}") as ws:
         while ws.receive_json()["type"] != "PendingTurn":
             pass

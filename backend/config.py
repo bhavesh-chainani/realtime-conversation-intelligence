@@ -45,9 +45,7 @@ ASSEMBLYAI_KEYTERMS = _list("ASSEMBLYAI_KEYTERMS")[:100]
 # Turn detection. Shorter end-of-turn silence makes finished lines appear sooner (~1.0 s vs ~1.6 s
 # with u3-rt-pro) without hurting accuracy.
 ASSEMBLYAI_STREAM_PARAMS = {
-    "min_end_of_turn_silence_when_confident": str(
-        _int("ASSEMBLYAI_END_OF_TURN_SILENCE_MS", 240)
-    ),
+    "min_end_of_turn_silence_when_confident": str(_int("ASSEMBLYAI_END_OF_TURN_SILENCE_MS", 240)),
     "max_turn_silence": str(_int("ASSEMBLYAI_MAX_TURN_SILENCE_MS", 1000)),
 }
 
@@ -58,11 +56,7 @@ ASSEMBLYAI_STREAM_PARAMS = {
 _default_diar_model = REPO_ROOT / "data" / "models" / "Nemotron-3-Diarization"
 DIARIZATION_MODEL = _str(
     "DIARIZATION_MODEL",
-    (
-        str(_default_diar_model)
-        if _default_diar_model.exists()
-        else "nvidia/Nemotron-3-Diarization"
-    ),
+    (str(_default_diar_model) if _default_diar_model.exists() else "nvidia/Nemotron-3-Diarization"),
 )
 DIARIZATION_DEVICE = _str("DIARIZATION_DEVICE", "cpu").lower()
 _diar_on_gpu = DIARIZATION_DEVICE.startswith("cuda")
@@ -72,9 +66,7 @@ DIARIZATION_MODE = _str("DIARIZATION_MODE", "low_latency" if _diar_on_gpu else "
 DIARIZATION_INT8 = _bool("DIARIZATION_INT8", not _diar_on_gpu)
 DIARIZATION_THREADS = _int("DIARIZATION_THREADS", 4)
 # Longest a finished turn waits for the diariser to catch up before it is sent anyway.
-DIARIZATION_MAX_WAIT_MS = _int(
-    "DIARIZATION_MAX_WAIT_MS", 1500 if _diar_on_gpu else 6000
-)
+DIARIZATION_MAX_WAIT_MS = _int("DIARIZATION_MAX_WAIT_MS", 1500 if _diar_on_gpu else 6000)
 # Signs the one-time tickets that let the browser open the relay WebSocket. Set it when running
 # more than one backend instance; otherwise a per-process random secret is fine.
 STT_TICKET_SECRET = _str("STT_TICKET_SECRET") or os.urandom(32).hex()
@@ -93,6 +85,9 @@ SUGGESTION_TEMPERATURE = _float("SUGGESTION_TEMPERATURE", 0.3)
 SUGGESTION_MAX = _int("MAX_SUGGESTIONS", 1)
 SUGGESTION_TIMEOUT_SECONDS = _float("SUGGESTION_TIMEOUT_SECONDS", LLM_TIMEOUT_SECONDS)
 SUGGESTION_MAX_TOKENS = _int("SUGGESTION_MAX_TOKENS", 900)
+# The gateway stalls for seconds at random: after this long, send the same request again and use
+# whichever answers first. 0 turns it off.
+SUGGESTION_HEDGE_AFTER_MS = _int("SUGGESTION_HEDGE_AFTER_MS", 2500)
 
 EXTRACTION_MODEL = _str("EXTRACTION_MODEL", SUGGESTION_MODEL)
 EXTRACTION_TIMEOUT_SECONDS = _float("EXTRACTION_TIMEOUT_SECONDS", LLM_TIMEOUT_SECONDS)
@@ -103,8 +98,23 @@ CUSTOMER_HISTORY_DATABASE_URL = _str("CUSTOMER_HISTORY_DATABASE_URL")
 CUSTOMER_HISTORY_VIEW = _str("CUSTOMER_HISTORY_VIEW", "public.customer_history_view")
 CUSTOMER_HISTORY_QUERY_TIMEOUT_MS = _int("CUSTOMER_HISTORY_QUERY_TIMEOUT_MS", 2500)
 CUSTOMER_HISTORY_MAX_ROWS = _int("CUSTOMER_HISTORY_MAX_ROWS", 10)
-# Optional extra view columns returned with the customer (the demo view has none).
-CUSTOMER_HISTORY_EXTRA_COLUMNS = _list("CUSTOMER_HISTORY_EXTRA_COLUMNS")
+# What the centre advises per issue type (route, deadline, documents); read once at startup.
+ISSUE_GUIDE_VIEW = _str("ISSUE_GUIDE_VIEW", "public.issue_guide_view")
+
+# --- Case store: saving a call's wrap-up as a case (demo DB only; the lookup stays read-only) ---
+
+CASE_STORE_ENABLED = _bool("CASE_STORE_ENABLED", False)
+CASE_STORE_CUSTOMERS_TABLE = _str("CASE_STORE_CUSTOMERS_TABLE", "demo.customers")
+CASE_STORE_CASES_TABLE = _str("CASE_STORE_CASES_TABLE", "demo.customer_cases")
+
+# --- Wrap-up agent: end-of-call summary, actions, follow-up and message to the caller ----------
+
+WRAPUP_MODEL = _str("WRAPUP_MODEL", SUGGESTION_MODEL)
+WRAPUP_TIMEOUT_SECONDS = _float("WRAPUP_TIMEOUT_SECONDS", 45)
+WRAPUP_MAX_TOKENS = _int("WRAPUP_MAX_TOKENS", 1500)
+
+# Deadlines and follow-up dates are counted in the centre's local time.
+CENTRE_TIMEZONE = _str("CENTRE_TIMEZONE", "Asia/Singapore")
 
 # --- Server -------------------------------------------------------------------------------------
 

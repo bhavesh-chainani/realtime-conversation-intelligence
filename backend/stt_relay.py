@@ -7,9 +7,10 @@ Messages back to the browser are AssemblyAI-shaped:
 - partial `Turn` messages pass straight through, without speakers
 - a finished turn is announced at once as `PendingTurn`, then held until the diariser has
   covered its last word (or `DIARIZATION_MAX_WAIT_MS` passes), then sent as a final `Turn`
-  whose `segments` split it wherever the speaker changes. `diarization` says how complete
-  the labels are: "nemotron" (fully covered), "partial" (the diariser was still behind) or
-  "none" (no diariser loaded: every speaker is null and the operator assigns roles)
+  whose `segments` split it wherever the speaker changes and whose `held_ms` says how long it
+  waited. `diarization` says how complete the labels are: "nemotron" (fully covered), "partial"
+  (the diariser was still behind) or "none" (no diariser loaded: every speaker is null and the
+  operator assigns roles)
 
 Speaker labels are "A", "B", ... in Nemotron's order of first arrival.
 """
@@ -33,6 +34,7 @@ from . import assemblyai
 from . import config as cfg
 from .diarization.merge import majority, smooth, split_by_speaker, word_speakers
 from .diarization.nemotron import get_diarizer
+from .llm import keep_warm
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,11 @@ router = APIRouter()
 
 TICKET_TTL_SECONDS = 300
 # Diariser coverage needed past a turn's last word before its labels are trusted.
-END_MARGIN_MS = 50
+# The diariser fills speakers a whole chunk at a time, so a larger margin can cost a full extra chunk
+# (~1 s) for turns ending near a chunk boundary.
+END_MARGIN_MS = 10
+# Longest a held turn sleeps between checks when the diariser cannot signal progress (tests, failures).
+POLL_S = 0.05
 
 # ---------------------------------------------------------------------------
 # One-time tickets: a browser WebSocket cannot send an Authorization header, so the
@@ -59,9 +65,7 @@ def _sign(payload: bytes) -> str:
 
 
 def issue_ticket() -> str:
-    body = json.dumps(
-        {"e": int(time.time()) + TICKET_TTL_SECONDS, "n": secrets.token_hex(8)}
-    )
+    body = json.dumps({"e": int(time.time()) + TICKET_TTL_SECONDS, "n": secrets.token_hex(8)})
     payload = base64.urlsafe_b64encode(body.encode())
     return f"{payload.decode()}.{_sign(payload)}"
 
@@ -88,10 +92,7 @@ def redeem_ticket(ticket: str) -> None:
 
 
 def _labelled_turn(msg: dict, labels: list[str | None], source: str) -> dict:
-    words = [
-        {**w, "speaker": label}
-        for w, label in zip(msg.get("words") or [], labels, strict=False)
-    ]
+    words = [{**w, "speaker": label} for w, label in zip(msg.get("words") or [], labels, strict=False)]
     if words:
         segments = [
             {
@@ -122,10 +123,7 @@ def diarize_turn(msg: dict, probs: list[list[float]], source: str = "nemotron") 
     """Label each word with its Nemotron speaker. Words past the diariser's coverage take the
     nearest active frame, or None."""
     words = msg.get("words") or []
-    labels = [
-        None if s is None else chr(ord("A") + s)
-        for s in smooth(word_speakers(words, probs))
-    ]
+    labels = [None if s is None else chr(ord("A") + s) for s in smooth(word_speakers(words, probs))]
     return _labelled_turn(msg, labels, source)
 
 
@@ -139,17 +137,11 @@ def unlabelled_turn(msg: dict) -> dict:
 
 
 def _origin_allowed(origin: str | None) -> bool:
-    return (
-        origin is None
-        or "*" in cfg.BACKEND_CORS_ORIGINS
-        or origin in cfg.BACKEND_CORS_ORIGINS
-    )
+    return origin is None or "*" in cfg.BACKEND_CORS_ORIGINS or origin in cfg.BACKEND_CORS_ORIGINS
 
 
 class Relay:
-    def __init__(
-        self, browser: WebSocket, aai: Any, diar: Any | None, max_wait_ms: int
-    ):
+    def __init__(self, browser: WebSocket, aai: Any, diar: Any | None, max_wait_ms: int):
         self.browser, self.aai, self.diar = browser, aai, diar
         self.max_wait = max_wait_ms / 1000
         # turn_order -> latest formatted final, in case AssemblyAI re-sends a turn.
@@ -158,16 +150,19 @@ class Relay:
         self.sent: set[Any] = set()
         self.unsent = 0  # turns announced as pending and not yet sent final
         self.stats = {"nemotron": 0, "partial": 0, "none": 0}
+        self.held_ms: list[int] = []  # per final turn: how long it waited for the diariser
+        self.progress = asyncio.Event()  # set by the diariser thread after each step
 
     async def run(self) -> None:
-        upstream, downstream = asyncio.create_task(
-            self._upstream()
-        ), asyncio.create_task(self._downstream())
+        if self.diar is not None and hasattr(self.diar, "on_progress"):
+            loop = asyncio.get_running_loop()
+            self.diar.on_progress = lambda: loop.call_soon_threadsafe(self.progress.set)
+        upstream, downstream = asyncio.create_task(self._upstream()), asyncio.create_task(self._downstream())
         emitter = asyncio.create_task(self._emit_finals())
+        # While the call is live, keep the LLM gateway connection open for the suggestions.
+        warm = asyncio.create_task(keep_warm())
         try:
-            done, _ = await asyncio.wait(
-                {upstream, downstream}, return_when=asyncio.FIRST_COMPLETED
-            )
+            done, _ = await asyncio.wait({upstream, downstream}, return_when=asyncio.FIRST_COMPLETED)
             if upstream in done and upstream.result() == "terminate":
                 # The caller ended the stream: let AssemblyAI finish the last turn, send the held
                 # turns, then confirm with Termination.
@@ -181,16 +176,22 @@ class Relay:
                                 timeout=self.max_wait,
                             )
                     while self.unsent and time.monotonic() < deadline:
-                        await asyncio.sleep(0.05)
+                        await asyncio.sleep(POLL_S)
                     await self.browser.send_json({"type": "Termination"})
                     await self.browser.close()
             else:
                 for task in done:
                     task.result()
         finally:
-            for task in (upstream, downstream, emitter):
+            for task in (upstream, downstream, emitter, warm):
                 task.cancel()
-            logger.info("STT relay closed: turns diarised=%s", self.stats)
+            held = sorted(self.held_ms)
+            logger.info(
+                "STT relay closed: turns diarised=%s, held for speakers p50=%sms max=%sms",
+                self.stats,
+                held[len(held) // 2] if held else "-",
+                held[-1] if held else "-",
+            )
 
     async def _upstream(self) -> str:
         """Forward caller audio until it disconnects ("disconnect") or sends Terminate ("terminate")."""
@@ -204,18 +205,13 @@ class Relay:
                     await self.aai.send(msg["bytes"])
                     if self.diar is not None:
                         self.diar.feed(msg["bytes"])
-                elif (
-                    msg.get("text")
-                    and json.loads(msg["text"]).get("type") == "Terminate"
-                ):
+                elif msg.get("text") and json.loads(msg["text"]).get("type") == "Terminate":
                     reason = "terminate"
                     break
         except WebSocketDisconnect:
             pass
-        try:
+        with suppress(Exception):
             await self.aai.send(json.dumps({"type": "Terminate"}))
-        except Exception:
-            pass
         return reason
 
     async def _downstream(self) -> bool:
@@ -235,10 +231,10 @@ class Relay:
             order = msg.get("turn_order")
             if order in self.sent:
                 continue
-            if order in self.held:
-                self.held[order] = msg
+            resent = order in self.held
+            self.held[order] = msg  # keep the latest version of a re-sent turn
+            if resent:
                 continue
-            self.held[order] = msg
             self.unsent += 1
             self.queue.put_nowait((order, time.monotonic()))
             await self.browser.send_json(
@@ -255,17 +251,20 @@ class Relay:
         while True:
             order, received = await self.queue.get()
             words = self.held[order].get("words") or []
-            need_ms = (
-                max((w.get("end") or 0) for w in words) + END_MARGIN_MS if words else 0
-            )
+            need_ms = max((w.get("end") or 0) for w in words) + END_MARGIN_MS if words else 0
             diar = self.diar
-            while (
-                diar is not None
-                and not diar.failed
-                and diar.processed_until_ms < need_ms
-                and time.monotonic() - received < self.max_wait
-            ):
-                await asyncio.sleep(0.05)
+            while True:
+                self.progress.clear()
+                if (
+                    diar is None
+                    or diar.failed
+                    or diar.processed_until_ms >= need_ms
+                    or time.monotonic() - received >= self.max_wait
+                ):
+                    break
+                # Wakes as soon as the diariser finishes a step (or after POLL_S without a signal).
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self.progress.wait(), timeout=POLL_S)
             msg = self.held.pop(order)
             self.sent.add(order)
             if diar is None or diar.failed:
@@ -281,6 +280,8 @@ class Relay:
                     need_ms,
                 )
             self.stats[out["diarization"]] += 1
+            out["held_ms"] = round((time.monotonic() - received) * 1000)
+            self.held_ms.append(out["held_ms"])
             await self.browser.send_json(out)
             self.unsent -= 1
 
@@ -305,7 +306,5 @@ async def stt_relay(ws: WebSocket, ticket: str = "", sample_rate: int = 48000) -
             await Relay(ws, aai, diar, cfg.DIARIZATION_MAX_WAIT_MS).run()
     except Exception as exc:
         logger.exception("STT relay failed")
-        try:
+        with suppress(Exception):
             await ws.close(code=1011, reason=str(exc)[:100])
-        except Exception:
-            pass

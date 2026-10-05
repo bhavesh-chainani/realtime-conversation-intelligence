@@ -9,9 +9,7 @@ from backend.diarization.merge import (
 )
 
 
-def activity(
-    spans: list[tuple[int, int, int]], total_ms: int, speakers: int = 2
-) -> list[list[float]]:
+def activity(spans: list[tuple[int, int, int]], total_ms: int, speakers: int = 2) -> list[list[float]]:
     """10 ms frames; each (start_ms, end_ms, speaker) span is active at 0.9, everything else 0.05."""
     frames = [[0.05] * speakers for _ in range(total_ms // 10)]
     for start, end, spk in spans:

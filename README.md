@@ -15,9 +15,20 @@ Each customer turn ──▶ POST /assist (NDJSON stream, backend/orchestrator.p
   1. instant regex on the turn (phone, email, "my name is …") ──▶ customer DB lookup → caller card, prior cases
   2. after a 250 ms debounce, in parallel:
        entity agent      LLM extraction of name / phone / email / purpose (while fields are missing)
-       suggestion agent  transcript + customer record ──▶ what Staff should say next, citing case IDs
+       suggestion agent  transcript + customer record + service guide ──▶ what Staff should say next
   3. if extraction reveals a new identity with a different record, the suggestion is redone with it
+
+End call ──▶ POST /wrapup   wrap-up agent: case note, agreed actions, follow-up date, message to the caller
+Save     ──▶ POST /cases    creates or updates the case, so the next call from that caller picks it up
 ```
+
+- **Call lifecycle.** The suggestion agent steers Staff through: identify the caller (name, contact number,
+  email) → raise any overdue action on an open case → the deciding facts for the issue → advice (route,
+  deadline, documents) → close with an agreed follow-up date. It never repeats a question Staff has just asked.
+- **Service guide.** `issue_guides` in the customer DB holds the centre's advice per issue type: the facts that
+  decide the route, the route (TADM, ECT, MOM, WICA, TAFEP), the deadline, documents and follow-up. It is read
+  at startup (`backend/issue_guides.py`) and given to the suggestion and wrap-up agents. **The demo guides are
+  general guidance written for this demo: have the centre's legal team check them before real use.**
 
 - **Diarisation.** The relay sends the same audio to AssemblyAI (words and timestamps) and to
   [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (speaker probabilities
@@ -46,21 +57,27 @@ backend/
   agents/
     entity_agent.py       LLM extraction of caller details
     suggestion_agent.py   what Staff should say next (the principal agent), with a static fallback
+    wrapup_agent.py       end-of-call case note, actions, follow-up and message to the caller
   prompts/<agent>/        system.md, user.md (str.format template); suggestion/fallback.json
   profile.py              field precedence, when to look up, records prefill
   quick_entities.py       instant regex for spoken / written phones and emails, and self-introduced names
   customer_history.py     read-only Postgres lookup; POST /customer-history (manual Look up)
+  issue_guides.py         the service guide (advice per issue type), read from the DB at startup
+  wrapup.py, case_store.py  POST /wrapup and POST /cases (saves to the demo DB when CASE_STORE_ENABLED)
+  db.py, clock.py         shared Postgres connection; the centre's local date
   stt_relay.py            WS /ws/stt: AssemblyAI words + Nemotron speakers
   assemblyai.py           AssemblyAI streaming connection
   diarization/            nemotron.py (model, per-call sessions), merge.py (word → speaker)
   llm.py, config.py, prompt_loader.py, text_guard.py
 frontend/app/
   page.tsx                composes the hooks into the workspace
-  hooks/                  useLiveTranscript (relay, mic, speakers), useAssist (/assist stream), useCallClock
+  hooks/                  useLiveTranscript (relay, mic, speakers), useAssist (/assist stream), useWrapUp,
+                          useCallClock
   lib/                    pure, unit-tested logic: assist stream + reducer, precedence, transcript, relay
-  components/             header, transcript, suggestion, caller card
+  components/             header, transcript, suggestion, caller card, wrap-up
 scripts/
-  demo_db.py              embedded Postgres with demo customers and cases
+  demo_db.py              embedded Postgres with demo customers, cases and issue guides
+  simulate_call.py        dev tool: an LLM caller runs whole calls through the backend and checks each stage
   gpu.sh                  start / deploy / connect / stop the AWS GPU server
   setup_gpu_host.sh, install_gpu_services.sh, gpu_host.conf
 tests/                    pytest suite (frontend tests live next to the code as *.test.ts)
@@ -83,9 +100,9 @@ cp .env.example .env                          # set ASSEMBLYAI_API_KEY, LLM_API_
 ```
 
 **Customer database.** `python scripts/demo_db.py` starts an embedded Postgres in `data/demo_pg` and seeds the
-demo customers. For example, Katherine Liao, S1234567A, has open and closed cases. The script prints the
-`CUSTOMER_HISTORY_DATABASE_URL` and `CUSTOMER_HISTORY_EXTRA_COLUMNS` values to put in `.env`. Re-run it after a
-reboot.
+demo customers, cases and issue guides. For example, Katherine Liao (9123 4567) has open and closed cases. The
+script prints the `CUSTOMER_HISTORY_DATABASE_URL` and `CASE_STORE_ENABLED` values to put in `.env`. Re-run it after
+a reboot.
 
 **Nemotron weights** load from `data/models/Nemotron-3-Diarization` when present, otherwise from Hugging Face.
 `scripts/setup_gpu_host.sh` downloads them.
@@ -97,12 +114,36 @@ uvicorn backend.api:app --host 127.0.0.1 --port 8000    # loads Nemotron at star
 cd frontend && npm run dev                              # http://localhost:3000
 ```
 
+For demos, run the frontend as a production build (`cd frontend && npm run build && npm start`): dev mode
+re-renders twice and is noticeably slower. The frontend talks to `http://localhost:8000` unless
+`NEXT_PUBLIC_BACKEND_URL` is set at build time (or `localStorage.BACKEND_URL` in the browser).
+
 Open the app, click **Start session**, and speak with two voices into the mic:
 
 - The first new voice is Staff by default. Change it with **Next voice**, or fix it later with **Swap roles**.
 - Say a phone number ("my number is nine one two three, four five six seven") or an email
-  ("katherine dot liao at example dot com") and the caller card fills from the database.
+  ("katherine dot liao at gmail dot com") and the caller card fills from the database.
 - The next suggestion cites the caller's cases.
+- **End call** drafts the wrap-up; review it, then **Save to case system**.
+
+### Demo storylines
+
+Seeded by `scripts/demo_db.py`; follow-up dates are relative to the day it runs. Play the caller:
+
+1. **New caller → filing → follow-up.** "My boss hasn't paid my salary for two months." Give a new number
+   (e.g. 8111 2222). The assistant asks for your details, finds no record, asks which months and whether you
+   still work there, then advises a TADM salary claim with its deadline and documents, and agrees a follow-up
+   date. End call → Save. Then **New call** and ring again from the same number: the record shows the case
+   just saved, and the assistant asks whether you filed the claim.
+2. **Returning caller with an overdue action.** Rajesh Kumar (8234 5678) about back-to-back shifts. The
+   assistant first asks about the medical report overdue on his work-permit case, then advises on working
+   hours (MOM report or TADM overtime claim). The wrap-up updates or adds cases.
+3. **Repeat employer.** Katherine Liao (9123 4567) whose pay was cut after she complained about forfeited
+   leave. The assistant raises her open Brightpath leave case, links the new issue and advises a TADM claim;
+   the wrap-up updates that case.
+
+To rehearse without a microphone: `python scripts/simulate_call.py --story all --save` (any running backend,
+`--backend` to point elsewhere). Re-run `scripts/demo_db.py` to reset the data between demos.
 
 A laptop CPU runs Nemotron too slowly for live calls (turns wait seconds for speakers); use the GPU host below.
 
@@ -116,6 +157,8 @@ A laptop CPU runs Nemotron too slowly for live calls (turns wait seconds for spe
 | `WS /ws/stt`             | The relay                                                          |
 | `POST /assist`           | Both agents for one customer turn, as an NDJSON event stream       |
 | `POST /customer-history` | Manual lookup by contact number, email and/or name                 |
+| `POST /wrapup`           | End-of-call wrap-up: case note, actions, follow-up, caller message |
+| `POST /cases`            | Save a reviewed wrap-up as a new or updated case (demo DB only)    |
 
 `/assist` events, one JSON object per line: `customer` (a patch to the caller card, with its source),
 `history` (`loading`, then the lookup result), `suggesting`, `suggestions`, `error` (non-fatal, per stage)
@@ -126,8 +169,13 @@ and `done`. The full schema is documented at the top of `backend/orchestrator.py
 - **`.env`** holds every setting; defaults and comments live in `backend/config.py`. AssemblyAI uses
   `u3-rt-pro` by default because the standard model drops digits from spoken numbers.
 - **Customer DB view** (`CUSTOMER_HISTORY_VIEW`, read-only): one row per case with `customer_name`,
-  `contact_number`, `email`, `case_id`, `company`, `case_type`, `case_status`, `case_summary`. Further columns
-  listed in `CUSTOMER_HISTORY_EXTRA_COLUMNS` are returned with the customer.
+  `contact_number`, `email`, `case_id`, `company`, `case_type`, `case_status`, `case_summary`, `opened_on`,
+  `next_action` and `follow_up_due` (the last three let the assistant follow up on open cases).
+- **Issue guides** (`ISSUE_GUIDE_VIEW`): `issue_type`, `applies_when`, `facts_to_gather`, `documents`, `route`,
+  `deadline`, `follow_up`. Without it, the assistant gives only general next steps.
+- **Case store** (`CASE_STORE_ENABLED`, off by default): lets **Save** write to the demo tables. The history
+  lookup itself always connects read-only. Re-running `scripts/demo_db.py` (and every GPU host boot or deploy)
+  reseeds the data, which removes cases saved during demos.
 - **`backend/prompts/<agent>/`**: each agent's system prompt and user template, editable without code
   changes. Only `user.md` is passed through `str.format`.
 

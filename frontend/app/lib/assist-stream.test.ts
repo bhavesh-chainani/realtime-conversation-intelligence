@@ -42,7 +42,18 @@ test("events are validated and normalised", () => {
     status: "ok",
     lookupKey: "id:91234567",
     matchedOn: "contact_number",
-    cases: [{ case_id: "CASE-1", company: "", type: "", status: "Open", summary: "" }],
+    cases: [
+      {
+        case_id: "CASE-1",
+        company: "",
+        type: "",
+        status: "Open",
+        summary: "",
+        opened_on: "",
+        next_action: "",
+        follow_up_due: "",
+      },
+    ],
     openCount: 1,
     summary: "1 case",
   });
@@ -53,7 +64,7 @@ test("history results outside ok carry no cases or match", () => {
     status: "not_found",
     cases: [{ case_id: "X" }],
     match_strategy: "name",
-    message: "None",
+    summary: "None",
   });
   assert.deepEqual([r.status, r.cases, r.matchedOn, r.summary], ["not_found", [], null, "None"]);
   assert.equal(parseHistoryResult({ status: "weird" }).status, "error");

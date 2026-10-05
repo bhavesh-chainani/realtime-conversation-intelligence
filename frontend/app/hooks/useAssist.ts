@@ -10,6 +10,7 @@ import {
   type AssistState,
 } from "../lib/assist-state.ts";
 import { parseHistoryResult, streamAssist } from "../lib/assist-stream.ts";
+import { obj, postJson } from "../lib/parse.ts";
 import type { CustomerDataField, Turn } from "../lib/types.ts";
 
 export function useAssist(backendUrl: string) {
@@ -38,7 +39,7 @@ export function useAssist(backendUrl: string) {
       const controller = new AbortController();
       abortRef.current = controller;
       const gen = stateRef.current.gen + 1;
-      dispatch({ type: "streamStart", gen, committedAt: turn.committedAt });
+      dispatch({ type: "streamStart", gen, committedAt: turn.committedAt, endedAt: turn.endedAt });
       const body = buildAssistRequest(stateRef.current, turns, extract);
       streamAssist(backendUrl, body, controller.signal, (event) => {
         if (event.type === "error") console.warn(`[assist] ${event.stage} failed: ${event.message}`);
@@ -63,25 +64,13 @@ export function useAssist(backendUrl: string) {
     const { name, contact_number, email } = stateRef.current.customer;
     dispatch({ type: "manualLookupStart" });
     const epoch = stateRef.current.epoch;
-    let raw: Record<string, unknown>;
-    try {
-      const res = await fetch(`${backendUrl}/customer-history`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim() || undefined,
-          contact_number: contact_number.trim() || undefined,
-          email: email.trim() || undefined,
-        }),
-      });
-      raw = res.ok
-        ? await res.json()
-        : { status: "error", message: "Unable to obtain customer history at the moment." };
-    } catch (err) {
-      console.error("[lookup] failed:", err);
-      raw = { status: "error", message: "Unable to obtain customer history at the moment." };
-    }
-    const prefill = raw.prefill && typeof raw.prefill === "object" ? (raw.prefill as Record<string, string>) : null;
+    const reply = await postJson(`${backendUrl}/customer-history`, {
+      name: name.trim() || undefined,
+      contact_number: contact_number.trim() || undefined,
+      email: email.trim() || undefined,
+    });
+    const raw = reply ? obj(reply) : { status: "error", summary: "Unable to obtain customer history at the moment." };
+    const prefill = raw.prefill ? (obj(raw.prefill) as Record<string, string>) : null;
     dispatch({ type: "manualLookupResult", epoch, result: parseHistoryResult(raw), prefill });
 
     const last = lastTurnRef.current;

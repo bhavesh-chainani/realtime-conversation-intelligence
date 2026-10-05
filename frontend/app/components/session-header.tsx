@@ -11,16 +11,14 @@ type SessionHeaderProps = {
   micLevel: number;
   canEndCall: boolean;
   onEndCall: () => void;
-  /** Hold the call: stop listening but keep everything on screen. */
-  canPause: boolean;
-  canResume: boolean;
+  /** Pause holds the call (stops listening, keeps everything on screen); shown while live. */
   onPause: () => void;
+  canResume: boolean;
   onResume: () => void;
   /** The call has ended: offer to clear the workspace for the next one. */
   canStartNewCall: boolean;
   onNewCall: () => void;
   onStart: () => void;
-  onStop: () => void;
 };
 
 function formatClock(ms: number): string {
@@ -49,14 +47,12 @@ export function SessionHeader({
   micLevel,
   canEndCall,
   onEndCall,
-  canPause,
-  canResume,
   onPause,
+  canResume,
   onResume,
   canStartNewCall,
   onNewCall,
   onStart,
-  onStop,
 }: SessionHeaderProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -75,9 +71,6 @@ export function SessionHeader({
     const state = isLive ? "On call" : isConnecting ? "Connecting…" : "On hold";
     status = `${state}${who} · ${formatClock(now - startedAt)}`;
     tone = isLive ? "live" : isConnecting ? "connecting" : "hold";
-  } else if (isConnecting) {
-    status = "Connecting…";
-    tone = "connecting";
   }
 
   return (
@@ -94,7 +87,7 @@ export function SessionHeader({
           {isLive ? <ListeningBars level={micLevel} /> : null}
         </span>
 
-        {canPause ? (
+        {isLive ? (
           <button
             type="button"
             className="btn btn--secondary btn--sm"
@@ -120,15 +113,11 @@ export function SessionHeader({
           <button type="button" className="btn btn--primary btn--sm" onClick={onNewCall}>
             New call
           </button>
-        ) : isLive ? (
-          <button type="button" className="btn btn--secondary btn--sm" onClick={onStop}>
-            Stop
-          </button>
-        ) : (
+        ) : startedAt === null ? (
           <button type="button" className="btn btn--primary btn--sm" onClick={onStart}>
             Start session
           </button>
-        )}
+        ) : null}
       </div>
     </header>
   );

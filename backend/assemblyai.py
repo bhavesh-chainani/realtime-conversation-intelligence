@@ -26,6 +26,11 @@ async def ssl_context() -> ssl.SSLContext:
     return _ssl_context
 
 
+def loaded_ssl_context() -> ssl.SSLContext | None:
+    """The shared TLS context if ssl_context() has already loaded it (startup does), else None."""
+    return _ssl_context
+
+
 def streaming_params(sample_rate: int) -> dict[str, str]:
     """Query params for the v3 streaming WebSocket."""
     params = {"sample_rate": str(sample_rate), "format_turns": "true"}

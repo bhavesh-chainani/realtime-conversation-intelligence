@@ -50,11 +50,11 @@ def test_normalize_phone():
 @pytest.mark.parametrize(
     "text,expected",
     [
-        ("It's katherine.liao@example.com.", "katherine.liao@example.com"),
-        ("Katherine.Liao@Example.com", "katherine.liao@example.com"),
-        ("katherine dot liao at example dot com", "katherine.liao@example.com"),
+        ("It's katherine.liao@gmail.com.", "katherine.liao@gmail.com"),
+        ("Katherine.Liao@Gmail.com", "katherine.liao@gmail.com"),
+        ("katherine dot liao at gmail dot com", "katherine.liao@gmail.com"),
         ("my email is kliao at gmail dot com, thanks", "kliao@gmail.com"),
-        ("raj underscore kumar at example dot com dot sg", "raj_kumar@example.com.sg"),
+        ("raj underscore kumar at gmail dot com dot sg", "raj_kumar@gmail.com.sg"),
         ("I was at the office", None),
         ("I was at work dot yesterday", None),
         ("", None),
@@ -65,21 +65,19 @@ def test_extract_email(text, expected):
 
 
 def test_normalize_email():
-    assert (
-        normalize_email(" Katherine.Liao@Example.com ") == "katherine.liao@example.com"
-    )
+    assert normalize_email(" Katherine.Liao@Gmail.com ") == "katherine.liao@gmail.com"
     assert normalize_email("katherine at example") is None
 
 
 def test_extract_from_transcript_uses_customer_lines_only():
     transcript = (
-        "Staff: Is it 94567890, or david.tan@example.com?\n"
-        "Customer: No, it's 9123 4567, katherine.liao@example.com."
+        "Staff: Is it 94567890, or david.tan@gmail.com?\n"
+        "Customer: No, it's 9123 4567, katherine.liao@gmail.com."
     )
     assert extract_phone_from_transcript(transcript) == "91234567"
-    assert extract_email_from_transcript(transcript) == "katherine.liao@example.com"
+    assert extract_email_from_transcript(transcript) == "katherine.liao@gmail.com"
     assert extract_phone_from_transcript("Staff: Is it 91234567?") is None
-    assert extract_email_from_transcript("Staff: Is it a@example.com?") is None
+    assert extract_email_from_transcript("Staff: Is it a@gmail.com?") is None
 
 
 def test_quick_patch():

@@ -58,7 +58,9 @@ User=$RUN_AS
 WorkingDirectory=$REPO
 # The PyTorch wheel bundles its own CUDA/cuDNN; the AMI's system copies must not shadow them.
 Environment=LD_LIBRARY_PATH=
-ExecStart=$REPO/.venv/bin/uvicorn backend.api:app --host 127.0.0.1 --port 8000
+# Keep-alive 75 s (default 5): customer turns are further apart than 5 s, and every new connection
+# costs a round trip through the SSH tunnel.
+ExecStart=$REPO/.venv/bin/uvicorn backend.api:app --host 127.0.0.1 --port 8000 --timeout-keep-alive 75
 Restart=on-failure
 RestartSec=5
 

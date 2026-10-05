@@ -14,18 +14,17 @@ class _FakeAsyncClient:
 
         async def create(**kwargs):
             self.calls.append(kwargs)
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
-            )
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+
+    def with_options(self, **_):
+        return self
 
 
 def _use(monkeypatch, content: str) -> _FakeAsyncClient:
     fake = _FakeAsyncClient(content)
-    monkeypatch.setattr(
-        "backend.agents.entity_agent.get_async_llm_client", lambda: fake
-    )
+    monkeypatch.setattr("backend.agents.entity_agent.get_async_llm_client", lambda: fake)
     return fake
 
 
@@ -45,9 +44,7 @@ def test_values_are_normalized_and_placeholders_dropped(monkeypatch):
     )
 
     data = asyncio.run(
-        extract_entities(
-            "Customer: My name is Raja Kumar, my number is 8234 5678. Salary dispute."
-        )
+        extract_entities("Customer: My name is Raja Kumar, my number is 8234 5678. Salary dispute.")
     )
 
     assert data == {
@@ -71,12 +68,12 @@ def test_malformed_contacts_fall_back_to_regex_on_customer_lines(monkeypatch):
     data = asyncio.run(
         extract_entities(
             "Staff: Could I have your number and email?\n"
-            "Customer: Sure, nine one two three, four five six seven. katherine dot liao at example dot com."
+            "Customer: Sure, nine one two three, four five six seven. katherine dot liao at gmail dot com."
         )
     )
 
     assert data["contact_number"] == "91234567"
-    assert data["email"] == "katherine.liao@example.com"
+    assert data["email"] == "katherine.liao@gmail.com"
     assert data["name"] == "Katherine Liao"
 
 
@@ -91,15 +88,11 @@ def test_malformed_contacts_are_kept_for_staff_when_nothing_better_is_heard(
 
 def test_foreign_script_values_are_blanked(monkeypatch):
     _use(monkeypatch, '{"name": "Katherine Liao", "purpose_of_call": "بشأن salary"}')
-    data = asyncio.run(
-        extract_entities("Customer: I'm Katherine Liao, calling about my salary.")
-    )
+    data = asyncio.run(extract_entities("Customer: I'm Katherine Liao, calling about my salary."))
     assert data["purpose_of_call"] is None and data["name"] == "Katherine Liao"
 
 
 def test_invalid_json_raises(monkeypatch):
     _use(monkeypatch, "not json")
     with pytest.raises(ValueError):
-        asyncio.run(
-            extract_entities("Customer: My name is Raja. I need help with my case.")
-        )
+        asyncio.run(extract_entities("Customer: My name is Raja. I need help with my case."))

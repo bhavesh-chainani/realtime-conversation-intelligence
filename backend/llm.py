@@ -3,59 +3,40 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import logging
+import re
+import time
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 import httpx
 from openai import AsyncOpenAI
 
 from . import config as cfg
+from .assemblyai import loaded_ssl_context
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 _async_client: AsyncOpenAI | None = None
-_async_client_signature: tuple[str, str, float, int, int] | None = None
+_async_client_loop: int | None = None
 
 
-def _clean(value: str | None) -> str:
-    return (value or "").strip()
-
-
-def resolve_llm_api_key() -> str:
-    """Return the configured LiteLLM/OpenAI-compatible proxy credential."""
-    return _clean(cfg.LLM_API_KEY)
-
-
-def resolve_llm_base_url() -> str:
-    """Return the configured LiteLLM/OpenAI-compatible proxy base URL."""
-    return _clean(cfg.LLM_BASE_URL)
+def llm_is_configured() -> bool:
+    return bool(cfg.LLM_API_KEY and cfg.LLM_BASE_URL and cfg.SUGGESTION_MODEL)
 
 
 def get_suggestion_model() -> str:
-    return _clean(cfg.SUGGESTION_MODEL)
+    return cfg.SUGGESTION_MODEL
 
 
 def get_extraction_model() -> str:
-    return _clean(cfg.EXTRACTION_MODEL) or get_suggestion_model()
+    return cfg.EXTRACTION_MODEL
 
 
-def llm_runtime_config() -> dict[str, Any]:
-    suggestion_model = get_suggestion_model()
-    extraction_model = get_extraction_model()
-    api_key_loaded = bool(resolve_llm_api_key())
-    base_url_configured = bool(resolve_llm_base_url())
-
-    return {
-        "llm_api_key_loaded": api_key_loaded,
-        "llm_base_url_configured": base_url_configured,
-        "suggestion_model": suggestion_model,
-        "suggestion_model_configured": bool(suggestion_model),
-        "extraction_model": extraction_model,
-        "extraction_model_configured": bool(extraction_model),
-        "llm_configured": (
-            api_key_loaded
-            and base_url_configured
-            and bool(suggestion_model)
-            and bool(extraction_model)
-        ),
-    }
+def get_wrapup_model() -> str:
+    return cfg.WRAPUP_MODEL
 
 
 def strip_code_fences(raw: str) -> str:
@@ -68,63 +49,120 @@ def strip_code_fences(raw: str) -> str:
     return raw.strip()
 
 
-def str_list(value: Any, limit: int | None = None) -> list[str]:
-    """Non-empty strings from a model-returned list (anything else -> [])."""
-    if not isinstance(value, list):
-        return []
-    return [str(v).strip() for v in value if str(v).strip()][:limit]
-
-
-def llm_is_configured() -> bool:
-    return bool(llm_runtime_config()["llm_configured"])
-
-
 def get_async_llm_client() -> AsyncOpenAI | None:
-    """Create/cache a non-blocking client with long-lived keep-alive connections.
-
-    Keyed on the running event loop too, since httpx async pools are loop-bound.
-    """
-    global _async_client, _async_client_signature
-
-    api_key = resolve_llm_api_key()
-    base_url = resolve_llm_base_url()
-    if not api_key or not base_url:
+    """The shared client, with long-lived keep-alive connections (one per event loop, since httpx
+    pools are loop-bound). Reuses the TLS context loaded at startup: building one per client means
+    reading the CA bundle, which can take seconds."""
+    global _async_client, _async_client_loop
+    if not cfg.LLM_API_KEY or not cfg.LLM_BASE_URL:
         return None
-
     try:
         loop_id = id(asyncio.get_running_loop())
     except RuntimeError:
         loop_id = 0
-    timeout = float(cfg.LLM_TIMEOUT_SECONDS)
-    max_retries = int(cfg.LLM_MAX_RETRIES)
-    signature = (api_key, base_url, timeout, max_retries, loop_id)
-
-    if _async_client is None or _async_client_signature != signature:
+    if _async_client is None or _async_client_loop != loop_id:
         _async_client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=timeout,
-            max_retries=max_retries,
+            api_key=cfg.LLM_API_KEY,
+            base_url=cfg.LLM_BASE_URL,
+            timeout=cfg.LLM_TIMEOUT_SECONDS,
+            max_retries=cfg.LLM_MAX_RETRIES,
             http_client=httpx.AsyncClient(
-                timeout=timeout,
+                timeout=cfg.LLM_TIMEOUT_SECONDS,
+                verify=loaded_ssl_context() or True,
                 limits=httpx.Limits(max_keepalive_connections=10, keepalive_expiry=120),
             ),
         )
-        _async_client_signature = signature
-
+        _async_client_loop = loop_id
     return _async_client
 
 
-def llm_extra_params() -> dict[str, Any]:
-    """Optional provider params shared by latency-sensitive calls."""
+def supports_reasoning_effort(model: str) -> bool:
+    """GPT-5 and o-series models take `reasoning_effort`; others (GPT-4.x, Gemini, Claude) reject it.
+    Gateway names carry provider prefixes, e.g. "openai.global.gpt-5.4-mini"."""
+    name = model.lower()
+    if "chat" in name:
+        return False
+    return bool(re.search(r"(^|\.)(gpt-5|o\d)", name))
+
+
+def llm_extra_params(model: str) -> dict[str, Any]:
+    """Optional provider params shared by latency-sensitive calls to `model`."""
     params: dict[str, Any] = {}
-    if cfg.LLM_REASONING_EFFORT:
+    if cfg.LLM_REASONING_EFFORT and supports_reasoning_effort(model):
         params["reasoning_effort"] = cfg.LLM_REASONING_EFFORT
     return params
 
 
-def reset_llm_client_cache() -> None:
-    """Clear the cached clients. Useful in tests after monkeypatching config."""
-    global _async_client, _async_client_signature
-    _async_client = None
-    _async_client_signature = None
+async def hedged(make_call: Callable[[], Awaitable[T]], after_s: float) -> tuple[T, bool]:
+    """Run `make_call()`; if it has not answered after `after_s` (or fails before then), start an
+    identical second call and return whichever succeeds first, cancelling the other. Returns
+    (result, whether a second call was made).
+
+    The gateway has random multi-second stalls, and some models occasionally return malformed output;
+    a second request usually beats both.
+    """
+    first = asyncio.ensure_future(make_call())
+    if after_s <= 0:
+        return await first, False
+    calls = [first]
+    try:
+        done, _ = await asyncio.wait(calls, timeout=after_s)
+        if done and first.exception() is None:
+            return first.result(), False
+        calls.append(asyncio.ensure_future(make_call()))
+        pending: set[asyncio.Future] = set(calls)
+        error: BaseException | None = None
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for call in done:
+                if call.exception() is None:
+                    return call.result(), True
+                error = call.exception()
+        raise error  # both calls failed
+    finally:
+        for call in calls:
+            if not call.done():
+                call.cancel()
+
+
+_last_warm_up = 0.0
+KEEP_WARM_EVERY_S = 25
+
+
+async def warm_up(min_interval_s: float = 60) -> None:
+    """Open two gateway connections (a tiny completion and a model list, in parallel), so a call's
+    first suggestion and entity extraction both find a warm one. Throttled; failures are only logged."""
+    global _last_warm_up
+    client = get_async_llm_client()
+    if not client or time.monotonic() - _last_warm_up < min_interval_s:
+        return
+    _last_warm_up = time.monotonic()
+    started = time.perf_counter()
+    model = get_suggestion_model()
+    try:
+        await asyncio.gather(
+            client.chat.completions.create(
+                model=model,
+                max_completion_tokens=16,
+                messages=[{"role": "user", "content": "Reply with OK."}],
+                **llm_extra_params(model),
+            ),
+            client.models.list(),
+        )
+        logger.info("[llm] warm-up in %.0fms", (time.perf_counter() - started) * 1000)
+    except Exception as exc:
+        logger.warning("[llm] warm-up failed: %s: %s", type(exc).__name__, exc)
+
+
+async def keep_warm() -> None:
+    """While a call is live, touch the gateway every KEEP_WARM_EVERY_S (a model list costs no tokens)
+    so quiet stretches do not let the connection close. Runs until cancelled."""
+    client = get_async_llm_client()
+    if not client:
+        return
+    while True:
+        await asyncio.sleep(KEEP_WARM_EVERY_S)
+        try:
+            await client.models.list()
+        except Exception as exc:
+            logger.debug("[llm] keep-warm failed: %s", exc)

@@ -10,14 +10,15 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import config as cfg
+from .merge import FRAME_MS  # one speaker-probability row per 10 ms of audio
 
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16_000
-FRAME_MS = 10  # one speaker-probability row per 10 ms of audio
 
 
 class NemotronDiarizer:
@@ -50,15 +51,9 @@ class NemotronDiarizer:
                 self.mode: (chunk, right),
             }
         processor.set_streaming_mode(self.mode)
-        model = (
-            AutoModelForAudioFrameClassification.from_pretrained(self.model_name)
-            .eval()
-            .to(self.device)
-        )
+        model = AutoModelForAudioFrameClassification.from_pretrained(self.model_name).eval().to(self.device)
         if self.int8 and self.device == "cpu":
-            model = torch.ao.quantization.quantize_dynamic(
-                model, {torch.nn.Linear}, dtype=torch.qint8
-            )
+            model = torch.ao.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
         self._model, self._processor = model, processor
         # The first forward pass is several times slower (kernel setup): pay it now, not on a call.
         warm = NemotronSession(self, SAMPLE_RATE)
@@ -122,6 +117,8 @@ class NemotronSession:
         self._finished = False
         self.probs: list[list[float]] = []
         self.failed: str | None = None
+        # Called (on the worker thread) after each step, so the relay can stop waiting at once.
+        self.on_progress: Callable[[], None] | None = None
 
     @property
     def processed_until_ms(self) -> int:
@@ -142,9 +139,7 @@ class NemotronSession:
     def close(self) -> None:
         """Diarise the remaining audio (blocks until done; call off the event loop)."""
         if self._resampler is not None:
-            tail = self._resampler.resample_chunk(
-                self._np.zeros(0, dtype=self._np.float32), last=True
-            )
+            tail = self._resampler.resample_chunk(self._np.zeros(0, dtype=self._np.float32), last=True)
             with self._lock:
                 self._audio = self._np.concatenate([self._audio, tail])
         self._engine.executor.submit(self._drain, True).result()
@@ -164,10 +159,7 @@ class NemotronSession:
             if end >= start + size:
                 return self._audio[lo : lo + size].copy(), False
             # A last chunk needs at least one encoder frame of audio.
-            if (
-                final
-                and end - start > p.subsampling_factor * p.feature_extractor.hop_length
-            ):
+            if final and end - start > p.subsampling_factor * p.feature_extractor.hop_length:
                 return self._audio[lo:].copy(), True
         return None
 
@@ -176,10 +168,10 @@ class NemotronSession:
         try:
             while not self._finished and (nxt := self._next_chunk(final)):
                 chunk, last = nxt
-                rows, self._cache = self._engine.step(
-                    chunk, self._cache, self._first, last
-                )
+                rows, self._cache = self._engine.step(chunk, self._cache, self._first, last)
                 self.probs.extend(rows)
+                if self.on_progress:
+                    self.on_progress()
                 if last:
                     self._finished = True
                     break
@@ -191,9 +183,7 @@ class NemotronSession:
                     if drop > 0:
                         self._audio = self._audio[drop:]
                         self._offset = keep_from
-        except (
-            Exception
-        ) as exc:  # the relay falls back to AssemblyAI labels for this call
+        except Exception as exc:  # the relay sends this call's remaining turns unlabelled
             logger.exception("Diarization step failed")
             self.failed = str(exc)[:200]
         finally:
@@ -227,7 +217,5 @@ def load_diarizer() -> NemotronDiarizer:
         _diarizer.load()
     except Exception as exc:
         _diarizer.error = str(exc)[:300]
-        logger.exception(
-            "Nemotron diarizer failed to load; turns will arrive without speakers"
-        )
+        logger.exception("Nemotron diarizer failed to load; turns will arrive without speakers")
     return _diarizer

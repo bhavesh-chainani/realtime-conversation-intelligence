@@ -8,14 +8,25 @@ const OK_RESULT: HistoryResult = {
   status: "ok",
   lookupKey: "id:91234567",
   matchedOn: "contact_number",
-  cases: [{ case_id: "CASE-1", company: "Brightpath", type: "Leave", status: "Open", summary: "x" }],
+  cases: [
+    {
+      case_id: "CASE-1",
+      company: "Brightpath",
+      type: "Leave",
+      status: "Open",
+      summary: "x",
+      opened_on: "",
+      next_action: "",
+      follow_up_due: "",
+    },
+  ],
   openCount: 1,
   summary: "1 case",
 };
 const OK_HISTORY: AssistEvent = { type: "history", ...OK_RESULT };
 
 function streaming(state: AssistState = initialAssistState, gen = 1, committedAt = 100): AssistState {
-  return assistReducer(state, { type: "streamStart", gen, committedAt });
+  return assistReducer(state, { type: "streamStart", gen, committedAt, endedAt: committedAt - 400 });
 }
 
 function send(state: AssistState, event: AssistEvent, gen = state.gen, at = 1000): AssistState {
@@ -29,11 +40,10 @@ test("events fill the caller card, history and suggestion", () => {
   assert.equal(s.history.status, "loading");
   s = send(s, OK_HISTORY);
   s = send(s, { type: "customer", source: "records", patch: { name: "Katherine Liao" } });
-  s = send(s, { type: "suggesting", round: 1 });
+  s = send(s, { type: "suggesting" });
   assert.equal(s.fetching, true);
   s = send(s, {
     type: "suggestions",
-    round: 1,
     suggestions: [{ topic: "a" }, { topic: "b" }],
     fallback: false,
     timings: { llm_ms: 5 },
@@ -42,9 +52,10 @@ test("events fill the caller card, history and suggestion", () => {
 
   assert.equal(s.customer.name, "Katherine Liao");
   assert.deepEqual(s.sources, { contact_number: "heard", name: "records" });
-  assert.deepEqual(s.history.meta, { openCount: 1, matchedOn: "contact_number" });
+  assert.deepEqual([s.history.openCount, s.history.matchedOn], [1, "contact_number"]);
   assert.deepEqual(s.suggestions, [{ topic: "a" }]);
-  assert.deepEqual(s.suggestionMeta, { origin: "live", latencyMs: 900, llmMs: 5, model: undefined });
+  // Measured from when the caller stopped speaking: 400 ms waiting for the speaker, then the agents.
+  assert.deepEqual(s.suggestionMeta, { origin: "live", latencyMs: 1300, speakerMs: 400, llmMs: 5, model: undefined });
   assert.equal(s.fetching, false);
 });
 
@@ -59,19 +70,18 @@ test("after a staff identity edit, stale lookup results are dropped but suggesti
   assert.equal(s.history.status, "idle");
   assert.equal(send(s, OK_HISTORY), s);
   assert.equal(send(s, { type: "customer", source: "records", patch: { name: "Katherine Liao" } }), s);
-  s = send(s, { type: "suggestions", round: 1, suggestions: [{ topic: "a" }], fallback: false, timings: {} });
+  s = send(s, { type: "suggestions", suggestions: [{ topic: "a" }], fallback: false, timings: {} });
   assert.deepEqual(s.suggestions, [{ topic: "a" }]);
 });
 
 test("an empty answer keeps the current suggestion", () => {
   let s = send(streaming(), {
     type: "suggestions",
-    round: 1,
     suggestions: [{ topic: "a" }],
     fallback: false,
     timings: {},
   });
-  s = send(s, { type: "suggestions", round: 2, suggestions: [], fallback: true, timings: {} });
+  s = send(s, { type: "suggestions", suggestions: [], fallback: true, timings: {} });
   assert.deepEqual(s.suggestions, [{ topic: "a" }]);
 });
 
@@ -119,7 +129,6 @@ test("request carries the profile, sources and last lookup", () => {
 test("request carries the suggestion staff can see, so the agent does not repeat it", () => {
   const s = send(streaming(), {
     type: "suggestions",
-    round: 1,
     suggestions: [{ topic: "Identify the caller", details: { possibleConversation: "May I have your name?" } }],
     fallback: false,
     timings: {},

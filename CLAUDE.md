@@ -6,6 +6,7 @@ Live call assistant for a Singapore legal-advice centre. Four parts:
 2. **Entity agent**: instant regex + LLM extraction of name / contact number / email / purpose → customer DB lookup (phone or email match = verified; NRIC and address are deliberately not collected).
 3. **Suggestion agent** (principal agent): transcript + customer record → what Staff should say next, citing case IDs.
 4. **Orchestration**: `POST /assist` runs 2 and 3 for each customer turn and streams NDJSON events to the UI.
+5. **Wrap-up**: End call → `POST /wrapup` (case note, actions, follow-up, message to caller) → Save → `POST /cases` writes the case to the demo DB, so the next call picks it up.
 
 README.md has the full architecture, endpoints and setup.
 
@@ -31,6 +32,9 @@ cd frontend && npm run format && npm run build
 - `backend/prompts/<agent>/`: `system.md` (sent as is) and `user.md` (a `str.format` template). Edit prompts here, never inline in Python.
 - `backend/profile.py`: field precedence (manual > records > heard > ai) and when to look a caller up. `frontend/app/lib/customer-profile.ts` mirrors the precedence; both are tested against `tests/fixtures/profile_precedence.json`, so change all three together.
 - `backend/customer_history.py`: read-only Postgres lookup and how the record is rendered into the suggestion prompt.
+- `backend/issue_guides.py`: the service guide (advice per issue type) from the DB's `issue_guides`, given to both agents. Demo content: real SG channels in general terms.
+- `backend/wrapup.py` + `agents/wrapup_agent.py` + `case_store.py`: end of call. `case_store` is the only write path, demo tables only, behind `CASE_STORE_ENABLED`.
+- `scripts/simulate_call.py`: an LLM caller runs whole calls through a running backend and checks each stage. Use it after any prompt change; prompts are cached, so restart the backend first.
 - `backend/stt_relay.py` + `backend/diarization/`: the relay and Nemotron.
 - `backend/config.py`: every setting, with defaults; `.env.example` lists them.
 - `frontend/app/hooks/`: `useLiveTranscript` (relay, mic, speakers), `useAssist` (one `/assist` stream per customer turn). Logic worth testing goes in `frontend/app/lib/` as pure functions with a `*.test.ts` beside it.
