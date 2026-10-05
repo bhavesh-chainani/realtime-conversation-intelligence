@@ -84,11 +84,9 @@ export default function Page() {
           pending={transcript.pendingTurns}
           speaking={transcript.speaking}
           status={status}
-          nextVoiceIsStaff={transcript.nextVoiceIsStaff}
           hasRoleMapping={roleMap.length > 0}
           mappedStaffLabel={mappedStaffLabel}
           mappedCustomerLabel={mappedCustomerLabel}
-          onSetNextVoiceRole={transcript.setNextVoiceRole}
           onSwapSpeakerRoles={transcript.swapSpeakerRoles}
           onFlipTurn={transcript.flipTurn}
           transcriptListRef={transcriptListRef}

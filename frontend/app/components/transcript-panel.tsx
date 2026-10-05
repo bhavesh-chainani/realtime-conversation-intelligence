@@ -11,11 +11,9 @@ type TranscriptPanelProps = {
   /** Speech detected but little or no text yet (u3 models stream few partials). */
   speaking: boolean;
   status: string;
-  nextVoiceIsStaff: boolean;
   hasRoleMapping: boolean;
   mappedStaffLabel?: string;
   mappedCustomerLabel?: string;
-  onSetNextVoiceRole: (staff: boolean) => void;
   onSwapSpeakerRoles: () => void;
   onFlipTurn: (turnId: string) => void;
   transcriptListRef: RefObject<HTMLDivElement>;
@@ -45,11 +43,9 @@ export function TranscriptPanel({
   pending,
   speaking,
   status,
-  nextVoiceIsStaff,
   hasRoleMapping,
   mappedStaffLabel,
   mappedCustomerLabel,
-  onSetNextVoiceRole,
   onSwapSpeakerRoles,
   onFlipTurn,
   transcriptListRef,
@@ -70,50 +66,19 @@ export function TranscriptPanel({
 
       <div className="control-bar control-bar--compact" role="group" aria-label="Speaker role controls">
         <div className="control-bar__content">
-          <p className="control-bar__hint">Speakers from voice diarization. Click a turn to correct it.</p>
+          <p className="control-bar__hint">
+            Speakers from voice diarization; the first voice is taken as Staff. Click a turn to correct it.
+          </p>
 
-          <div className="role-toggle-row">
-            <div className="role-toggle-group">
-              <button
-                type="button"
-                className={`btn btn--toggle btn--sm${nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
-                onClick={() => onSetNextVoiceRole(true)}
-                aria-pressed={nextVoiceIsStaff}
-                disabled={hasRoleMapping && Boolean(mappedStaffLabel)}
-                title={
-                  mappedStaffLabel
-                    ? `Staff mapped to speaker ${mappedStaffLabel}`
-                    : "Lock the next unseen speaker as Staff"
-                }
-              >
-                Next voice: Staff
-              </button>
-              <button
-                type="button"
-                className={`btn btn--toggle btn--sm${!nextVoiceIsStaff ? " btn--toggle-active" : ""}`}
-                onClick={() => onSetNextVoiceRole(false)}
-                aria-pressed={!nextVoiceIsStaff}
-                disabled={hasRoleMapping && Boolean(mappedCustomerLabel)}
-                title={
-                  mappedCustomerLabel
-                    ? `Customer mapped to speaker ${mappedCustomerLabel}`
-                    : "Lock the next unseen speaker as Customer"
-                }
-              >
-                Next voice: Customer
-              </button>
-            </div>
-
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={onSwapSpeakerRoles}
-              disabled={!hasRoleMapping && turns.length === 0}
-              title="Swap Staff and Customer labels if diarization inverted them"
-            >
-              Swap roles
-            </button>
-          </div>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={onSwapSpeakerRoles}
+            disabled={!hasRoleMapping && turns.length === 0}
+            title="Swap Staff and Customer labels if diarization inverted them"
+          >
+            Swap roles
+          </button>
         </div>
       </div>
 

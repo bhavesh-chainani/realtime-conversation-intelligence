@@ -31,7 +31,6 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
   /** Finished turns the relay is still attributing to a speaker. */
   const [pendingTurns, setPendingTurns] = useState<PendingTurn[]>([]);
   const [speakerRoleMap, setSpeakerRoleMap] = useState<SpeakerRoleMap>({});
-  const [nextVoiceIsStaff, setNextVoiceIsStaffState] = useState(true);
   const [isListening, setIsListening] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -60,7 +59,6 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
   };
   const setNextVoice = (staff: boolean) => {
     nextVoiceIsStaffRef.current = staff;
-    setNextVoiceIsStaffState(staff);
   };
   const setPending = (next: PendingTurn[]) => {
     pendingRef.current = next;
@@ -264,7 +262,6 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     speaking,
     pendingTurns,
     speakerRoleMap,
-    nextVoiceIsStaff,
     isListening,
     isConnecting,
     micLevel,
@@ -275,6 +272,5 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     reset,
     swapSpeakerRoles,
     flipTurn,
-    setNextVoiceRole: useCallback((staff: boolean) => setNextVoice(staff), []),
   };
 }

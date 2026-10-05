@@ -435,23 +435,15 @@ select {
 }
 
 .btn--secondary:hover:not(:disabled),
-.btn--ghost:hover:not(:disabled),
-.btn--toggle:hover:not(:disabled) {
+.btn--ghost:hover:not(:disabled) {
   background: var(--surface-muted);
   border-color: var(--border-strong);
 }
 
-.btn--ghost,
-.btn--toggle {
+.btn--ghost {
   color: var(--text-secondary);
   background: var(--surface-strong);
   border-color: var(--border);
-}
-
-.btn--toggle-active {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-  border-color: rgba(49, 93, 150, 0.24);
 }
 
 .btn--danger {
@@ -579,18 +571,6 @@ select {
 .control-bar--compact .control-bar__hint {
   margin: 0;
   font-size: 0.84rem;
-}
-
-.role-toggle-row,
-.role-toggle-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.role-toggle-row {
-  align-items: center;
-  justify-content: flex-end;
 }
 
 .transcript-canvas {
@@ -1129,8 +1109,7 @@ select {
     flex-direction: column;
   }
 
-  .metric-strip,
-  .role-toggle-row {
+  .metric-strip {
     justify-content: flex-start;
   }
 }
