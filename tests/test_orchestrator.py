@@ -46,28 +46,20 @@ PHONE_MATCH = {
     "history_summary": "Katherine Liao has 2 prior cases.",
 }
 EMAIL_MATCH = {**PHONE_MATCH, "match_strategy": "email"}
-NAME_MATCH = {**PHONE_MATCH, "match_strategy": "name"}
 NOT_FOUND = {"status": "not_found", "cases": [], "message": "No prior cases found."}
 
 
 class FakeLookup:
-    def __init__(
-        self,
-        by_id: dict | None = None,
-        by_name: dict | None = None,
-        error: Exception | None = None,
-    ):
-        self.by_id, self.by_name, self.error = by_id or {}, by_name or {}, error
-        self.calls: list[tuple[str | None, str | None, str | None]] = []
+    def __init__(self, by_id: dict | None = None, error: Exception | None = None):
+        self.by_id, self.error = by_id or {}, error
+        self.calls: list[tuple[str | None, str | None]] = []
 
-    def __call__(self, name, phone, email):
-        """Like the real service: phone first, then email; a name only when neither was given."""
-        self.calls.append((name, phone, email))
+    def __call__(self, phone, email):
+        """Like the real service: phone first, then email."""
+        self.calls.append((phone, email))
         if self.error:
             raise self.error
-        if phone or email:
-            return self.by_id.get(phone) or self.by_id.get(email) or NOT_FOUND
-        return self.by_name.get(name, NOT_FOUND)
+        return self.by_id.get(phone) or self.by_id.get(email) or NOT_FOUND
 
 
 class FakeSuggest:
@@ -169,7 +161,7 @@ def test_phone_turn_looks_up_at_once_and_grounds_the_suggestion():
     assert events[2]["lookup_key"] == CUSTOMER_KEY and events[2]["open_count"] == 1
     # Records also re-tag the heard phone number as verified.
     assert events[3]["patch"] == CUSTOMER
-    assert lookup.calls == [(None, "91234567", None)]
+    assert lookup.calls == [("91234567", None)]
     call = suggest.calls[0]
     assert call["cases"] == CASES
     assert call["profile"]["record_match"] == "contact_number"
@@ -185,7 +177,7 @@ def test_email_match_is_verified():
         request("Customer: It's katherine dot liao at gmail dot com."),
         deps(lookup, suggest=suggest),
     )
-    assert lookup.calls == [(None, None, "katherine.liao@gmail.com")]
+    assert lookup.calls == [(None, "katherine.liao@gmail.com")]
     assert "customer:records" in kinds(events)
     assert suggest.calls[0]["profile"]["record_match"] == "email"
 
@@ -201,7 +193,7 @@ def test_email_heard_after_an_unmatched_phone_looks_up_again():
         ),
         deps(lookup),
     )
-    assert lookup.calls == [(None, "81111111", "katherine.liao@gmail.com")]
+    assert lookup.calls == [("81111111", "katherine.liao@gmail.com")]
     assert next(e for e in events if e["type"] == "history" and e["status"] == "ok")
     # Records beat what was heard: the card now shows the number on file.
     records = next(e for e in events if e["type"] == "customer" and e["source"] == "records")
@@ -228,16 +220,17 @@ def test_known_identity_is_not_looked_up_again():
     assert kinds(events)[-2:] == ["suggestions:1", "done"]
 
 
-def test_name_only_match_is_unverified():
-    lookup, suggest = FakeLookup(by_name={"Katherine Liao": NAME_MATCH}), FakeSuggest()
+def test_a_full_name_alone_does_not_look_up():
+    lookup, suggest = FakeLookup(), FakeSuggest()
     events = run(
         request("Customer: Hi, my name is Katherine Liao."),
         deps(lookup, suggest=suggest),
     )
 
-    assert lookup.calls == [("Katherine Liao", None, None)]
-    assert "customer:records" not in kinds(events)  # no prefill without a phone / email match
-    assert suggest.calls[0]["profile"]["record_match"] == "name"
+    assert lookup.calls == []
+    assert "history:loading" not in kinds(events)
+    assert suggest.calls[0]["profile"]["name"] == "Katherine Liao"
+    assert suggest.calls[0]["profile"]["lookup_status"] == "not_started"
 
 
 def test_staff_entered_phone_beats_what_was_heard():
@@ -251,7 +244,7 @@ def test_staff_entered_phone_beats_what_was_heard():
         deps(lookup),
     )
     assert "customer:heard" not in kinds(events)
-    assert lookup.calls == [(None, "81111111", None)]
+    assert lookup.calls == [("81111111", None)]
 
 
 def test_phone_found_by_extraction_replaces_the_stale_suggestion():
@@ -381,13 +374,7 @@ def test_suggestion_is_told_where_the_history_check_stands():
         == "verified"
     )
     assert _status_seen(request("Customer: It's 8111 2222.")) == "not_found"
-    assert (
-        _status_seen(
-            request("Customer: I'm Katherine Liao."),
-            FakeLookup(by_name={"Katherine Liao": NAME_MATCH}),
-        )
-        == "name"
-    )
+    assert _status_seen(request("Customer: I'm Katherine Liao.")) == "not_started"
     assert (
         _status_seen(request("Customer: It's 9123 4567."), FakeLookup(error=RuntimeError("db")))
         == "unavailable"

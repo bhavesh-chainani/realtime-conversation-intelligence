@@ -84,9 +84,6 @@ def test_update_needs_an_open_verified_case():
     assert validate_wrapup(closed, VERIFIED, CASES, TODAY)["case"]["action"] == "new"
     invented = _raw(case={"action": "update", "case_id": "CASE-9999-00001"})
     assert validate_wrapup(invented, VERIFIED, CASES, TODAY)["case"]["case_id"] is None
-    # A name-only match is unverified: never update its cases.
-    name_only = {**VERIFIED, "record_match": "name"}
-    assert validate_wrapup(_raw(), name_only, CASES, TODAY)["case"]["action"] == "new"
 
 
 def test_follow_up_defaults_and_bad_values():

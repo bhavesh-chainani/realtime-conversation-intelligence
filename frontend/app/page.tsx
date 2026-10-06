@@ -137,7 +137,6 @@ export default function Page() {
             customerHistoryStatus={assist.history.status}
             customerHistoryMessage={assist.history.summary}
             customerHistoryCases={assist.history.cases}
-            matchedOn={assist.history.matchedOn}
             openCount={assist.history.openCount}
           />
         </aside>

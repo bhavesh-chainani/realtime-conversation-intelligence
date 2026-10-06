@@ -13,7 +13,8 @@ export const EMPTY_CUSTOMER: CustomerData = {
 };
 
 const FIELDS = Object.keys(EMPTY_CUSTOMER) as CustomerDataField[];
-export const IDENTITY_FIELDS: CustomerDataField[] = ["name", "contact_number", "email"];
+/** The fields the history check looks a caller up by. A name alone never triggers a lookup. */
+export const IDENTITY_FIELDS: CustomerDataField[] = ["contact_number", "email"];
 
 /** The filled-in fields, trimmed, as sent to the backend. */
 export function trimmedCustomer(customer: CustomerData): Record<string, string> {

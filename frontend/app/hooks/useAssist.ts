@@ -61,11 +61,10 @@ export function useAssist(backendUrl: string) {
   /** The caller card's Look up button. New records refresh the suggestion for the latest turn. */
   const lookup = useCallback(async () => {
     const before = casesKey(stateRef.current.history);
-    const { name, contact_number, email } = stateRef.current.customer;
+    const { contact_number, email } = stateRef.current.customer;
     dispatch({ type: "manualLookupStart" });
     const epoch = stateRef.current.epoch;
     const reply = await postJson(`${backendUrl}/customer-history`, {
-      name: name.trim() || undefined,
       contact_number: contact_number.trim() || undefined,
       email: email.trim() || undefined,
     });

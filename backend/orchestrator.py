@@ -1,8 +1,8 @@
 """POST /assist: runs both agents for one customer turn and streams the results as NDJSON events.
 
 Order for each turn:
-1. The instant regex reads the latest customer line and, when it hears a phone number, email or full name,
-   looks the caller up in the customer DB straight away (`customer` and `history` events within milliseconds).
+1. The instant regex reads the latest customer line and, when it hears a phone number or email, looks the
+   caller up in the customer DB straight away (`customer` and `history` events within milliseconds).
 2. No debounce: a newer turn can only arrive after more speech and silence, and the browser aborts
    this request when it does (which cancels its LLM calls). The first suggestion waits up to
    `lookup_wait_s` for a lookup started on this turn, so it can use the record.
@@ -90,9 +90,7 @@ class AssistRequest(BaseModel):
 
 @dataclass(frozen=True)
 class AssistDeps:
-    lookup: Callable[
-        [str | None, str | None, str | None], dict[str, Any]
-    ]  # (name, phone, email); blocking, run in a thread
+    lookup: Callable[[str | None, str | None], dict[str, Any]]  # (phone, email); blocking, run in a thread
     extract: Callable[[str], Awaitable[dict[str, str | None]]]
     suggest: Callable[..., Awaitable[dict[str, Any]]]
     lookup_wait_s: float = 0.7  # how long the first suggestion waits for a lookup started this turn
@@ -149,14 +147,12 @@ class _AssistRun:
         if self.lookups >= MAX_LOOKUPS:
             return None
         values = self.profile.values
-        request = next_lookup(self.lookup_key, values["name"], values["contact_number"], values["email"])
+        request = next_lookup(self.lookup_key, values["contact_number"], values["email"])
         if not request:
             return None
         self.lookups += 1
         self.lookup_key = request.key
-        task = asyncio.create_task(
-            asyncio.to_thread(self.deps.lookup, request.name, request.phone, request.email)
-        )
+        task = asyncio.create_task(asyncio.to_thread(self.deps.lookup, request.phone, request.email))
         self.tasks[task] = "lookup"
         self.lookup_keys[task] = request.key
         return {"type": "history", "status": "loading", "lookup_key": request.key}
@@ -210,7 +206,7 @@ class _AssistRun:
         if "lookup" in self.tasks.values() or self.history_status == "loading":
             return "pending"
         if self.match:
-            return "name" if self.match == "name" else "verified"
+            return "verified"
         if self.history_status in ("error", "not_configured"):
             return "unavailable"
         return "not_found" if self.lookup_key else "not_started"

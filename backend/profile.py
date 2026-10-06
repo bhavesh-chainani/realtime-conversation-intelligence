@@ -16,7 +16,7 @@ FIELDS = ("name", "contact_number", "email", "purpose_of_call")
 # Where a value came from: the instant regex, LLM extraction, the customer DB, or a staff edit.
 Source = Literal["heard", "ai", "records", "manual"]
 
-# Match strategies that prove who the caller is. A name match is only a possible match.
+# Match strategies that prove who the caller is.
 VERIFIED_MATCHES = ("contact_number", "email")
 
 
@@ -73,7 +73,6 @@ class Profile:
 
 class LookupRequest(NamedTuple):
     key: str
-    name: str | None = None
     phone: str | None = None
     email: str | None = None
 
@@ -84,22 +83,14 @@ def identity_key(phone: str | None, email: str | None) -> str | None:
     return "id:" + "|".join(parts) if parts else None
 
 
-def next_lookup(previous_key: str | None, name: str, phone: str, email: str) -> LookupRequest | None:
-    """The DB lookup to run, or None. A valid phone or email always wins and supersedes an earlier name
-    lookup; hearing the other one later looks up again. A full name (2+ words) is used only until a
-    phone / email lookup has happened. Each identity is looked up once.
+def next_lookup(previous_key: str | None, phone: str, email: str) -> LookupRequest | None:
+    """The DB lookup to run, or None. Only a valid phone or email triggers one: a name cannot prove who the
+    caller is, so it never does. Hearing the other detail later looks up again; each identity is looked up once.
     """
-    if key := identity_key(phone, email):
-        if key == previous_key:
-            return None
-        return LookupRequest(key, phone=normalize_phone(phone), email=normalize_email(email))
-    if previous_key and previous_key.startswith("id:"):
+    key = identity_key(phone, email)
+    if not key or key == previous_key:
         return None
-    clean_name = " ".join((name or "").split())
-    if len(clean_name.split(" ")) >= 2:
-        key = f"name:{clean_name.lower()}"
-        return None if key == previous_key else LookupRequest(key, name=clean_name)
-    return None
+    return LookupRequest(key, phone=normalize_phone(phone), email=normalize_email(email))
 
 
 def records_prefill(result: dict[str, Any]) -> dict[str, str] | None:

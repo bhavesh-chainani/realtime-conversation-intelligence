@@ -105,18 +105,6 @@ def test_without_history_prompt_says_not_retrieved(monkeypatch):
     assert body["suggestions"][0]["linked_records"] == []
 
 
-def test_name_only_match_is_flagged_unverified(monkeypatch):
-    fake = _FakeAsyncClient(_model_reply(["CASE-2026-03117"]))
-    _use(monkeypatch, fake)
-
-    body = asyncio.run(
-        generate_suggestions(TRANSCRIPT, customer_profile={"record_match": "name"}, customer_cases=CASES)
-    )
-
-    assert "NAME ONLY" in fake.user_prompt()
-    assert body["suggestions"][0]["linked_records"] == []
-
-
 def test_hallucinated_case_ids_are_dropped(monkeypatch):
     _use(
         monkeypatch,

@@ -8,7 +8,7 @@ from backend.customer_history import (
 
 
 class _FakeService:
-    def lookup(self, name, phone, email):
+    def lookup(self, phone, email):
         if phone == "+65 8234 5678":
             return {
                 "status": "ok",
@@ -59,21 +59,32 @@ def test_customer_history_endpoint_happy_path(client, monkeypatch):
 def test_customer_history_endpoint_no_match(client, monkeypatch):
     monkeypatch.setattr("backend.customer_history.customer_history_service", _FakeService())
 
-    r = client.post("/customer-history", json={"name": "Unknown Person"})
+    r = client.post("/customer-history", json={"contact_number": "8111 2222"})
 
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "not_found"
     assert body["cases"] == []
-    assert body["lookup_key"] == "name:unknown person"
+    assert body["lookup_key"] == "id:81112222"
     assert body["prefill"] is None
 
 
-def test_customer_history_service_requires_lookup_fields():
-    body = customer_history_service.lookup("", "", "")
+def test_customer_history_service_requires_a_valid_phone_or_email(monkeypatch):
+    def never(*args):
+        raise AssertionError("queried the DB")
 
+    monkeypatch.setattr(customer_history_service, "_query_rows", never)
+    for phone, email in (("", ""), ("9123", "katherine at example")):
+        body = customer_history_service.lookup(phone, email)
+        assert body["status"] == "invalid_input"
+        assert body["cases"] == []
+
+
+def test_a_name_alone_never_looks_up(client):
+    """A name cannot prove who the caller is, so the endpoint ignores it and finds nothing to search."""
+    body = client.post("/customer-history", json={"name": "Katherine Liao"}).json()
     assert body["status"] == "invalid_input"
-    assert body["cases"] == []
+    assert body["lookup_key"] is None and body["prefill"] is None
 
 
 def test_lookup_returns_the_record_open_count_and_open_cases_first(monkeypatch):
@@ -105,16 +116,16 @@ def test_lookup_returns_the_record_open_count_and_open_cases_first(monkeypatch):
     monkeypatch.setattr(cfg, "CUSTOMER_HISTORY_DATABASE_URL", "postgresql://fake")
     queried = []
 
-    def fake_query(clean_phone, clean_email, clean_name):
-        queried.append((clean_phone, clean_email, clean_name))
+    def fake_query(clean_phone, clean_email):
+        queried.append((clean_phone, clean_email))
         return rows, "contact_number"
 
     monkeypatch.setattr(customer_history_service, "_query_rows", fake_query)
 
-    body = customer_history_service.lookup(None, "+65 9123 4567", " K.Liao@Gmail.com ")
+    body = customer_history_service.lookup("+65 9123 4567", " K.Liao@Gmail.com ")
 
     # The service queries with normalised values.
-    assert queried == [("91234567", "k.liao@gmail.com", "")]
+    assert queried == [("91234567", "k.liao@gmail.com")]
     assert body["status"] == "ok"
     assert body["customer"] == {
         "name": "Katherine Liao",
@@ -143,7 +154,7 @@ def test_a_failed_lookup_does_not_leak_the_database_error(monkeypatch):
         raise RuntimeError("password authentication failed for user demo")
 
     monkeypatch.setattr(customer_history_service, "_query_rows", boom)
-    body = customer_history_service.lookup(None, "91234567", None)
+    body = customer_history_service.lookup("91234567", None)
     assert body["status"] == "error" and "password" not in str(body)
 
 
@@ -161,32 +172,6 @@ def test_customer_record_names_how_it_was_matched():
 
     by_email = format_customer_record({**profile, "record_match": "email"}, cases)
     assert "matched on email" in by_email
-
-    by_name = format_customer_record({"name": "Katherine Liao", "record_match": "name"}, cases)
-    assert "NAME ONLY" in by_name and "ask for the caller's contact number" in by_name
-
-
-def test_name_only_match_does_not_reveal_contact_details(monkeypatch):
-    from backend import config as cfg
-
-    row = {
-        "customer_name": "David Tan",
-        "contact_number": "9456-7890",
-        "email": "david.tan@gmail.com",
-        "case_id": "CASE-1",
-        "case_status": "Closed",
-    }
-    monkeypatch.setattr(cfg, "CUSTOMER_HISTORY_DATABASE_URL", "postgresql://fake")
-    monkeypatch.setattr(customer_history_service, "_query_rows", lambda *a: ([row], "name"))
-
-    body = customer_history_service.lookup("david tan", None, None)
-
-    assert body["status"] == "ok" and len(body["cases"]) == 1
-    assert body["customer"] == {
-        "name": "David Tan",
-        "contact_number": None,
-        "email": None,
-    }
 
 
 def test_caller_card_lists_what_is_known_and_what_to_ask_for():
@@ -210,8 +195,10 @@ def test_caller_card_history_check_states():
     pending = check(lookup_status="pending", name="Rajesh Kumar", contact_number="82345678")
     assert pending.startswith("in progress") and "Ask for the caller's email address" in pending
     assert "verified (matched on email)" in check(lookup_status="verified", record_match="email")
-    by_name = check(lookup_status="name", name="Katherine Liao")
-    assert "NAME ONLY" in by_name and "contact number and email address to confirm" in by_name
+    # Only a name so far: the check has not run, and asks for both contact details.
+    assert "contact number and email address in one question, so the history check can run" in check(
+        lookup_status="not_started", name="Katherine Liao"
+    )
     # Not found by phone: ask for the email to check once more; with both, a new caller.
     assert "Ask for the caller's email address" in check(
         lookup_status="not_found", name="A B", contact_number="81112222"
@@ -221,10 +208,6 @@ def test_caller_card_history_check_states():
         name="A B",
         contact_number="81112222",
         email="a@b.com",
-    )
-    # Not found by name only: ask for both contact details.
-    assert "contact number and email address in one question, to check again" in check(
-        lookup_status="not_found", name="Katherine Liao"
     )
     assert "could not be checked" in check(lookup_status="unavailable")
 

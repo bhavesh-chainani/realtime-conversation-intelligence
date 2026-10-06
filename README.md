@@ -12,7 +12,7 @@ Browser mic ──PCM──▶ WS /ws/stt (backend relay) ──▶ AssemblyAI s
            ◀── finished turns, split wherever the speaker changes (A / B → Staff / Customer)
 
 Each customer turn ──▶ POST /assist (NDJSON stream, backend/orchestrator.py)
-  1. instant regex on the turn (phone, email, "my name is …") ──▶ customer DB lookup → caller card, prior cases
+  1. instant regex on the turn (phone, email, "my name is …"); a valid phone / email ──▶ customer DB lookup → prior cases
   2. after a 250 ms debounce, in parallel:
        entity agent      LLM extraction of name / phone / email / purpose (while fields are missing)
        suggestion agent  transcript + customer record + service guide ──▶ what Staff should say next
@@ -37,11 +37,11 @@ Save     ──▶ POST /cases    creates or updates the case, so the next call 
     `DIARIZATION_MAX_WAIT_MS` passes.
   - Without a loaded model, turns arrive unlabelled and staff assign roles in the UI (Next voice, Swap
     roles, or click a turn).
-- **Identity.** A phone or email match counts as verified and fills the caller card from the record. A name-only
-  match shows as a _possible match_, and the suggestion agent asks for a phone number or email before discussing
-  cases. NRICs and addresses are deliberately not collected.
+- **Identity.** Only a valid phone number or email triggers the history check; a name fills the caller card but
+  never looks the caller up, since anyone can say a name. A phone or email match counts as verified and fills the
+  caller card from the record. NRICs and addresses are deliberately not collected.
   - Phones are Singapore numbers compared on their 8 digits (`+65 9123 4567` = `91234567`); emails are compared
-    case-insensitively. The lookup tries phone, then email, then name.
+    case-insensitively. The lookup tries phone, then email.
 - **Field precedence.** Staff edits always win, then DB records, then what was heard (regex), then LLM
   extraction. The rule lives in `backend/profile.py` and `frontend/app/lib/customer-profile.ts`; both test
   suites check it against `tests/fixtures/profile_precedence.json`.
@@ -156,7 +156,7 @@ A laptop CPU runs Nemotron too slowly for live calls (turns wait seconds for spe
 | `GET /stt/session`       | One-time ticket for the relay                                      |
 | `WS /ws/stt`             | The relay                                                          |
 | `POST /assist`           | Both agents for one customer turn, as an NDJSON event stream       |
-| `POST /customer-history` | Manual lookup by contact number, email and/or name                 |
+| `POST /customer-history` | Manual lookup by contact number and/or email                       |
 | `POST /wrapup`           | End-of-call wrap-up: case note, actions, follow-up, caller message |
 | `POST /cases`            | Save a reviewed wrap-up as a new or updated case (demo DB only)    |
 

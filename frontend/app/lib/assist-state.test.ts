@@ -74,6 +74,14 @@ test("after a staff identity edit, stale lookup results are dropped but suggesti
   assert.deepEqual(s.suggestions, [{ topic: "a" }]);
 });
 
+test("editing the name keeps the record on screen: lookups go by phone or email only", () => {
+  let s = send(streaming(), OK_HISTORY);
+  const epoch = s.epoch;
+  s = assistReducer(s, { type: "manualEdit", field: "name", value: "Katherine Liao" });
+  assert.equal(s.customer.name, "Katherine Liao");
+  assert.deepEqual([s.history.status, s.history.cases.length, s.epoch], ["ok", 1, epoch]);
+});
+
 test("an empty answer keeps the current suggestion", () => {
   let s = send(streaming(), {
     type: "suggestions",

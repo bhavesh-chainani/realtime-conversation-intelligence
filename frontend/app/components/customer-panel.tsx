@@ -20,8 +20,7 @@ type CustomerPanelProps = {
   customerHistoryStatus: CustomerHistoryStatus;
   customerHistoryMessage: string;
   customerHistoryCases: CustomerHistoryCase[];
-  /** How the record was matched ("name" = unverified), and its open cases; set when status is "ok". */
-  matchedOn: string | null;
+  /** Open cases in the matched record; set when status is "ok". */
   openCount: number;
 };
 
@@ -71,7 +70,6 @@ export const CustomerPanel = memo(function CustomerPanel({
   customerHistoryStatus,
   customerHistoryMessage,
   customerHistoryCases,
-  matchedOn,
   openCount,
 }: CustomerPanelProps) {
   const canLookup = IDENTITY_FIELDS.some((field) => customerData[field].trim());
@@ -81,7 +79,7 @@ export const CustomerPanel = memo(function CustomerPanel({
   const historyTone = HISTORY_TONES[customerHistoryStatus];
   const historyMessage =
     customerHistoryStatus === "idle"
-      ? "Looked up automatically once the caller's phone number, email or full name is heard."
+      ? "Looked up automatically once the caller's phone number or email is heard."
       : customerHistoryStatus === "loading"
         ? "Searching prior cases…"
         : customerHistoryMessage || "No customer history information is available yet.";
@@ -91,10 +89,7 @@ export const CustomerPanel = memo(function CustomerPanel({
   if (showCases) {
     const count = customerHistoryCases.length;
     const cases = `${count} prior case${count === 1 ? "" : "s"}${openCount ? ` · ${openCount} open` : ""}`;
-    standing =
-      matchedOn === "name"
-        ? { tone: "warning", text: `Possible match · verify phone or email · ${cases}` }
-        : { tone: "success", text: `Returning customer · ${cases}` };
+    standing = { tone: "success", text: `Returning customer · ${cases}` };
   } else if (customerHistoryStatus === "not_found") {
     standing = { tone: "neutral", text: "New customer · no prior cases" };
   }
@@ -178,7 +173,7 @@ export const CustomerPanel = memo(function CustomerPanel({
               className="btn btn--ghost btn--sm"
               onClick={onLookup}
               disabled={isLoading || !canLookup}
-              title={!canLookup ? "Enter a customer name, phone or email first." : "Search prior cases again"}
+              title={!canLookup ? "Enter a phone number or email first." : "Search prior cases again"}
             >
               {isLoading ? "Looking up…" : "Look up"}
             </button>

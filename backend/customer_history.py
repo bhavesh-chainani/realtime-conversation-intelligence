@@ -64,7 +64,6 @@ CARD_FIELDS = (
 MATCH_LABELS = {
     "contact_number": "contact number",
     "email": "email",
-    "name": "customer name",
 }
 
 # Statuses that mean a case needs no further action; anything else counts as open.
@@ -78,9 +77,7 @@ def is_open_case_status(status: str | None) -> bool:
 def verified_case_ids(
     customer_profile: dict[str, Any] | None, customer_cases: list[dict[str, Any]] | None
 ) -> set[str]:
-    """Case IDs the model may cite. A name-only match is unverified, so none until a phone or email matches."""
-    if (customer_profile or {}).get("record_match") == "name":
-        return set()
+    """Case IDs the model may cite: those of the record matched on the caller's phone or email."""
     return {
         str(c.get("case_id")).strip()
         for c in (customer_cases or [])
@@ -120,9 +117,6 @@ def format_caller_card(profile: dict[str, Any] | None) -> str:
     known = caller_line(profile)
     missing = _missing_identity(profile)
     ask = f"Ask for the caller's {_joined(missing)} in one question" if missing else ""
-    has_contact = bool(
-        normalize_phone(profile.get("contact_number")) or normalize_email(profile.get("email"))
-    )
     status = profile.get("lookup_status") or "not_started"
     if status == "pending":
         check = "in progress. Do not mention prior cases yet. " + (
@@ -131,22 +125,11 @@ def format_caller_card(profile: dict[str, Any] | None) -> str:
     elif status == "verified":
         matched_on = MATCH_LABELS.get(profile.get("record_match"), "contact details")
         check = f"done, verified (matched on {matched_on}). Do not ask for identity details again."
-    elif status == "name":
-        needs = [m for m in missing if m != "full name"] or ["contact number"]
-        check = (
-            "possible match by NAME ONLY, not verified. Ask for the caller's "
-            f"{_joined(needs)} to confirm before discussing any case details."
-        )
-    elif status == "not_found" and has_contact:
+    elif status == "not_found":
         check = "done, no prior cases found for the details given. " + (
             f"{ask}, to check once more and complete the record."
             if missing
             else "Treat this as a new caller and do not ask for more identity details."
-        )
-    elif status == "not_found":
-        check = (
-            "no record under that name (it may be recorded differently). "
-            f"{ask}, to check again."  # without a valid phone / email, both are missing
         )
     elif status == "unavailable":
         check = "the case system could not be checked. Carry on without history." + (
@@ -198,16 +181,8 @@ def format_customer_record(
         if profile.get(key)
     )
     open_count = sum(1 for c in cases if is_open_case_status(c.get("status")))
-    match = profile.get("record_match")
-    if match == "name":
-        header = (
-            "CUSTOMER RECORD (possible match by NAME ONLY - identity NOT verified yet; "
-            "ask for the caller's contact number before discussing any case details):"
-        )
-    else:
-        matched_on = MATCH_LABELS.get(match, "contact details")
-        header = f"CUSTOMER RECORD (verified from the case system, matched on {matched_on}):"
-    lines = [header]
+    matched_on = MATCH_LABELS.get(profile.get("record_match"), "contact details")
+    lines = [f"CUSTOMER RECORD (verified from the case system, matched on {matched_on}):"]
     if ident:
         lines.append(ident)
     # Overdue actions go first, so the agent raises them before the new issue.
@@ -216,7 +191,7 @@ def format_customer_record(
         for c in cases
         if "OVERDUE" in _follow_up_label(c, today)
     ]
-    if overdue and match != "name":
+    if overdue:
         lines.append("OVERDUE ACTIONS TO RAISE FIRST: " + "; ".join(overdue))
     lines.append(f"Prior cases ({len(cases)}; {open_count} open):")
     for c in cases:
@@ -247,7 +222,6 @@ def format_customer_record(
 
 
 class CustomerHistoryLookupRequest(BaseModel):
-    name: str | None = None
     contact_number: str | None = None
     email: str | None = None
 
@@ -269,7 +243,8 @@ def _summary(customer_name: str, matched_on: str, cases: list[dict[str, str]]) -
 
 
 class CustomerHistoryService:
-    """Read-only customer history lookup against a curated Postgres view.
+    """Read-only customer history lookup against a curated Postgres view, by contact number or email only
+    (a name cannot prove who the caller is).
 
     Every response has `status` and `summary`; a match ("ok") adds `match_strategy`, `customer`,
     `cases` and `open_count`.
@@ -278,14 +253,13 @@ class CustomerHistoryService:
     def is_configured(self) -> bool:
         return bool(db.is_configured() and cfg.CUSTOMER_HISTORY_VIEW)
 
-    def lookup(self, name: str | None, phone: str | None, email: str | None) -> dict[str, Any]:
-        clean_name = _clean(name)
+    def lookup(self, phone: str | None, email: str | None) -> dict[str, Any]:
         clean_phone = normalize_phone(phone) or ""
         clean_email = normalize_email(email) or ""
-        if not clean_name and not clean_phone and not clean_email:
+        if not clean_phone and not clean_email:
             return {
                 "status": "invalid_input",
-                "summary": "Enter a customer name, contact number or email to search history.",
+                "summary": "Enter a valid contact number or email to search history.",
                 "cases": [],
             }
         if not self.is_configured():
@@ -296,7 +270,7 @@ class CustomerHistoryService:
                 "cases": [],
             }
         try:
-            rows, matched_on = self._query_rows(clean_phone, clean_email, clean_name)
+            rows, matched_on = self._query_rows(clean_phone, clean_email)
         except Exception as exc:
             logger.exception("[customer-history] lookup failed: %s", exc)
             return {
@@ -315,16 +289,12 @@ class CustomerHistoryService:
         # Open cases first: they matter most to the operator and the prompt.
         rows = sorted(rows, key=lambda r: not is_open_case_status(r.get("case_status")))
         cases = case_rows([{field: row.get(col) for field, col in CASE_COLUMNS.items()} for row in rows])
-        customer_name = _first((r.get("customer_name") for r in rows), clean_name)
-        if matched_on == "name":
-            # Unverified: do not reveal the record's contact details to whoever said the name.
-            customer = {"name": customer_name or None, "contact_number": None, "email": None}
-        else:
-            customer = {
-                "name": customer_name or None,
-                "contact_number": _first((r.get("contact_number") for r in rows), clean_phone) or None,
-                "email": _first((r.get("email") for r in rows), clean_email) or None,
-            }
+        customer_name = _first(r.get("customer_name") for r in rows)
+        customer = {
+            "name": customer_name or None,
+            "contact_number": _first((r.get("contact_number") for r in rows), clean_phone) or None,
+            "email": _first((r.get("email") for r in rows), clean_email) or None,
+        }
         return {
             "status": "ok",
             "match_strategy": matched_on,
@@ -334,10 +304,8 @@ class CustomerHistoryService:
             "summary": _summary(customer_name, matched_on, cases),
         }
 
-    def _query_rows(
-        self, clean_phone: str, clean_email: str, clean_name: str
-    ) -> tuple[list[dict[str, Any]], str]:
-        """Rows for the first of phone, email, name that matches, and which one matched.
+    def _query_rows(self, clean_phone: str, clean_email: str) -> tuple[list[dict[str, Any]], str]:
+        """Rows for the first of phone, email that matches, and which one matched.
 
         Phones are compared on their last 8 digits, so "+65 9123 4567" in the DB matches "91234567".
         """
@@ -351,7 +319,6 @@ class CustomerHistoryService:
             for strategy, condition, value in (
                 ("contact_number", db.PHONE_MATCH, clean_phone),
                 ("email", db.EMAIL_MATCH, clean_email),
-                ("name", "LOWER(TRIM(customer_name)) = LOWER(TRIM(%s))", clean_name),
             )
             if value
         ]
@@ -375,8 +342,8 @@ customer_history_service = CustomerHistoryService()
 @router.post("/customer-history")
 def lookup_customer_history(req: CustomerHistoryLookupRequest) -> dict[str, Any]:
     """Manual Look up from the caller card. Live calls look the caller up inside POST /assist."""
-    result = customer_history_service.lookup(req.name, req.contact_number, req.email)
-    searched = next_lookup(None, req.name or "", req.contact_number or "", req.email or "")
+    result = customer_history_service.lookup(req.contact_number, req.email)
+    searched = next_lookup(None, req.contact_number or "", req.email or "")
     prefill = records_prefill(result)
     key = searched.key if searched else None
     if prefill:
