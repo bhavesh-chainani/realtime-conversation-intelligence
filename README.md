@@ -12,7 +12,7 @@ Browser mic ──PCM──▶ WS /ws/stt (backend relay) ──▶ AssemblyAI s
            ◀── finished turns, split wherever the speaker changes (A / B → Staff / Customer)
 
 Each customer turn ──▶ POST /assist (NDJSON stream, backend/orchestrator.py)
-  1. instant regex on the turn (phone, email, "my name is …"); a valid phone / email ──▶ customer DB lookup → prior cases
+  1. instant regex on the turn (phone, email, "my name is …") ──▶ customer DB lookup → caller card, prior cases
   2. after a 250 ms debounce, in parallel:
        entity agent      LLM extraction of name / phone / email / purpose (while fields are missing)
        suggestion agent  transcript + customer record + service guide ──▶ what Staff should say next
@@ -29,19 +29,20 @@ Save     ──▶ POST /cases    creates or updates the case, so the next call 
   decide the route, the route (TADM, ECT, MOM, WICA, TAFEP), the deadline, documents and follow-up. It is read
   at startup (`backend/issue_guides.py`) and given to the suggestion and wrap-up agents. **The demo guides are
   general guidance written for this demo: have the centre's legal team check them before real use.**
-
 - **Diarisation.** The relay sends the same audio to AssemblyAI (words and timestamps) and to
   [Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) (speaker probabilities
   every 10 ms). Each word gets the speaker active during it (`backend/diarization/merge.py`).
+
   - A finished turn shows as _identifying speaker_ until the diariser has covered it, or until
     `DIARIZATION_MAX_WAIT_MS` passes.
   - Without a loaded model, turns arrive unlabelled and staff assign roles in the UI (Next voice, Swap
     roles, or click a turn).
-- **Identity.** Only a valid phone number or email triggers the history check; a name fills the caller card but
-  never looks the caller up, since anyone can say a name. A phone or email match counts as verified and fills the
-  caller card from the record. NRICs and addresses are deliberately not collected.
+- **Identity.** A phone or email match counts as verified and fills the caller card from the record. A name-only
+  match shows as a _possible match_, and the suggestion agent asks for a phone number or email before discussing
+  cases. NRICs and addresses are deliberately not collected.
+
   - Phones are Singapore numbers compared on their 8 digits (`+65 9123 4567` = `91234567`); emails are compared
-    case-insensitively. The lookup tries phone, then email.
+    case-insensitively. The lookup tries phone, then email, then name.
 - **Field precedence.** Staff edits always win, then DB records, then what was heard (regex), then LLM
   extraction. The rule lives in `backend/profile.py` and `frontend/app/lib/customer-profile.ts`; both test
   suites check it against `tests/fixtures/profile_precedence.json`.
@@ -100,9 +101,9 @@ cp .env.example .env                          # set ASSEMBLYAI_API_KEY, LLM_API_
 ```
 
 **Customer database.** `python scripts/demo_db.py` starts an embedded Postgres in `data/demo_pg` and seeds the
-demo customers, cases and issue guides. For example, Katherine Liao (9123 4567) has open and closed cases. The
-script prints the `CUSTOMER_HISTORY_DATABASE_URL` and `CASE_STORE_ENABLED` values to put in `.env`. Re-run it after
-a reboot.
+demo customers. For example, Katherine Liao, S1234567A, has open and closed cases. The script prints the
+`CUSTOMER_HISTORY_DATABASE_URL` and `CUSTOMER_HISTORY_EXTRA_COLUMNS` values to put in `.env`. Re-run it after a
+reboot.
 
 **Nemotron weights** load from `data/models/Nemotron-3-Diarization` when present, otherwise from Hugging Face.
 `scripts/setup_gpu_host.sh` downloads them.
@@ -113,10 +114,6 @@ a reboot.
 uvicorn backend.api:app --host 127.0.0.1 --port 8000    # loads Nemotron at startup
 cd frontend && npm run dev                              # http://localhost:3000
 ```
-
-For demos, run the frontend as a production build (`cd frontend && npm run build && npm start`): dev mode
-re-renders twice and is noticeably slower. The frontend talks to `http://localhost:8000` unless
-`NEXT_PUBLIC_BACKEND_URL` is set at build time (or `localStorage.BACKEND_URL` in the browser).
 
 Open the app, click **Start session**, and speak with two voices into the mic:
 
@@ -149,14 +146,14 @@ A laptop CPU runs Nemotron too slowly for live calls (turns wait seconds for spe
 
 **Endpoints:**
 
-| Endpoint                 | What it does                                                       |
-| ------------------------ | ------------------------------------------------------------------ |
+| Endpoint                   | What it does                                                       |
+| -------------------------- | ------------------------------------------------------------------ |
 | `GET /health`            | Liveness                                                           |
 | `GET /ready`             | LLM and transcription configured, diariser loaded, customer DB set |
 | `GET /stt/session`       | One-time ticket for the relay                                      |
 | `WS /ws/stt`             | The relay                                                          |
 | `POST /assist`           | Both agents for one customer turn, as an NDJSON event stream       |
-| `POST /customer-history` | Manual lookup by contact number and/or email                       |
+| `POST /customer-history` | Manual lookup by contact number, email and/or name                 |
 | `POST /wrapup`           | End-of-call wrap-up: case note, actions, follow-up, caller message |
 | `POST /cases`            | Save a reviewed wrap-up as a new or updated case (demo DB only)    |
 
@@ -169,8 +166,9 @@ and `done`. The full schema is documented at the top of `backend/orchestrator.py
 - **`.env`** holds every setting; defaults and comments live in `backend/config.py`. AssemblyAI uses
   `u3-rt-pro` by default because the standard model drops digits from spoken numbers.
 - **Customer DB view** (`CUSTOMER_HISTORY_VIEW`, read-only): one row per case with `customer_name`,
-  `contact_number`, `email`, `case_id`, `company`, `case_type`, `case_status`, `case_summary`, `opened_on`,
-  `next_action` and `follow_up_due` (the last three let the assistant follow up on open cases).
+  `contact_number`, `email`, `case_id`, `company`, `case_type`, `case_status`, `case_summary`. Further columns
+  listed in `CUSTOMER_HISTORY_EXTRA_COLUMNS` are returned with the customer. Optional case columns
+  `opened_on`, `next_action` and `follow_up_due` let the assistant follow up on open cases.
 - **Issue guides** (`ISSUE_GUIDE_VIEW`): `issue_type`, `applies_when`, `facts_to_gather`, `documents`, `route`,
   `deadline`, `follow_up`. Without it, the assistant gives only general next steps.
 - **Case store** (`CASE_STORE_ENABLED`, off by default): lets **Save** write to the demo tables. The history
