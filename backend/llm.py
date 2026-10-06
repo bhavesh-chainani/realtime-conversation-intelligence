@@ -85,11 +85,14 @@ def supports_reasoning_effort(model: str) -> bool:
     return bool(re.search(r"(^|\.)(gpt-5|o\d)", name))
 
 
-def llm_extra_params(model: str) -> dict[str, Any]:
-    """Optional provider params shared by latency-sensitive calls to `model`."""
+def llm_extra_params(model: str, live: bool = False) -> dict[str, Any]:
+    """Optional provider params for calls to `model`; `live` calls (Staff are waiting on them) also get
+    the configured service tier."""
     params: dict[str, Any] = {}
     if cfg.LLM_REASONING_EFFORT and supports_reasoning_effort(model):
         params["reasoning_effort"] = cfg.LLM_REASONING_EFFORT
+    if live and cfg.LLM_SERVICE_TIER:
+        params["service_tier"] = cfg.LLM_SERVICE_TIER
     return params
 
 
@@ -145,7 +148,7 @@ async def warm_up(min_interval_s: float = 60) -> None:
                 model=model,
                 max_completion_tokens=16,
                 messages=[{"role": "user", "content": "Reply with OK."}],
-                **llm_extra_params(model),
+                **llm_extra_params(model, live=True),
             ),
             client.models.list(),
         )

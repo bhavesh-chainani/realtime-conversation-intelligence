@@ -26,7 +26,6 @@ Run these from the repo root.
    ```
 
    This takes about a minute. The server costs about US$1/hour while it runs.
-
 2. **Deploy**, but only if the code changed since the last deploy:
 
    ```bash
@@ -34,7 +33,6 @@ Run these from the repo root.
    ```
 
    It finishes by printing `/ready`. Check that it shows `"diarization":{"ready":true,"mode":"low_latency"}`.
-
 3. **Open the tunnel**, in its own terminal, and leave it open:
 
    ```bash
@@ -43,15 +41,12 @@ Run these from the repo root.
 
    If it says port 8000 is in use, a local backend is still running. Stop it (`ss -ltnp | grep 8000` shows
    the process) and connect again.
-
 4. **Start the frontend**, in a second terminal:
 
    ```bash
    cd frontend && npm run dev
    ```
-
-5. **Open <http://localhost:3000>** and click **Start session**. Speak with two voices: the first voice is Staff.
-
+5. **Open [http://localhost:3000](http://localhost:3000)** and click **Start session**. Speak with two voices: the first voice is Staff.
 6. **When you're done**, press Ctrl+C in both terminals, then stop the server:
 
    ```bash
@@ -102,14 +97,14 @@ stage.
 
 ## Troubleshooting
 
-| Problem                                                | What to do                                                                                                                     |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `start`, `deploy` or `connect` times out on SSH        | The server's security group probably only allows your home IP. Add your current IP to its inbound SSH rule in the AWS console. |
-| `start` fails with `InsufficientInstanceCapacity`      | AWS has no spare T4 GPUs in that zone right now. Try again later; capacity usually comes back within hours.                    |
-| `deploy` says the backend is not ready after 3 minutes | Read the logs: `ssh -i ~/.ssh/rci-gpu.pem ubuntu@<ip> journalctl -u rci-backend -n 80`.                                        |
-| The page says it cannot reach the backend              | Check that the tunnel terminal is still open, then run `curl -s localhost:8000/ready`.                                         |
-| Turns stay on _identifying speaker_ for a long time    | You are probably on a local backend, not the GPU one. `/ready` should show `"mode":"low_latency"`.                             |
-| The page looks out of date                             | An old `next start` may be holding port 3000. Stop it and run `npm run dev` again.                                             |
+| Problem                                                  | What to do                                                                                                                     |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `start`, `deploy` or `connect` times out on SSH    | The server's security group probably only allows your home IP. Add your current IP to its inbound SSH rule in the AWS console. |
+| `start` fails with `InsufficientInstanceCapacity`    | AWS has no spare T4 GPUs in that zone right now. Try again later; capacity usually comes back within hours.                    |
+| `deploy` says the backend is not ready after 3 minutes | Read the logs:`ssh -i ~/.ssh/rci-gpu.pem ubuntu@<ip> journalctl -u rci-backend -n 80`.                                       |
+| The page says it cannot reach the backend                | Check that the tunnel terminal is still open, then run`curl -s localhost:8000/ready`.                                        |
+| Turns stay on_identifying speaker_ for a long time     | You are probably on a local backend, not the GPU one.`/ready` should show `"mode":"low_latency"`.                          |
+| The page looks out of date                               | An old`next start` may be holding port 3000. Stop it and run `npm run dev` again.                                          |
 
 ## How it works
 
@@ -138,8 +133,8 @@ Save     ──▶ POST /cases    creates or updates the case in the demo DB
 - **Settings** are listed with their defaults in `backend/config.py`. The GPU server keeps its own `.env`,
   model weights and demo DB, and `deploy` never overwrites them.
 
-| Endpoint                 | What it does                                                       |
-| ------------------------ | ------------------------------------------------------------------ |
+| Endpoint                   | What it does                                                       |
+| -------------------------- | ------------------------------------------------------------------ |
 | `GET /ready`             | LLM and transcription configured, diariser loaded, customer DB set |
 | `GET /stt/session`       | One-time ticket for the relay                                      |
 | `WS /ws/stt`             | The relay                                                          |

@@ -42,10 +42,10 @@ ASSEMBLYAI_API_KEY = _str("ASSEMBLYAI_API_KEY")
 ASSEMBLYAI_SPEECH_MODEL = _str("ASSEMBLYAI_SPEECH_MODEL", "u3-rt-pro")
 # Extra terms to listen for, sent as `keyterms_prompt` (max 100).
 ASSEMBLYAI_KEYTERMS = _list("ASSEMBLYAI_KEYTERMS")[:100]
-# Turn detection. Shorter end-of-turn silence makes finished lines appear sooner (~1.0 s vs ~1.6 s
-# with u3-rt-pro) without hurting accuracy.
+# Turn detection (u3 models): after `min_turn_silence` a turn ends if the text so far ends a sentence; with no
+# sentence end it waits up to `max_turn_silence`. Lowering the max ends turns sooner but can split spoken numbers.
 ASSEMBLYAI_STREAM_PARAMS = {
-    "min_end_of_turn_silence_when_confident": str(_int("ASSEMBLYAI_END_OF_TURN_SILENCE_MS", 240)),
+    "min_turn_silence": str(_int("ASSEMBLYAI_MIN_TURN_SILENCE_MS", 100)),
     "max_turn_silence": str(_int("ASSEMBLYAI_MAX_TURN_SILENCE_MS", 1000)),
 }
 
@@ -79,15 +79,18 @@ LLM_TIMEOUT_SECONDS = _float("LLM_TIMEOUT_SECONDS", 20)
 LLM_MAX_RETRIES = _int("LLM_MAX_RETRIES", 2)
 # Optional reasoning effort for GPT-5-family models (none|minimal|low). Empty = provider default.
 LLM_REASONING_EFFORT = _str("LLM_REASONING_EFFORT")
+# Service tier for the live calls (suggestion, extraction). "priority" is OpenAI's low-latency tier, at about
+# twice the token price. Empty = provider default; leave it empty on a gateway that does not accept it.
+LLM_SERVICE_TIER = _str("LLM_SERVICE_TIER")
 
 SUGGESTION_MODEL = _str("SUGGESTION_MODEL", "gpt-4o-mini")
 SUGGESTION_TEMPERATURE = _float("SUGGESTION_TEMPERATURE", 0.3)
 SUGGESTION_MAX = _int("MAX_SUGGESTIONS", 1)
 SUGGESTION_TIMEOUT_SECONDS = _float("SUGGESTION_TIMEOUT_SECONDS", LLM_TIMEOUT_SECONDS)
 SUGGESTION_MAX_TOKENS = _int("SUGGESTION_MAX_TOKENS", 900)
-# The gateway stalls for seconds at random: after this long, send the same request again and use
-# whichever answers first. 0 turns it off.
-SUGGESTION_HEDGE_AFTER_MS = _int("SUGGESTION_HEDGE_AFTER_MS", 2500)
+# Providers stall for seconds at random: after this long, send the same request again and use
+# whichever answers first. 0 turns it off. A normal answer takes about 1.2-2 s.
+SUGGESTION_HEDGE_AFTER_MS = _int("SUGGESTION_HEDGE_AFTER_MS", 2000)
 
 EXTRACTION_MODEL = _str("EXTRACTION_MODEL", SUGGESTION_MODEL)
 EXTRACTION_TIMEOUT_SECONDS = _float("EXTRACTION_TIMEOUT_SECONDS", LLM_TIMEOUT_SECONDS)

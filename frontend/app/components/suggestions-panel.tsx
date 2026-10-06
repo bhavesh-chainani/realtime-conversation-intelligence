@@ -19,6 +19,7 @@ function formatSeconds(ms: number): string {
 function latencyLabel(meta: SuggestionMeta): string {
   if (meta.origin === "fallback") return "Fallback guidance";
   const parts = [
+    meta.turnEndMs >= 50 ? `turn end ${formatSeconds(meta.turnEndMs)}` : "",
     meta.speakerMs >= 50 ? `speaker ${formatSeconds(meta.speakerMs)}` : "",
     typeof meta.llmMs === "number" ? `AI ${formatSeconds(meta.llmMs)}` : "",
   ].filter(Boolean);

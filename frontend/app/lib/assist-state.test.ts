@@ -26,7 +26,7 @@ const OK_RESULT: HistoryResult = {
 const OK_HISTORY: AssistEvent = { type: "history", ...OK_RESULT };
 
 function streaming(state: AssistState = initialAssistState, gen = 1, committedAt = 100): AssistState {
-  return assistReducer(state, { type: "streamStart", gen, committedAt, endedAt: committedAt - 400 });
+  return assistReducer(state, { type: "streamStart", gen, committedAt, endedAt: committedAt - 700, turnEndMs: 300 });
 }
 
 function send(state: AssistState, event: AssistEvent, gen = state.gen, at = 1000): AssistState {
@@ -54,8 +54,16 @@ test("events fill the caller card, history and suggestion", () => {
   assert.deepEqual(s.sources, { contact_number: "heard", name: "records" });
   assert.deepEqual([s.history.openCount, s.history.matchedOn], [1, "contact_number"]);
   assert.deepEqual(s.suggestions, [{ topic: "a" }]);
-  // Measured from when the caller stopped speaking: 400 ms waiting for the speaker, then the agents.
-  assert.deepEqual(s.suggestionMeta, { origin: "live", latencyMs: 1300, speakerMs: 400, llmMs: 5, model: undefined });
+  // Measured from when the caller stopped speaking: 300 ms until AssemblyAI ended the turn, 400 ms waiting for the
+  // speaker, then the agents.
+  assert.deepEqual(s.suggestionMeta, {
+    origin: "live",
+    latencyMs: 1600,
+    turnEndMs: 300,
+    speakerMs: 400,
+    llmMs: 5,
+    model: undefined,
+  });
   assert.equal(s.fetching, false);
 });
 

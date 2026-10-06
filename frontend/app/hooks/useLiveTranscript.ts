@@ -13,17 +13,23 @@ import {
 import {
   newTurnId,
   otherRole,
-  resolveSpeakerRole,
+  resolveSpeakerRoles,
   swapRoles,
   type KnownRole,
   type SpeakerRoleMap,
 } from "../lib/transcript.ts";
 import type { Turn } from "../lib/types.ts";
 
-/** Called once per finished turn that is not Staff (unlabelled turns may be the customer too). */
-type CustomerTurnHandler = (turn: Turn, turns: Turn[]) => void;
+export type TranscriptHandlers = {
+  /** Once per batch of finished turns, with the last one that is not Staff (unlabelled turns may be the customer). */
+  onCustomerTurn: (turn: Turn, turns: Turn[]) => void;
+  /** The same, early: from a pending turn's provisional speakers. The finished turn confirms or replaces it. */
+  onPendingCustomerTurn: (turn: Turn, turns: Turn[]) => void;
+  /** Finished turns arrived with no customer line, so guidance started early on them is void. */
+  onNoCustomerTurn: () => void;
+};
 
-export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTurnHandler) {
+export function useLiveTranscript(backendUrl: string, handlers: TranscriptHandlers) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [live, setLive] = useState("");
   const [speaking, setSpeaking] = useState(false);
@@ -45,8 +51,8 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
   const wsRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicCapture | null>(null);
   const attemptRef = useRef(0);
-  const onCustomerTurnRef = useRef(onCustomerTurn);
-  onCustomerTurnRef.current = onCustomerTurn;
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
 
   const commitTurns = (next: Turn[]) => {
     turnsRef.current = next;
@@ -66,32 +72,47 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     liveRef.current = "";
   };
 
-  const labelRoleFor = (label: string | null): KnownRole | null => {
-    const resolved = resolveSpeakerRole(label, roleMapRef.current, nextVoiceIsStaffRef.current);
-    if (resolved.map !== roleMapRef.current) setRoleMap(resolved.map);
-    return resolved.role === "unknown" ? null : resolved.role;
+  /** Turns for speaker segments, with roles from the label map; `keepRoles` saves any new labels to the map.
+   * `heldMs` (the diariser wait) and `turnEndMs` (last word to AssemblyAI's end of turn) date when speech ended. */
+  const toTurns = (segments: RelaySegment[], keepRoles: boolean, heldMs = 0, turnEndMs = 0): Turn[] => {
+    const kept = segments.filter((seg) => seg.text.trim());
+    const resolved = resolveSpeakerRoles(
+      kept.map((seg) => seg.speakerLabel),
+      roleMapRef.current,
+      nextVoiceIsStaffRef.current
+    );
+    if (keepRoles && resolved.map !== roleMapRef.current) setRoleMap(resolved.map);
+    const now = performance.now();
+    return kept.map((seg, i) => ({
+      id: newTurnId(),
+      text: seg.text.trim(),
+      speakerLabel: seg.speakerLabel,
+      role: resolved.roles[i],
+      roleSource: "diarization",
+      committedAt: now,
+      endedAt: now - heldMs - turnEndMs,
+      turnEndMs,
+    }));
   };
 
-  /** Adds finished speaker segments as turns, then asks for guidance once, on the last non-Staff one.
-   * `heldMs` is how long the relay held them for the diariser, so latency counts from when speech ended. */
-  const ingestFinal = (segments: RelaySegment[], heldMs = 0) => {
-    const now = performance.now();
-    const added: Turn[] = segments
-      .filter((seg) => seg.text.trim())
-      .map((seg) => ({
-        id: newTurnId(),
-        text: seg.text.trim(),
-        speakerLabel: seg.speakerLabel,
-        role: labelRoleFor(seg.speakerLabel) ?? "unknown",
-        roleSource: "diarization",
-        committedAt: now,
-        endedAt: now - heldMs,
-      }));
-    if (added.length === 0) return;
+  /** Adds finished speaker segments as turns, then asks for guidance once, on the last non-Staff one. */
+  const ingestFinal = (segments: RelaySegment[], heldMs = 0, turnEndMs = 0) => {
+    const added = toTurns(segments, true, heldMs, turnEndMs);
     const next = [...turnsRef.current, ...added];
-    commitTurns(next);
+    if (added.length > 0) commitTurns(next);
     const customerTurn = [...added].reverse().find((t) => t.role !== "staff");
-    if (customerTurn) onCustomerTurnRef.current(customerTurn, next);
+    if (customerTurn) handlersRef.current.onCustomerTurn(customerTurn, next);
+    else handlersRef.current.onNoCustomerTurn();
+  };
+
+  /** Starts guidance early from a pending turn's provisional speakers. Skipped when no speaker was heard yet or an
+   * earlier turn is still pending: the finished turns would not match, so the early start would be wasted. */
+  const startEarly = (pending: PendingTurn) => {
+    const segments = pending.segments ?? [];
+    if (pendingRef.current.length > 0 || !segments.some((seg) => seg.speakerLabel)) return;
+    const provisional = toTurns(segments, false);
+    const customerTurn = [...provisional].reverse().find((t) => t.role !== "staff");
+    if (customerTurn) handlersRef.current.onPendingCustomerTurn(customerTurn, [...turnsRef.current, ...provisional]);
   };
 
   /** Releases the mic and socket. Safe to call repeatedly. */
@@ -130,6 +151,7 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     if (pending) {
       // The relay finished a turn and is identifying its speakers: move it out of the live line.
       clearLive();
+      startEarly(pending);
       if (pending.text) setPending([...pendingRef.current, pending]);
       return;
     }
@@ -144,7 +166,7 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     const turnOrder = typeof d.turn_order === "number" ? d.turn_order : undefined;
     setPending(pendingRef.current.filter((p) => p.turnOrder !== turnOrder));
     // The next speaker's live text may already be on screen: leave it.
-    ingestFinal(segments, typeof d.held_ms === "number" ? d.held_ms : 0);
+    ingestFinal(segments, typeof d.held_ms === "number" ? d.held_ms : 0, typeof d.eot_ms === "number" ? d.eot_ms : 0);
   };
   const handleMessageRef = useRef(handleMessage);
   handleMessageRef.current = handleMessage;
@@ -246,7 +268,9 @@ export function useLiveTranscript(backendUrl: string, onCustomerTurn: CustomerTu
     const updated: Turn = { ...target, role, roleSource: "manual" };
     const next = current.map((t) => (t.id === turnId ? updated : t));
     commitTurns(next);
-    if (role === "customer" && current[current.length - 1]?.id === turnId) onCustomerTurnRef.current(updated, next);
+    if (role === "customer" && current[current.length - 1]?.id === turnId) {
+      handlersRef.current.onCustomerTurn(updated, next);
+    }
   }, []);
 
   useEffect(() => close, [close]);

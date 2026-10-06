@@ -50,10 +50,12 @@ export type AssistState = {
   committedAt: number;
   /** performance.now() when the caller stopped speaking (≤ committedAt). */
   endedAt: number;
+  /** Part of committedAt - endedAt before AssemblyAI ended the turn. */
+  turnEndMs: number;
 };
 
 export type AssistAction =
-  | { type: "streamStart"; gen: number; committedAt: number; endedAt?: number }
+  | { type: "streamStart"; gen: number; committedAt: number; endedAt?: number; turnEndMs?: number }
   | { type: "event"; gen: number; event: AssistEvent; at: number }
   | { type: "streamEnd"; gen: number }
   | { type: "manualEdit"; field: CustomerDataField; value: string }
@@ -83,6 +85,7 @@ export const initialAssistState: AssistState = {
   streamEpoch: 0,
   committedAt: 0,
   endedAt: 0,
+  turnEndMs: 0,
 };
 
 function historyFrom(result: HistoryResult): HistoryState {
@@ -130,7 +133,8 @@ function applyEvent(state: AssistState, event: AssistEvent, at: number): AssistS
         suggestionMeta: {
           origin: event.fallback ? "fallback" : "live",
           latencyMs: at - state.endedAt,
-          speakerMs: state.committedAt - state.endedAt,
+          turnEndMs: state.turnEndMs,
+          speakerMs: state.committedAt - state.endedAt - state.turnEndMs,
           llmMs: event.fallback ? undefined : event.timings.llm_ms,
           model: event.fallback ? undefined : event.timings.model,
         },
@@ -152,6 +156,7 @@ export function assistReducer(state: AssistState, action: AssistAction): AssistS
         streamEpoch: state.epoch,
         committedAt: action.committedAt,
         endedAt: Math.min(action.endedAt ?? action.committedAt, action.committedAt),
+        turnEndMs: action.turnEndMs ?? 0,
       };
     case "event":
       return action.gen === state.gen ? applyEvent(state, action.event, action.at) : state;
