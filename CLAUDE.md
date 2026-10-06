@@ -8,7 +8,7 @@ Live call assistant for a Singapore legal-advice centre. Four parts:
 4. **Orchestration**: `POST /assist` runs 2 and 3 for each customer turn and streams NDJSON events to the UI.
 5. **Wrap-up**: End call → `POST /wrapup` (case note, actions, follow-up, message to caller) → Save → `POST /cases` writes the case to the demo DB, so the next call picks it up.
 
-README.md has the full architecture, endpoints and setup.
+README.md has the step-by-step demo start on the GPU server, a short architecture overview and the endpoints.
 
 ## Commands
 
