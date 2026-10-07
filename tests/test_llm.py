@@ -6,7 +6,8 @@ import asyncio
 
 import pytest
 
-from backend.llm import hedged
+from backend import config as cfg
+from backend.llm import hedged, llm_extra_params
 
 
 def _calls(*delays_and_results):
@@ -91,3 +92,15 @@ def test_reasoning_effort_only_for_models_that_take_it(model, expected, monkeypa
     monkeypatch.setattr(cfg, "LLM_REASONING_EFFORT", "none")
     assert supports_reasoning_effort(model) is expected
     assert ("reasoning_effort" in llm_extra_params(model)) is expected
+
+
+def test_service_tier_goes_only_to_live_calls(monkeypatch):
+    monkeypatch.setattr(cfg, "LLM_REASONING_EFFORT", "none")
+    monkeypatch.setattr(cfg, "LLM_SERVICE_TIER", "priority")
+    assert llm_extra_params("gpt-5.4-mini", live=True) == {
+        "reasoning_effort": "none",
+        "service_tier": "priority",
+    }
+    assert llm_extra_params("gpt-5.4-mini") == {"reasoning_effort": "none"}  # e.g. wrap-up
+    monkeypatch.setattr(cfg, "LLM_SERVICE_TIER", "")
+    assert llm_extra_params("gpt-5.4-mini", live=True) == {"reasoning_effort": "none"}

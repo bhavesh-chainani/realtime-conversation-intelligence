@@ -5,10 +5,12 @@ diariser, so AssemblyAI word times and diariser frames share one clock (the stre
 Messages back to the browser are AssemblyAI-shaped:
 
 - partial `Turn` messages pass straight through, without speakers
-- a finished turn is announced at once as `PendingTurn`, then held until the diariser has
-  covered its last word (or `DIARIZATION_MAX_WAIT_MS` passes), then sent as a final `Turn`
-  whose `segments` split it wherever the speaker changes and whose `held_ms` says how long it
-  waited. `diarization` says how complete the labels are: "nemotron" (fully covered), "partial"
+- a finished turn is announced at once as `PendingTurn`, with provisional `segments` from what the
+  diariser has covered so far (`diarization: "provisional"`; none without a diariser), so the browser
+  can start on the suggestion early. The turn is then held until the diariser has covered its
+  last word (or `DIARIZATION_MAX_WAIT_MS` passes), then sent as a final `Turn` whose `segments`
+  split it wherever the speaker changes and whose `held_ms` says how long it waited. Both carry
+  `eot_ms`: how long after the turn's last word AssemblyAI ended it. `diarization` says how complete the labels are: "nemotron" (fully covered), "partial"
   (the diariser was still behind) or "none" (no diariser loaded: every speaker is null and the
   operator assigns roles)
 
@@ -151,6 +153,11 @@ class Relay:
         self.unsent = 0  # turns announced as pending and not yet sent final
         self.stats = {"nemotron": 0, "partial": 0, "none": 0}
         self.held_ms: list[int] = []  # per final turn: how long it waited for the diariser
+        # When the first audio went to AssemblyAI: its word times count from there.
+        self.audio_started: float | None = None
+        # turn_order -> ms from the turn's last word to AssemblyAI ending the turn
+        self.eot_ms: dict[Any, int] = {}
+        self.eot_all: list[int] = []
         self.progress = asyncio.Event()  # set by the diariser thread after each step
 
     async def run(self) -> None:
@@ -185,12 +192,15 @@ class Relay:
         finally:
             for task in (upstream, downstream, emitter, warm):
                 task.cancel()
-            held = sorted(self.held_ms)
+            held, eot = sorted(self.held_ms), sorted(self.eot_all)
             logger.info(
-                "STT relay closed: turns diarised=%s, held for speakers p50=%sms max=%sms",
+                "STT relay closed: turns diarised=%s, held for speakers p50=%sms max=%sms, "
+                "turn end after last word p50=%sms max=%sms",
                 self.stats,
                 held[len(held) // 2] if held else "-",
                 held[-1] if held else "-",
+                eot[len(eot) // 2] if eot else "-",
+                eot[-1] if eot else "-",
             )
 
     async def _upstream(self) -> str:
@@ -202,6 +212,8 @@ class Relay:
                 if msg["type"] == "websocket.disconnect":
                     break
                 if msg.get("bytes"):
+                    if self.audio_started is None:
+                        self.audio_started = time.monotonic()
                     await self.aai.send(msg["bytes"])
                     if self.diar is not None:
                         self.diar.feed(msg["bytes"])
@@ -236,16 +248,39 @@ class Relay:
             if resent:
                 continue
             self.unsent += 1
+            if (eot := self._turn_end_delay(msg)) is not None:
+                self.eot_ms[order] = eot
+                self.eot_all.append(eot)
             self.queue.put_nowait((order, time.monotonic()))
-            await self.browser.send_json(
-                {
-                    "type": "PendingTurn",
-                    "turn_order": msg.get("turn_order"),
-                    "transcript": msg.get("transcript", ""),
-                }
-            )
+            await self.browser.send_json(self._pending_turn(msg))
         await self.browser.close(code=1011, reason="AssemblyAI closed the stream")
         return False
+
+    def _turn_end_delay(self, msg: dict) -> int | None:
+        """How long after the turn's last word AssemblyAI ended it (silence wait plus transcription), in ms.
+        The browser streams audio in real time, so time since the first audio is the stream clock."""
+        ends = [w.get("end") or 0 for w in msg.get("words") or []]
+        if self.audio_started is None or not ends:
+            return None
+        return max(0, round((time.monotonic() - self.audio_started) * 1000 - max(ends)))
+
+    def _pending_turn(self, msg: dict) -> dict:
+        pending = {
+            "type": "PendingTurn",
+            "turn_order": msg.get("turn_order"),
+            "transcript": msg.get("transcript", ""),
+        }
+        if msg.get("turn_order") in self.eot_ms:
+            pending["eot_ms"] = self.eot_ms[msg.get("turn_order")]
+        if self.diar is not None and not self.diar.failed:
+            # The diariser usually lags the last word by under a chunk, so these labels mostly match the
+            # final ones; the browser keeps its early suggestion only if they do.
+            segments = diarize_turn(msg, self.diar.probs, source="provisional")["segments"]
+            pending["segments"] = [
+                {"speaker_label": seg["speaker_label"], "transcript": seg["transcript"]} for seg in segments
+            ]
+            pending["diarization"] = "provisional"
+        return pending
 
     async def _emit_finals(self) -> None:
         while True:
@@ -281,6 +316,8 @@ class Relay:
                 )
             self.stats[out["diarization"]] += 1
             out["held_ms"] = round((time.monotonic() - received) * 1000)
+            if order in self.eot_ms:
+                out["eot_ms"] = self.eot_ms.pop(order)
             self.held_ms.append(out["held_ms"])
             await self.browser.send_json(out)
             self.unsent -= 1

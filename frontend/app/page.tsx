@@ -18,7 +18,11 @@ export default function Page() {
   const assist = useAssist(backendUrl);
   const clock = useCallClock();
   const wrapUp = useWrapUp(backendUrl);
-  const transcript = useLiveTranscript(backendUrl, assist.run);
+  const transcript = useLiveTranscript(backendUrl, {
+    onCustomerTurn: assist.run,
+    onPendingCustomerTurn: assist.startEarly,
+    onNoCustomerTurn: assist.dropEarly,
+  });
 
   const transcriptListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

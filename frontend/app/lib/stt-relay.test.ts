@@ -31,6 +31,23 @@ test("pending turn carries its text", () => {
   assert.equal(parsePendingTurn({ type: "Turn" }), null);
 });
 
+test("pending turn carries provisional speakers when the relay has them", () => {
+  const pending = parsePendingTurn({
+    type: "PendingTurn",
+    turn_order: 4,
+    transcript: "Yes. It's 9123 4567.",
+    diarization: "provisional",
+    segments: [
+      { speaker_label: "A", transcript: "Yes." },
+      { speaker_label: "b", transcript: " It's 9123 4567. " },
+    ],
+  });
+  assert.deepEqual(pending?.segments, [
+    { text: "Yes.", speakerLabel: "A" },
+    { text: "It's 9123 4567.", speakerLabel: "B" },
+  ]);
+});
+
 test("a merged turn becomes one segment per speaker", () => {
   const segments = parseRelaySegments({
     type: "Turn",

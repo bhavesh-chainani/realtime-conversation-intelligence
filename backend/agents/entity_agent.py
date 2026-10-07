@@ -73,7 +73,7 @@ async def extract_entities(transcript: str) -> dict[str, str | None]:
                 "content": user_prompt("entity", conversation_transcript=transcript),
             },
         ],
-        **llm_extra_params(get_extraction_model()),
+        **llm_extra_params(get_extraction_model(), live=True),
     )
     data = normalize_payload(json.loads(strip_code_fences(response.choices[0].message.content or "")))
     data["contact_number"] = reconcile_phone(data["contact_number"], transcript)

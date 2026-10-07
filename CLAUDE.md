@@ -37,7 +37,7 @@ cd frontend && npm run format && npm run build
 - `scripts/simulate_call.py`: an LLM caller runs whole calls through a running backend and checks each stage. Use it after any prompt change; prompts are cached, so restart the backend first.
 - `backend/stt_relay.py` + `backend/diarization/`: the relay and Nemotron.
 - `backend/config.py`: every setting, with defaults; `.env.example` lists them.
-- `frontend/app/hooks/`: `useLiveTranscript` (relay, mic, speakers), `useAssist` (one `/assist` stream per customer turn). Logic worth testing goes in `frontend/app/lib/` as pure functions with a `*.test.ts` beside it.
+- `frontend/app/hooks/`: `useLiveTranscript` (relay, mic, speakers), `useAssist` (one `/assist` stream per customer turn; started early on the relay's provisional speakers in `PendingTurn`, and kept only if the final turns match exactly). Logic worth testing goes in `frontend/app/lib/` as pure functions with a `*.test.ts` beside it.
 
 ## Conventions
 

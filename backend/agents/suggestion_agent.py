@@ -108,7 +108,7 @@ async def generate_suggestions(
             timeout=cfg.SUGGESTION_TIMEOUT_SECONDS,
             response_format={"type": "json_object"},
             messages=messages,
-            **llm_extra_params(model),
+            **llm_extra_params(model, live=True),
         )
         parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
         if not isinstance(parsed, dict):

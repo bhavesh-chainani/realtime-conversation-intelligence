@@ -33,7 +33,8 @@ def loaded_ssl_context() -> ssl.SSLContext | None:
 
 def streaming_params(sample_rate: int) -> dict[str, str]:
     """Query params for the v3 streaming WebSocket."""
-    params = {"sample_rate": str(sample_rate), "format_turns": "true"}
+    # u3 models always format turns, so there is no `format_turns`.
+    params = {"sample_rate": str(sample_rate)}
     if cfg.ASSEMBLYAI_KEYTERMS:
         params["keyterms_prompt"] = json.dumps(cfg.ASSEMBLYAI_KEYTERMS)
     if cfg.ASSEMBLYAI_SPEECH_MODEL:

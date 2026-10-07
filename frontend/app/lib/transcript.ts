@@ -3,6 +3,8 @@ import type { SpeakerRole, Turn } from "./types.ts";
 
 export type KnownRole = "staff" | "customer";
 export type SpeakerRoleMap = Record<string, KnownRole>;
+/** A turn as /assist receives it. */
+export type AssistTurn = { role: SpeakerRole; text: string };
 
 /** Turns sent to /assist; the backend caps the call at 200. */
 const MAX_ASSIST_TURNS = 200;
@@ -36,6 +38,21 @@ export function resolveSpeakerRole(
   return { role: "unknown", map };
 }
 
+/** Roles for a run of labels in order, so two new voices in one turn get different roles. */
+export function resolveSpeakerRoles(
+  labels: Array<string | null>,
+  map: SpeakerRoleMap,
+  nextVoiceIsStaff: boolean
+): { roles: SpeakerRole[]; map: SpeakerRoleMap } {
+  const roles: SpeakerRole[] = [];
+  for (const label of labels) {
+    const resolved = resolveSpeakerRole(label, map, nextVoiceIsStaff);
+    roles.push(resolved.role);
+    map = resolved.map;
+  }
+  return { roles, map };
+}
+
 export function otherRole(role: KnownRole): KnownRole {
   return role === "staff" ? "customer" : "staff";
 }
@@ -44,6 +61,11 @@ export function swapRoles(map: SpeakerRoleMap): SpeakerRoleMap {
   return Object.fromEntries(Object.entries(map).map(([label, role]) => [label, otherRole(role)]));
 }
 
-export function toAssistTurns(turns: Turn[]): Array<{ role: SpeakerRole; text: string }> {
+export function toAssistTurns(turns: Turn[]): AssistTurn[] {
   return turns.slice(-MAX_ASSIST_TURNS).map((t) => ({ role: t.role, text: t.text }));
+}
+
+/** True when two /assist transcripts are identical, so guidance started on one still fits the other. */
+export function sameAssistTurns(a: AssistTurn[], b: AssistTurn[]): boolean {
+  return a.length === b.length && a.every((t, i) => t.role === b[i].role && t.text === b[i].text);
 }

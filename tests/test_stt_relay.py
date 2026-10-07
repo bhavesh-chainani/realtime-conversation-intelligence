@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -181,6 +182,32 @@ def test_relay_holds_final_turn_then_sends_speaker_segments(client, monkeypatch)
     assert [s["speaker_label"] for s in final["segments"]] == ["A", "B", "A"]
     # the same audio reached both AssemblyAI and the diariser
     assert b"\x01\x00" * 800 in fake.received and session.fed == 1600
+
+
+def test_pending_turn_has_provisional_speakers_from_what_the_diariser_covered(client, monkeypatch):
+    received, _ = run_session(client, monkeypatch, FakeSession(truth_probs()))
+    pending = next(m for m in received if m["type"] == "PendingTurn")
+    assert pending["diarization"] == "provisional"
+    assert [s["speaker_label"] for s in pending["segments"]] == ["A", "B", "A"]
+    assert [s["transcript"] for s in pending["segments"]] == [
+        s["transcript"] for s in received[-1]["segments"]
+    ]
+
+
+def test_pending_turn_without_diariser_has_no_segments(client, monkeypatch):
+    received, _ = run_session(client, monkeypatch, None)
+    pending = next(m for m in received if m["type"] == "PendingTurn")
+    assert "segments" not in pending
+
+
+def test_turn_end_delay_counts_from_the_last_word_on_the_stream_clock():
+    relay = stt_relay.Relay(browser=None, aai=None, diar=None, max_wait_ms=100)
+    turn = {"turn_order": 2, "transcript": "Hi.", "words": [{"text": "Hi.", "start": 3600, "end": 4000}]}
+    assert relay._turn_end_delay(turn) is None  # no audio yet
+    relay.audio_started = time.monotonic() - 5
+    assert 950 <= relay._turn_end_delay(turn) <= 1200
+    relay.eot_ms[2] = 1000
+    assert relay._pending_turn(turn)["eot_ms"] == 1000
 
 
 def test_relay_sends_partial_labels_when_diariser_lags(client, monkeypatch):

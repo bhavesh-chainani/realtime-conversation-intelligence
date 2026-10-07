@@ -15,6 +15,8 @@ export type Turn = {
   committedAt: number;
   /** performance.now() when the caller stopped speaking, i.e. before the speaker wait; latency is measured from here. */
   endedAt?: number;
+  /** Part of committedAt - endedAt spent before AssemblyAI ended the turn (silence wait and transcription). */
+  turnEndMs?: number;
 };
 
 export type Suggestion = {
@@ -33,6 +35,8 @@ export type SuggestionMeta = {
   origin: "live" | "fallback";
   /** From the end of the customer's turn to the suggestion. */
   latencyMs: number;
+  /** Part of latencyMs before AssemblyAI ended the turn. */
+  turnEndMs: number;
   /** Part of latencyMs spent waiting for the diariser to confirm the speaker. */
   speakerMs: number;
   llmMs?: number;
