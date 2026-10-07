@@ -10,19 +10,31 @@ import { WrapUpPanel } from "./components/wrapup-panel";
 import { useAssist } from "./hooks/useAssist.ts";
 import { useCallClock } from "./hooks/useCallClock.ts";
 import { useLiveTranscript } from "./hooks/useLiveTranscript.ts";
+import { useScriptedTranscript } from "./hooks/useScriptedTranscript.ts";
 import { useWrapUp } from "./hooks/useWrapUp.ts";
 import { getBackendUrl } from "./lib/backend-url.ts";
+import { parseDemoParams } from "./lib/demo-playback.ts";
 
 export default function Page() {
   const backendUrl = useMemo(getBackendUrl, []);
   const assist = useAssist(backendUrl);
   const clock = useCallClock();
   const wrapUp = useWrapUp(backendUrl);
-  const transcript = useLiveTranscript(backendUrl, {
+  const handlers = {
     onCustomerTurn: assist.run,
     onPendingCustomerTurn: assist.startEarly,
     onNoCustomerTurn: assist.dropEarly,
+  };
+  // `/?demo` plays a scripted call (lib/demo-script.ts) in place of the mic, for screen recordings.
+  const demo = useMemo(() => (typeof window === "undefined" ? null : parseDemoParams(window.location.search)), []);
+  const assistBusyRef = useRef(false);
+  assistBusyRef.current = assist.fetching;
+  const liveTranscript = useLiveTranscript(backendUrl, handlers);
+  const scriptedTranscript = useScriptedTranscript(demo?.script ?? null, demo?.speed ?? 1, {
+    ...handlers,
+    isAssistBusy: () => assistBusyRef.current,
   });
+  const transcript = demo ? scriptedTranscript : liveTranscript;
 
   const transcriptListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -59,6 +71,27 @@ export default function Page() {
     // Show the saved case on the caller card, as the next call will see it.
     if (result?.status === "saved") void lookup();
   }, [save, customer, lookup]);
+
+  // Demo only: P or Space holds and resumes the call (not while typing in a field).
+  const togglePlaybackRef = useRef(() => {});
+  togglePlaybackRef.current = () => {
+    if (transcript.isListening) transcript.stop();
+    else if (clock.startedAt !== null && clock.endedAt === null && !transcript.isConnecting) listen();
+  };
+  useEffect(() => {
+    if (!demo) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el?.closest("input, textarea, select, [contenteditable]")) return;
+      // Space on a focused button already clicks it.
+      if (e.key === " " && el?.closest("button")) return;
+      if (e.key !== "p" && e.key !== "P" && e.key !== " ") return;
+      e.preventDefault();
+      togglePlaybackRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [demo]);
 
   const roleMap = Object.entries(transcript.speakerRoleMap);
   const mappedStaffLabel = roleMap.find(([, r]) => r === "staff")?.[0];
