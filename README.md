@@ -103,7 +103,7 @@ stage.
 | `start` fails with `InsufficientInstanceCapacity`    | AWS has no spare T4 GPUs in that zone right now. Try again later; capacity usually comes back within hours.                    |
 | `deploy` says the backend is not ready after 3 minutes | Read the logs:`ssh -i ~/.ssh/rci-gpu.pem ubuntu@<ip> journalctl -u rci-backend -n 80`.                                       |
 | The page says it cannot reach the backend                | Check that the tunnel terminal is still open, then run`curl -s localhost:8000/ready`.                                        |
-| Turns stay on_identifying speaker_ for a long time     | You are probably on a local backend, not the GPU one.`/ready` should show `"mode":"low_latency"`.                          |
+| Turns stay on_identifying speaker_ for a long time       | You are probably on a local backend, not the GPU one.`/ready` should show `"mode":"low_latency"`.                          |
 | The page looks out of date                               | An old`next start` may be holding port 3000. Stop it and run `npm run dev` again.                                          |
 
 ## How it works

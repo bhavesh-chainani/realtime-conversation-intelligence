@@ -1105,6 +1105,18 @@ select {
   }
 }
 
+/* Wide screens (e.g. a 32" monitor): fill the width instead of a centred 1600px column. */
+@media (min-width: 1800px) {
+  .shell {
+    max-width: none;
+    padding: 18px 28px;
+  }
+
+  .turn-card {
+    max-width: min(86%, 1100px);
+  }
+}
+
 /* Short screens: let the page scroll instead of squeezing the panels. */
 @media (max-height: 640px) {
   .shell--workspace {
