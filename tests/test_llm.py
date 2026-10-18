@@ -65,6 +65,29 @@ def test_both_failing_raises():
         asyncio.run(hedged(make_call, 0.05))
 
 
+def test_a_second_result_at_the_same_moment_is_discarded():
+    discarded: list[str] = []
+    names = iter(["first", "second"])
+
+    async def scenario():
+        # Both calls wait on one event, so they finish together after the hedge has started.
+        go = asyncio.Event()
+        asyncio.get_running_loop().call_later(0.1, go.set)
+
+        async def make_call():
+            name = next(names)
+            await go.wait()
+            return name
+
+        async def discard(result):
+            discarded.append(result)
+
+        return await hedged(make_call, 0.05, discard=discard)
+
+    result, was_hedged = asyncio.run(scenario())
+    assert was_hedged and sorted([result, *discarded]) == ["first", "second"]
+
+
 def test_hedging_off():
     make_call, state = _calls((0.1, "only"))
     assert asyncio.run(hedged(make_call, 0)) == ("only", False)
@@ -79,6 +102,8 @@ def test_hedging_off():
         ("gpt-5.4-mini", True),
         ("openai.o4-mini", True),
         ("openai.global.gpt-5.4-mini", True),
+        ("gpt-oss-120b", True),
+        ("openai/gpt-oss-120b", True),
         ("openai.gpt-5.2-chat-latest", False),
         ("openai.gpt-4.1-mini", False),
         ("vertex_ai.gemini-3.5-flash-lite", False),
@@ -104,3 +129,30 @@ def test_service_tier_goes_only_to_live_calls(monkeypatch):
     assert llm_extra_params("gpt-5.4-mini") == {"reasoning_effort": "none"}  # e.g. wrap-up
     monkeypatch.setattr(cfg, "LLM_SERVICE_TIER", "")
     assert llm_extra_params("gpt-5.4-mini", live=True) == {"reasoning_effort": "none"}
+
+
+def test_the_suggestion_host_has_its_own_settings(monkeypatch):
+    monkeypatch.setattr(cfg, "LLM_REASONING_EFFORT", "none")
+    monkeypatch.setattr(cfg, "LLM_SERVICE_TIER", "priority")
+    monkeypatch.setattr(cfg, "SUGGESTION_REASONING_EFFORT", "low")
+    monkeypatch.setattr(cfg, "SUGGESTION_SERVICE_TIER", "")
+    assert llm_extra_params("gpt-oss-120b", live=True, suggestion=True) == {"reasoning_effort": "low"}
+    assert llm_extra_params("gpt-5.4-mini", live=True) == {
+        "reasoning_effort": "none",
+        "service_tier": "priority",
+    }
+
+
+def test_a_separate_suggestion_host_gets_its_own_client(monkeypatch):
+    from backend.llm import get_async_llm_client, get_suggestion_llm_client
+
+    monkeypatch.setattr(cfg, "LLM_API_KEY", "k1")
+    monkeypatch.setattr(cfg, "LLM_BASE_URL", "https://gateway.example/v1")
+    monkeypatch.setattr(cfg, "SUGGESTION_API_KEY", "k1")
+    monkeypatch.setattr(cfg, "SUGGESTION_BASE_URL", "https://gateway.example/v1")
+    assert get_suggestion_llm_client() is get_async_llm_client()
+
+    monkeypatch.setattr(cfg, "SUGGESTION_API_KEY", "k2")
+    monkeypatch.setattr(cfg, "SUGGESTION_BASE_URL", "https://fast.example/v1")
+    fast = get_suggestion_llm_client()
+    assert fast is not get_async_llm_client() and str(fast.base_url).startswith("https://fast.example")

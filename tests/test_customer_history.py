@@ -234,6 +234,35 @@ def test_customer_record_shows_next_action_and_overdue_follow_up():
     assert (
         "opened 2026-08-06 | next: Caller to send the medical report | follow-up due 2026-10-03 (OVERDUE)"
     ) in text
-    assert "OVERDUE ACTIONS TO RAISE FIRST: CASE-2026-01954: Caller to send the medical report" in text
+    assert (
+        "ACTIONS TO RAISE FIRST: CASE-2026-01954: Caller to send the medical report (due 2026-10-03 (OVERDUE))"
+    ) in text
     closed_line = text.splitlines()[-1]
     assert "next:" not in closed_line and "follow-up" not in closed_line
+
+
+def test_actions_due_soon_are_raised_first_too_earliest_first():
+    from datetime import date
+
+    cases = [
+        {
+            "case_id": "CASE-B",
+            "status": "Open",
+            "next_action": "File the claim",
+            "follow_up_due": "2026-10-15",
+        },
+        {
+            "case_id": "CASE-A",
+            "status": "Open",
+            "next_action": "Send payslips",
+            "follow_up_due": "2026-10-12",
+        },
+        {"case_id": "CASE-C", "status": "Open", "next_action": "Later", "follow_up_due": "2026-10-30"},
+    ]
+    text = format_customer_record({"record_match": "contact_number"}, cases, date(2026, 10, 14))
+    first = next(line for line in text.splitlines() if line.startswith("ACTIONS TO RAISE FIRST"))
+    assert first == (
+        "ACTIONS TO RAISE FIRST: CASE-A: Send payslips (due 2026-10-12 (OVERDUE)); "
+        "CASE-B: File the claim (due 2026-10-15 (due in 1 day))"
+    )
+    assert "CASE-C" not in first and "follow-up due 2026-10-30 |" not in first

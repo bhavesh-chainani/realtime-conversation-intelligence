@@ -65,13 +65,14 @@ class FakeLookup:
 class FakeSuggest:
     """Returns at once, or blocks on `gate` for the rounds listed in `block_rounds`."""
 
-    def __init__(self, block_rounds: tuple[int, ...] = ()):
+    def __init__(self, block_rounds: tuple[int, ...] = (), drafts: tuple[str, ...] = ()):
         self.block_rounds = block_rounds
+        self.drafts = drafts
         self.calls: list[dict[str, Any]] = []
         self.cancelled: list[int] = []
         self.gate = asyncio.Event()
 
-    async def __call__(self, transcript, max_suggestions, profile, cases, previous=()):
+    async def __call__(self, transcript, max_suggestions, profile, cases, previous=(), on_draft=None):
         round_ = len(self.calls) + 1
         self.calls.append(
             {
@@ -81,6 +82,9 @@ class FakeSuggest:
                 "previous": previous,
             }
         )
+        for text in self.drafts:
+            on_draft(text)
+            await asyncio.sleep(0.01)
         if round_ in self.block_rounds:
             try:
                 await self.gate.wait()
@@ -309,6 +313,32 @@ def test_failures_are_reported_in_band_and_done_still_comes_last():
 def test_empty_transcript_gets_no_suggestion():
     events = run(AssistRequest(turns=[{"role": "customer", "text": "  "}]), deps())
     assert "suggesting:1" not in kinds(events) and kinds(events)[-1] == "done"
+
+
+def test_suggestion_wording_streams_before_the_answer():
+    suggest = FakeSuggest(drafts=("When did", "When did they last pay you?"))
+    events = run(request("Customer: My employer cut my salary again."), deps(suggest=suggest))
+
+    drafts = [e for e in events if e["type"] == "suggestion_draft"]
+    assert [d["text"] for d in drafts] == ["When did", "When did they last pay you?"]
+    assert all(d["round"] == 1 for d in drafts)
+    order = kinds(events)
+    assert order.index("suggestion_draft:1") < order.index("suggestions:1") < order.index("done")
+
+
+def test_drafts_from_a_replaced_round_are_dropped():
+    # Round 1 drafts, then stalls; extraction finds the caller, so round 2 replaces it.
+    suggest = FakeSuggest(block_rounds=(1,), drafts=("Old wording", "Old wording, still"))
+    events = run(
+        request("Customer: My employer cut my salary again."),
+        deps(
+            FakeLookup(by_id={"91234567": PHONE_MATCH}), make_extract({"contact_number": "91234567"}), suggest
+        ),
+    )
+    order = kinds(events)
+    after_round_2 = order[order.index("suggesting:2") :]
+    assert "suggestion_draft:1" not in after_round_2
+    assert after_round_2.index("suggestion_draft:2") < after_round_2.index("suggestions:2")
 
 
 def test_client_disconnect_cancels_pending_work():

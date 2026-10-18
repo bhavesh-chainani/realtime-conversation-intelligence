@@ -147,16 +147,33 @@ def format_caller_card(profile: dict[str, Any] | None) -> str:
     )
 
 
-def _follow_up_label(case: dict[str, Any], today: date) -> str:
-    """ "follow-up due 2026-10-03 (overdue)" for an open case with a due date, else ""."""
-    due = str(case.get("follow_up_due") or "").strip()
-    if not due or not is_open_case_status(case.get("status")):
-        return ""
+DUE_SOON_DAYS = 3  # actions due this soon are raised first too, like overdue ones
+
+
+def _due_date(case: dict[str, Any]) -> date | None:
+    """The follow-up date of an open case, if it has a valid one."""
+    if not is_open_case_status(case.get("status")):
+        return None
     try:
-        overdue = date.fromisoformat(due) < today
+        return date.fromisoformat(str(case.get("follow_up_due") or "").strip())
     except ValueError:
-        overdue = False
-    return f"follow-up due {due}{' (OVERDUE)' if overdue else ''}"
+        return None
+
+
+def _follow_up_label(case: dict[str, Any], today: date) -> str:
+    """ "follow-up due 2026-10-03 (OVERDUE)" or "(due in 1 day)" for an open case with a due date, else ""."""
+    due = _due_date(case)
+    if due is None:
+        days = str(case.get("follow_up_due") or "").strip()
+        return f"follow-up due {days}" if days and is_open_case_status(case.get("status")) else ""
+    left = (due - today).days
+    if left < 0:
+        flag = " (OVERDUE)"
+    elif left <= DUE_SOON_DAYS:
+        flag = " (due today)" if left == 0 else f" (due in {left} day{'s' if left > 1 else ''})"
+    else:
+        flag = ""
+    return f"follow-up due {due.isoformat()}{flag}"
 
 
 def format_customer_record(
@@ -185,14 +202,24 @@ def format_customer_record(
     lines = [f"CUSTOMER RECORD (verified from the case system, matched on {matched_on}):"]
     if ident:
         lines.append(ident)
-    # Overdue actions go first, so the agent raises them before the new issue.
-    overdue = [
-        f"{c['case_id']}: {c.get('next_action') or 'follow-up'}"
-        for c in cases
-        if "OVERDUE" in _follow_up_label(c, today)
-    ]
-    if overdue:
-        lines.append("OVERDUE ACTIONS TO RAISE FIRST: " + "; ".join(overdue))
+    # Overdue and soon-due actions go first, earliest first, so the agent raises them before the new issue.
+    urgent = sorted(
+        (
+            (due, c)
+            for c in cases
+            if (due := _due_date(c)) is not None and (due - today).days <= DUE_SOON_DAYS
+        ),
+        key=lambda item: item[0],
+    )
+    if urgent:
+        lines.append(
+            "ACTIONS TO RAISE FIRST: "
+            + "; ".join(
+                f"{c['case_id']}: {c.get('next_action') or 'follow-up'} "
+                f"({_follow_up_label(c, today).removeprefix('follow-up ')})"
+                for _, c in urgent
+            )
+        )
     lines.append(f"Prior cases ({len(cases)}; {open_count} open):")
     for c in cases:
         status = str(c.get("status") or "").strip()

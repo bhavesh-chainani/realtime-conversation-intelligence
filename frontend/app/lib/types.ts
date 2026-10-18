@@ -33,7 +33,7 @@ export type Suggestion = {
 
 export type SuggestionMeta = {
   origin: "live" | "fallback";
-  /** From the end of the customer's turn to the suggestion. */
+  /** From the end of the customer's turn to the suggestion's first words on screen. */
   latencyMs: number;
   /** Part of latencyMs before AssemblyAI ended the turn. */
   turnEndMs: number;

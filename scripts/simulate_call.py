@@ -9,6 +9,10 @@ caller. Prints the transcript and a checklist.
 Usage:
   python scripts/simulate_call.py --story salary --save        # against http://localhost:8000
   python scripts/simulate_call.py --story all --backend http://localhost:8000
+  python scripts/simulate_call.py --story all --repeat 3       # compare latency between models
+
+Latency is timed per customer turn from the /assist request: "first words" is the first streamed draft of
+the suggestion, "shown" the finished one.
 """
 
 from __future__ import annotations
@@ -20,16 +24,24 @@ import json
 import re
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.llm import get_async_llm_client, get_suggestion_model  # noqa: E402
+from backend import clock  # noqa: E402
+from backend.llm import get_async_llm_client, get_extraction_model  # noqa: E402
 from backend.profile import Profile  # noqa: E402
 
 OPENER = "Hello, Employment Advice Centre, how can I help you today?"
+
+# Per customer turn across every call in this run, in ms: first streamed words, finished suggestion, LLM time.
+TIMINGS: dict[str, list[float]] = {"first words": [], "shown": [], "llm": []}
+# Sarah's last day matches her seeded dismissal case, opened 12 days before the demo DB was seeded.
+SARAH_LAST_DAY = clock.today() - timedelta(days=12)
+MODELS: set[str] = set()  # suggestion models the backend reported
 
 STORIES = {
     "salary": {
@@ -73,9 +85,44 @@ STORIES = {
         ),
         "opening": "Hi, I'm calling because my salary was cut this month and nobody told me why.",
     },
+    "sarah": {
+        "title": "Main demo: returning caller, dismissal after maternity leave, deadline close",
+        "facts": (
+            "Your name is Sarah Tan. Phone 9234 5678, email sarah.tan@gmail.com. You called the centre "
+            "before. ABC Pte Ltd let you go two weeks after you came back from "
+            "maternity leave. They said your role was redundant, but they hired a replacement. Your last day "
+            f"was {SARAH_LAST_DAY:%A} {SARAH_LAST_DAY.day} {SARAH_LAST_DAY:%B}. Your final month's salary "
+            "(SGD 3,400) and one month's notice pay have not been paid. You have not filed the TADM claim "
+            "yet because you were not sure how. You have the dismissal letter, your contract and your last "
+            "three payslips, and you can send them today. Before the call ends, ask whether you can also get "
+            "back the unpaid final salary and notice pay."
+        ),
+        "opening": (
+            "Hi, I called before about being let go by ABC. They still haven't paid me and I don't "
+            "know what to do next."
+        ),
+        # (check, pattern over Staff's lines, only within the first N lines or None)
+        "expect": [
+            ("raised her open case's next action early", r"payslip|file|filed|claim|dismissal letter", 3),
+            ("named TADM", r"tadm", None),
+            (
+                "gave the 1-month dismissal deadline",
+                r"month|\b\d+ days\b|by (mon|tue|wed|thu|fri|sat|sun)|by \d{1,2} \w+|deadline",
+                None,
+            ),
+            (
+                "covered the unpaid salary and notice pay",
+                r"notice pay|final (month|salary)|unpaid salary",
+                None,
+            ),
+            ("gave the 6-month salary deadline (she has left)", r"6 months|six months", None),
+        ],
+        "cites": ["CASE-2026-04811"],
+    },
 }
 
 CALLER_RULES = """You are role-playing a caller phoning an employment advice centre in Singapore.
+Today is {today}. If you mention a date, copy it from this calendar: {calendar}.
 Stay in character. Your facts:
 {facts}
 
@@ -93,11 +140,17 @@ Reply with the caller's words only."""
 async def caller_says(facts: str, transcript: list[tuple[str, str]]) -> str:
     client = get_async_llm_client()
     convo = "\n".join(f"{role}: {text}" for role, text in transcript)
+    # The caller stays on the LLM_* host and model, so runs against different suggestion hosts compare fairly.
     response = await client.chat.completions.create(
-        model=get_suggestion_model(),
+        model=get_extraction_model(),
         temperature=0.4,
         messages=[
-            {"role": "system", "content": CALLER_RULES.format(facts=facts)},
+            {
+                "role": "system",
+                "content": CALLER_RULES.format(
+                    facts=facts, today=clock.today_label(), calendar=clock.calendar_label()
+                ),
+            },
             {
                 "role": "user",
                 "content": f"The call so far:\n{convo}\n\nWhat do you say next?",
@@ -123,6 +176,7 @@ class Call:
         self.suggestion: dict | None = None
         self.notes: list[str] = []
         self.llm_ms: list[float] = []
+        self.cited: set[str] = set()  # case IDs the suggestions Staff said relied on
 
     def say(self, role: str, text: str) -> None:
         self.turns.append({"role": role, "text": text})
@@ -141,12 +195,15 @@ class Call:
             ),
             "max_suggestions": 1,
         }
+        started, first = time.perf_counter(), None
         async with self.http.stream("POST", f"{self.backend}/assist", json=body) as r:
             async for line in r.aiter_lines():
                 if not line:
                     continue
                 e = json.loads(line)
-                if e["type"] == "customer":
+                if e["type"] == "suggestion_draft" and first is None:
+                    first = (time.perf_counter() - started) * 1000
+                elif e["type"] == "customer":
                     if accepted := self.profile.apply(e["patch"], e["source"]):
                         self.notes.append(f"card({e['source']}) {accepted}")
                 elif e["type"] == "history" and e["status"] != "loading":
@@ -160,8 +217,13 @@ class Call:
                     self.notes.append(f"history {e['status']} {e['match_strategy'] or ''} {ids}")
                 elif e["type"] == "suggestions" and e["suggestions"]:
                     self.suggestion = e["suggestions"][0]
+                    shown = (time.perf_counter() - started) * 1000
+                    TIMINGS["first words"].append(first if first is not None else shown)
+                    TIMINGS["shown"].append(shown)
                     if e["timings"].get("llm_ms"):
                         self.llm_ms.append(e["timings"]["llm_ms"])
+                        TIMINGS["llm"].append(e["timings"]["llm_ms"])
+                        MODELS.add(e["timings"].get("model") or "?")
                 elif e["type"] == "error":
                     self.notes.append(f"ERROR {e['stage']}: {e['message']}")
         return self.suggestion
@@ -190,6 +252,7 @@ async def run_call(http, backend, facts, opening, max_rounds, label) -> Call:
         )
         print(f"Staff:    {line}   <{suggestion.get('type')}>{cites}")
         call.say("staff", line)
+        call.cited.update(suggestion.get("linked_records") or [])
         if ended:
             print("          · (caller hung up)")
             break
@@ -279,7 +342,13 @@ async def run_story(key: str, backend: str, save: bool, max_rounds: int) -> bool
     results.append(
         check(
             "gave a deadline or timeframe",
-            bool(re.search(r"within|deadline|by (mon|tue|wed|thu|fri|sat|sun|\d)", text)),
+            bool(
+                re.search(
+                    r"within|deadline|by (mon|tue|wed|thu|fri|sat|sun|\d)"
+                    r"|up to (a|one|two|six|\d+) (year|month|week)",
+                    text,
+                )
+            ),
         )
     )
     results.append(
@@ -301,12 +370,32 @@ async def run_story(key: str, backend: str, save: bool, max_rounds: int) -> bool
         case_id = saved.get("case_id")
         found = any(c["case_id"] == case_id for c in follow.history["cases"])
         results.append(check("follow-up call found the saved case", found, case_id or ""))
+    for name, pattern, first_n in story.get("expect", []):
+        shown = lines[:first_n] if first_n else lines
+        results.append(check(name, bool(re.search(pattern, " ".join(shown).lower()))))
+    for case_id in story.get("cites", []):
+        results.append(check(f"cited {case_id}", case_id in call.cited))
     llm = call.llm_ms
     if llm:
         print(
             f"  suggestion LLM time: avg {sum(llm) / len(llm) / 1000:.1f}s, max {max(llm) / 1000:.1f}s over {len(llm)} turns"
         )
     return all(results)
+
+
+def percentile(values: list[float], q: float) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, round(q * (len(ordered) - 1)))]
+
+
+def print_timings() -> None:
+    print(f"\n--- latency per customer turn ({', '.join(sorted(MODELS)) or 'model unknown'}) ---")
+    for name, values in TIMINGS.items():
+        if values:
+            print(
+                f"  {name:12} p50 {percentile(values, 0.5) / 1000:.2f}s  p90 {percentile(values, 0.9) / 1000:.2f}s"
+                f"  max {max(values) / 1000:.2f}s  ({len(values)} turns)"
+            )
 
 
 async def main() -> None:
@@ -317,9 +406,11 @@ async def main() -> None:
     parser.add_argument("--story", choices=[*STORIES, "all"], default="all")
     parser.add_argument("--save", action="store_true", help="save the wrap-up and run a follow-up call")
     parser.add_argument("--max-rounds", type=int, default=14)
+    parser.add_argument("--repeat", type=int, default=1, help="run each story this many times")
     args = parser.parse_args()
-    keys = list(STORIES) if args.story == "all" else [args.story]
+    keys = (list(STORIES) if args.story == "all" else [args.story]) * max(1, args.repeat)
     passed = [await run_story(k, args.backend.rstrip("/"), args.save, args.max_rounds) for k in keys]
+    print_timings()
     print(f"\n{sum(passed)}/{len(passed)} stories passed every check.")
 
 

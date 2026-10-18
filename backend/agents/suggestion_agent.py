@@ -13,13 +13,16 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from .. import clock, issue_guides
 from .. import config as cfg
 from ..customer_history import format_caller_card, format_customer_record, verified_case_ids
+from ..json_stream import partial_string_value
 from ..llm import (
     get_async_llm_client,
+    get_suggestion_llm_client,
     get_suggestion_model,
     hedged,
     llm_extra_params,
@@ -30,12 +33,21 @@ from ..text_guard import ForeignScriptError, contains_foreign_script
 
 logger = logging.getLogger(__name__)
 
+# Gets the growing "possibleConversation" text while the answer streams, so Staff can start reading it.
+OnDraft = Callable[[str], None]
+PARSE_ATTEMPTS = 2  # a malformed answer is asked again once before falling back
+
 
 def validate_suggestion(suggestion: Any) -> dict[str, Any] | None:
     """Normalise one model-produced suggestion into the shape the UI expects."""
     if not isinstance(suggestion, dict):
         return None
-    details = suggestion.get("details") if isinstance(suggestion.get("details"), dict) else {}
+    # The prompt asks for possibleConversation first and flat, so it streams first; older answers nest it.
+    nested = suggestion.get("details") if isinstance(suggestion.get("details"), dict) else {}
+    details = {
+        **nested,
+        **{k: suggestion[k] for k in ("possibleConversation", "priority") if k in suggestion},
+    }
     try:
         confidence = float(suggestion.get("confidence", 0.7))
     except (TypeError, ValueError):
@@ -68,12 +80,14 @@ async def generate_suggestions(
     customer_profile: dict[str, Any] | None = None,
     customer_cases: list[dict[str, Any]] | None = None,
     previous_suggestions: list[str] | None = None,
+    on_draft: OnDraft | None = None,
 ) -> dict[str, Any]:
-    """Return {suggestions, timings}. Raises on LLM/parse failure."""
+    """Return {suggestions, timings}, streaming the first suggestion's wording to `on_draft` as it is
+    written. Raises on LLM/parse failure."""
     max_suggestions = max(1, min(5, max_suggestions or cfg.SUGGESTION_MAX))
     known_case_ids = verified_case_ids(customer_profile, customer_cases)
 
-    client = get_async_llm_client()
+    client = get_suggestion_llm_client()
     if not client:
         raise ValueError("LLM client is not configured")
 
@@ -86,6 +100,7 @@ async def generate_suggestions(
             "content": user_prompt(
                 "suggestion",
                 today=clock.today_label(),
+                calendar=clock.calendar_label(),
                 customer_record=format_customer_record(customer_profile, customer_cases, clock.today()),
                 caller_card=format_caller_card(customer_profile),
                 previous_suggestions="\n".join(f"- {s}" for s in previous_suggestions or []) or "none",
@@ -94,30 +109,78 @@ async def generate_suggestions(
             ),
         },
     ]
-    # Output length is most of the wait here, so ask only for the suggestions that are shown.
-    # No client retries: a stalled call is covered by the hedge, and the whole answer has one deadline
-    # (after which suggest_with_fallback shows the fallback) instead of timeout x retries.
-    fast_client = client.with_options(max_retries=0)
+    # Output length is most of the wait here, so ask only for the suggestions that are shown, and stream them
+    # so the wording shows as it is written. No client retries: a stalled call is covered by the hedge, and
+    # the whole answer has one deadline (after which suggest_with_fallback shows the fallback).
+    # (client, model, uses the suggestion host's settings): the first request, then the hedge's second one.
+    backup = get_async_llm_client() if cfg.SUGGESTION_HEDGE_MODEL else None
+    routes = [(client, model, True)]
+    routes.append((backup, cfg.SUGGESTION_HEDGE_MODEL, False) if backup else routes[0])
+    calls: list[int] = []  # requests started for the current answer, to pick each one's route
 
-    async def ask() -> tuple[dict[str, Any], int | None]:
-        """One request, parsed. Malformed JSON counts as a failed call, so the hedge retries it."""
-        response = await fast_client.chat.completions.create(
-            model=model,
+    async def open_stream() -> tuple[Any, Any, str, str]:
+        """Start one streamed request and wait for its first text, so the hedge races on time to first token."""
+        route_client, route_model, own_host = routes[min(len(calls), 1)]
+        calls.append(1)
+        stream = await route_client.with_options(max_retries=0).chat.completions.create(
+            model=route_model,
             temperature=cfg.SUGGESTION_TEMPERATURE,
             max_completion_tokens=cfg.SUGGESTION_MAX_TOKENS,
             timeout=cfg.SUGGESTION_TIMEOUT_SECONDS,
             response_format={"type": "json_object"},
             messages=messages,
-            **llm_extra_params(model, live=True),
+            stream=True,
+            stream_options={"include_usage": True},
+            **llm_extra_params(route_model, live=True, suggestion=own_host),
         )
-        parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
-        if not isinstance(parsed, dict):
-            raise ValueError("Model did not return a JSON object")
-        details = getattr(getattr(response, "usage", None), "prompt_tokens_details", None)
-        return parsed, getattr(details, "cached_tokens", None)
+        chunks = stream.__aiter__()
+        try:
+            while True:
+                if text := _chunk_text(await anext(chunks)):
+                    return stream, chunks, text, route_model
+        except BaseException:
+            await stream.close()
+            raise
 
-    (parsed, cached_tokens), was_hedged = await asyncio.wait_for(
-        hedged(ask, cfg.SUGGESTION_HEDGE_AFTER_MS / 1000), cfg.SUGGESTION_TIMEOUT_SECONDS
+    async def close_stream(opened: tuple[Any, Any, str, str]) -> None:
+        await opened[0].close()
+
+    async def answer() -> tuple[dict[str, Any], int | None, bool, str]:
+        """One streamed answer, parsed. A malformed one is asked again once."""
+        hedged_any, attempts = False, 0
+        while True:
+            calls.clear()
+            (stream, chunks, text, answered_by), was_hedged = await hedged(
+                open_stream, cfg.SUGGESTION_HEDGE_FIRST_TOKEN_MS / 1000, discard=close_stream
+            )
+            hedged_any = hedged_any or was_hedged
+            attempts += 1
+            parts, cached, shown = [text], None, ""
+            try:
+                while True:
+                    draft = partial_string_value("".join(parts), "possibleConversation")
+                    if on_draft and draft and draft != shown:
+                        shown = draft
+                        on_draft(clock.fix_weekdays(draft))
+                    chunk = await anext(chunks, None)
+                    if chunk is None:
+                        break
+                    cached = _cached_tokens(chunk) or cached
+                    parts.append(_chunk_text(chunk))
+            finally:
+                await stream.close()
+            try:
+                parsed = json.loads(strip_code_fences("".join(parts)))
+                if not isinstance(parsed, dict):
+                    raise ValueError("Model did not return a JSON object")
+                return parsed, cached, hedged_any, answered_by
+            except ValueError as exc:
+                if attempts >= PARSE_ATTEMPTS:
+                    raise
+                logger.warning("[suggestion] malformed answer, asking again: %s", exc)
+
+    parsed, cached_tokens, was_hedged, model = await asyncio.wait_for(
+        answer(), cfg.SUGGESTION_TIMEOUT_SECONDS
     )
     llm_ms = (time.perf_counter() - started) * 1000
 
@@ -128,6 +191,9 @@ async def generate_suggestions(
         validated = validate_suggestion(item)
         if validated is None:
             continue
+        validated["topic"] = clock.fix_weekdays(validated["topic"])
+        details = validated["details"]
+        details["possibleConversation"] = clock.fix_weekdays(details["possibleConversation"])
         if contains_foreign_script(validated):
             dropped_foreign += 1
             continue
@@ -150,12 +216,25 @@ async def generate_suggestions(
     }
 
 
+def _chunk_text(chunk: Any) -> str:
+    choices = getattr(chunk, "choices", None) or []
+    delta = getattr(choices[0], "delta", None) if choices else None
+    return getattr(delta, "content", None) or ""
+
+
+def _cached_tokens(chunk: Any) -> int | None:
+    """Cached prompt tokens, from the usage chunk at the end of the stream."""
+    details = getattr(getattr(chunk, "usage", None), "prompt_tokens_details", None)
+    return getattr(details, "cached_tokens", None)
+
+
 async def suggest_with_fallback(
     conversation_transcript: str,
     max_suggestions: int,
     customer_profile: dict[str, Any] | None = None,
     customer_cases: list[dict[str, Any]] | None = None,
     previous_suggestions: list[str] | None = None,
+    on_draft: OnDraft | None = None,
 ) -> dict[str, Any]:
     """Suggestions from the agent, or the static fallback (flagged `fallback`) if it fails."""
     started = time.perf_counter()
@@ -166,6 +245,7 @@ async def suggest_with_fallback(
             customer_profile=customer_profile,
             customer_cases=customer_cases,
             previous_suggestions=previous_suggestions,
+            on_draft=on_draft,
         )
     except Exception as exc:
         logger.warning("Suggestion agent failed, using fallback: %s: %s", type(exc).__name__, exc)

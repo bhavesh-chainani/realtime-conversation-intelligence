@@ -124,6 +124,7 @@ export default function Page() {
           ) : (
             <SuggestionsPanel
               suggestions={assist.suggestions}
+              draft={assist.draft}
               meta={assist.suggestionMeta}
               cases={assist.history.cases}
               hasTranscript={hasTranscript}

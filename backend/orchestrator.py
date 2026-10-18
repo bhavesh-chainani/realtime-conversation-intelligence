@@ -9,6 +9,8 @@ Order for each turn:
 3. The entity agent (LLM extraction, only while fields are missing) runs alongside the suggestion
    agent. If extraction reveals a new identity whose DB record differs, the suggestion is redone with
    the new record (`round` 2).
+4. The suggestion streams: its wording goes out as `suggestion_draft` events while the model writes it,
+   then the validated answer as `suggestions`.
 
 Events, one JSON object per line:
   {"type": "customer", "source": "heard" | "ai" | "records", "patch": {field: value}}
@@ -16,6 +18,7 @@ Events, one JSON object per line:
   {"type": "history", "status": "ok" | "not_found" | "invalid_input" | "not_configured" | "error",
    "lookup_key", "match_strategy", "cases", "open_count", "summary"}
   {"type": "suggesting", "round": n}
+  {"type": "suggestion_draft", "round": n, "text": ...}   the wording so far; replaced by "suggestions"
   {"type": "suggestions", "round": n, "suggestions": [...], "fallback": bool, "timings": {...}}
   {"type": "error", "stage": "lookup" | "extract" | "suggest" | "assist", "message": ...}
   {"type": "done", "elapsed_ms": ...}   always last, unless the client went away
@@ -138,6 +141,8 @@ class _AssistRun:
         self.suggest_task: asyncio.Task | None = None
         self.suggest_round = 0
         self.suggest_key: str | None = None
+        # (round, wording so far) from the streaming suggestion; read by a waiter task in `tasks`.
+        self.drafts: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
         self.started = time.perf_counter()
         self.timeline: dict[str, float] = {}  # ms since the request arrived, for the per-turn log
 
@@ -224,6 +229,7 @@ class _AssistRun:
         self.suggest_round += 1
         self.timeline.setdefault("suggest_started", self._elapsed_ms())
         self.suggest_key = cases_key(self.match, self.cases)
+        round_no = self.suggest_round
         self.suggest_task = asyncio.create_task(
             self.deps.suggest(
                 context,
@@ -231,6 +237,7 @@ class _AssistRun:
                 self.profile.suggestion_payload(self.match, self.lookup_status()),
                 list(self.cases),
                 list(self.previous),
+                on_draft=lambda text: self.drafts.put_nowait((round_no, text)),
             )
         )
         self.tasks[self.suggest_task] = "suggest"
@@ -253,6 +260,23 @@ class _AssistRun:
 
     def _elapsed_ms(self) -> float:
         return round((time.perf_counter() - self.started) * 1000)
+
+    def wait_for_draft(self) -> None:
+        if "draft" not in self.tasks.values():
+            self.tasks[asyncio.create_task(self.drafts.get())] = "draft"
+
+    def busy(self) -> bool:
+        return any(kind != "draft" for kind in self.tasks.values())
+
+    def finish_draft(self, task: asyncio.Task) -> dict[str, Any] | None:
+        """The latest wording of the suggestion in flight; older rounds and finished answers are skipped."""
+        round_no, text = task.result()
+        while not self.drafts.empty():
+            round_no, text = self.drafts.get_nowait()
+        if round_no != self.suggest_round or not self.suggest_task or self.suggest_task.done():
+            return None
+        self.timeline.setdefault("draft", self._elapsed_ms())
+        return {"type": "suggestion_draft", "round": round_no, "text": text}
 
     def finish_suggest(self, task: asyncio.Task) -> dict[str, Any]:
         try:
@@ -296,11 +320,15 @@ class _AssistRun:
                 window = format_transcript(self.turns, SUGGESTION_WINDOW_TURNS)
                 self.tasks[asyncio.create_task(self.deps.extract(window))] = "extract"
 
-            while self.tasks:
+            while self.busy():
+                self.wait_for_draft()
                 done, _ = await asyncio.wait(self.tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     kind = self.tasks.pop(task, None)
-                    if kind == "lookup":
+                    if kind == "draft":
+                        if draft := self.finish_draft(task):
+                            yield draft
+                    elif kind == "lookup":
                         for event in self.finish_lookup(task):
                             yield event
                         if self.records_changed() and (suggesting := self.start_suggest()):
@@ -317,8 +345,9 @@ class _AssistRun:
                 task.cancel()
         elapsed = self._elapsed_ms()
         logger.info(
-            "[assist] turn: suggestion started +%sms, shown +%sms, done +%sms (%s rounds)",
+            "[assist] turn: suggestion started +%sms, first words +%sms, shown +%sms, done +%sms (%s rounds)",
             self.timeline.get("suggest_started", "-"),
+            self.timeline.get("draft", "-"),
             self.timeline.get("suggestion", "-"),
             elapsed,
             self.suggest_round,

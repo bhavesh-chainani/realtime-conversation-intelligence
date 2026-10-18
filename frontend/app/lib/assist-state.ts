@@ -40,6 +40,10 @@ export type AssistState = {
   statusBeforeLoading: CustomerHistoryStatus | null;
   suggestions: Suggestion[];
   suggestionMeta: SuggestionMeta | null;
+  /** The next suggestion's wording while it streams; replaced by the finished suggestion. */
+  draft: string | null;
+  /** performance.now() when the current stream's first words appeared (the latency Staff feel). */
+  firstWordsAt: number | null;
   fetching: boolean;
   /** The live /assist stream; events from older streams are ignored. */
   gen: number;
@@ -79,6 +83,8 @@ export const initialAssistState: AssistState = {
   statusBeforeLoading: null,
   suggestions: [],
   suggestionMeta: null,
+  draft: null,
+  firstWordsAt: null,
   fetching: false,
   gen: 0,
   epoch: 0,
@@ -122,17 +128,22 @@ function applyEvent(state: AssistState, event: AssistEvent, at: number): AssistS
       }
       return { ...state, history: historyFrom(event), statusBeforeLoading: null };
     case "suggesting":
-      return { ...state, fetching: true };
+      // A new round: the wording streamed so far was for an out-of-date answer.
+      return { ...state, fetching: true, draft: null };
+    case "suggestion_draft":
+      if (!event.text.trim()) return state;
+      return { ...state, draft: event.text, firstWordsAt: state.firstWordsAt ?? at };
     case "suggestions": {
       const list = event.suggestions.slice(0, MAX_SUGGESTIONS);
       // An empty answer means the agent chose not to suggest: keep what is on screen.
-      if (list.length === 0) return state;
+      if (list.length === 0) return { ...state, draft: null };
       return {
         ...state,
         suggestions: list,
+        draft: null,
         suggestionMeta: {
           origin: event.fallback ? "fallback" : "live",
-          latencyMs: at - state.endedAt,
+          latencyMs: (event.fallback ? at : (state.firstWordsAt ?? at)) - state.endedAt,
           turnEndMs: state.turnEndMs,
           speakerMs: state.committedAt - state.endedAt - state.turnEndMs,
           llmMs: event.fallback ? undefined : event.timings.llm_ms,
@@ -141,7 +152,7 @@ function applyEvent(state: AssistState, event: AssistEvent, at: number): AssistS
       };
     }
     case "done":
-      return { ...state, fetching: false };
+      return { ...state, fetching: false, draft: null };
     default:
       return state;
   }
@@ -154,6 +165,8 @@ export function assistReducer(state: AssistState, action: AssistAction): AssistS
         ...state,
         gen: action.gen,
         streamEpoch: state.epoch,
+        draft: null,
+        firstWordsAt: null,
         committedAt: action.committedAt,
         endedAt: Math.min(action.endedAt ?? action.committedAt, action.committedAt),
         turnEndMs: action.turnEndMs ?? 0,
@@ -166,6 +179,7 @@ export function assistReducer(state: AssistState, action: AssistAction): AssistS
       return {
         ...state,
         fetching: false,
+        draft: null,
         history: abandoned ? { ...state.history, status: state.statusBeforeLoading! } : state.history,
         statusBeforeLoading: null,
       };

@@ -1,4 +1,5 @@
 TODAY: {today}
+CALENDAR (next 14 days): {calendar}
 
 CALLER: {caller}
 

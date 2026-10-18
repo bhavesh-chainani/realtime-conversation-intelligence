@@ -750,6 +750,15 @@ select {
   animation: hero-in 0.12s ease-out;
 }
 
+.hero-card--draft {
+  border-left-color: var(--text-muted);
+}
+
+.hero-card__topic--pending {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 .hero-card--priority {
   border-left-color: var(--warning);
 }

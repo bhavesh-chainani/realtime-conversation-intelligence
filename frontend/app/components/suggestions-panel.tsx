@@ -5,6 +5,8 @@ import type { CustomerHistoryCase, Suggestion, SuggestionMeta } from "../lib/typ
 
 type SuggestionsPanelProps = {
   suggestions: Suggestion[];
+  /** The next suggestion's wording while it streams; shown in place of the current card. */
+  draft: string | null;
   meta: SuggestionMeta | null;
   cases: CustomerHistoryCase[];
   hasTranscript: boolean;
@@ -53,6 +55,7 @@ function RecordChips({ ids, cases }: { ids: string[]; cases: CustomerHistoryCase
 /** Memoised: the page re-renders on every mic-level update, this panel only when its inputs change. */
 export const SuggestionsPanel = memo(function SuggestionsPanel({
   suggestions,
+  draft,
   meta,
   cases,
   hasTranscript,
@@ -81,7 +84,13 @@ export const SuggestionsPanel = memo(function SuggestionsPanel({
         ) : null}
       </div>
 
-      {suggestions.length === 0 ? (
+      {draft ? (
+        // One stable key, so the card does not replay its entrance on every streamed word.
+        <article key="draft" className="hero-card hero-card--draft" aria-busy="true">
+          <h3 className="hero-card__topic hero-card__topic--pending">Writing the next suggestion…</h3>
+          <p className="hero-card__quote">“{draft}”</p>
+        </article>
+      ) : suggestions.length === 0 ? (
         <div className={`hero-empty${isLive || isFetchingSuggestions ? " hero-empty--active" : ""}`}>
           <span className="hero-empty__dot" aria-hidden />
           {emptyMessage}

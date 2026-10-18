@@ -28,13 +28,37 @@ CASES = [
 TRANSCRIPT = "Staff: How can I help?\nCustomer: My salary from Brightpath was cut."
 
 
+class _FakeStream:
+    """A streamed completion: `content` in small pieces, then a usage chunk, like the OpenAI SDK."""
+
+    def __init__(self, content: str, size: int = 7, first_delay: float = 0):
+        self.pieces = [content[i : i + size] for i in range(0, len(content), size)]
+        self.first_delay = first_delay
+        self.closed = False
+
+    async def _chunks(self):
+        await asyncio.sleep(self.first_delay)
+        for piece in self.pieces:
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=piece))], usage=None)
+        usage = SimpleNamespace(prompt_tokens_details=SimpleNamespace(cached_tokens=3328))
+        yield SimpleNamespace(choices=[], usage=usage)
+
+    def __aiter__(self):
+        return self._chunks()
+
+    async def close(self):
+        self.closed = True
+
+
 class _FakeAsyncClient:
     def __init__(self, content: str):
         self.calls: list[dict] = []
+        self.streams: list[_FakeStream] = []
 
         async def create(**kwargs):
             self.calls.append(kwargs)
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+            self.streams.append(_FakeStream(content))
+            return self.streams[-1]
 
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
 
@@ -65,7 +89,7 @@ def _model_reply(linked: list[str]) -> str:
 
 
 def _use(monkeypatch, fake: _FakeAsyncClient) -> None:
-    monkeypatch.setattr("backend.agents.suggestion_agent.get_async_llm_client", lambda: fake)
+    monkeypatch.setattr("backend.agents.suggestion_agent.get_suggestion_llm_client", lambda: fake)
 
 
 def test_customer_record_is_rendered_into_prompt(monkeypatch):
@@ -175,6 +199,7 @@ def test_prompt_has_today_and_the_service_guide(monkeypatch):
     asyncio.run(generate_suggestions(TRANSCRIPT))
 
     assert fake.user_prompt().startswith("TODAY: ")
+    assert "CALENDAR (next 14 days): " in fake.user_prompt()
     # The guide is fixed for the process, so it sits in the system prompt (a cacheable prefix).
     system = fake.calls[-1]["messages"][0]["content"]
     assert "## Unpaid or late salary" in system and "File a salary claim with TADM." in system
@@ -197,7 +222,7 @@ def test_a_stalled_gateway_gets_the_fallback_by_the_deadline(monkeypatch):
     stalled = Stalled()
     _use(monkeypatch, stalled)
     monkeypatch.setattr(cfg, "SUGGESTION_TIMEOUT_SECONDS", 0.2)
-    monkeypatch.setattr(cfg, "SUGGESTION_HEDGE_AFTER_MS", 50)
+    monkeypatch.setattr(cfg, "SUGGESTION_HEDGE_FIRST_TOKEN_MS", 50)
 
     started = time.perf_counter()
     body = asyncio.run(suggest_with_fallback(TRANSCRIPT, 1))
@@ -216,8 +241,7 @@ def test_malformed_json_is_retried_instead_of_falling_back(monkeypatch):
 
             async def create(**kwargs):
                 self.calls.append(kwargs)
-                content = next(replies)
-                return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+                return _FakeStream(next(replies))
 
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
 
@@ -225,4 +249,88 @@ def test_malformed_json_is_retried_instead_of_falling_back(monkeypatch):
     _use(monkeypatch, flaky)
     body = asyncio.run(suggest_with_fallback(TRANSCRIPT, 1))
     assert not body.get("fallback") and body["suggestions"]
-    assert len(flaky.calls) == 2 and body["timings"]["hedged"] is True
+    assert len(flaky.calls) == 2
+
+
+def test_wording_streams_to_on_draft_before_the_answer(monkeypatch):
+    reply = json.dumps(
+        {
+            "suggestions": [
+                {
+                    "possibleConversation": "When did they last pay you in full?",
+                    "type": "Information Gathering",
+                    "topic": "Ask when the caller was last paid.",
+                    "confidence": 0.8,
+                    "linked_records": [],
+                    "priority": "high",
+                }
+            ]
+        }
+    )
+    fake = _FakeAsyncClient(reply)
+    _use(monkeypatch, fake)
+    drafts: list[str] = []
+
+    body = asyncio.run(generate_suggestions(TRANSCRIPT, on_draft=drafts.append))
+
+    assert len(drafts) > 2 and drafts[-1] == "When did they last pay you in full?"
+    assert all(b.startswith(a) for a, b in zip(drafts, drafts[1:], strict=False))
+    suggestion = body["suggestions"][0]
+    assert suggestion["details"] == {"possibleConversation": drafts[-1], "priority": "high"}
+    assert body["timings"]["cached_tokens"] == 3328
+    assert fake.calls[0]["stream"] is True and all(s.closed for s in fake.streams)
+
+
+def test_a_slow_first_token_is_hedged_and_the_loser_closed(monkeypatch):
+    from backend import config as cfg
+
+    class SlowFirst(_FakeAsyncClient):
+        def __init__(self):
+            super().__init__("{}")
+
+            async def create(**kwargs):
+                self.calls.append(kwargs)
+                delay = 5 if len(self.calls) == 1 else 0
+                self.streams.append(_FakeStream(_model_reply([]), first_delay=delay))
+                return self.streams[-1]
+
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+
+    slow = SlowFirst()
+    _use(monkeypatch, slow)
+    monkeypatch.setattr(cfg, "SUGGESTION_HEDGE_FIRST_TOKEN_MS", 50)
+
+    started = time.perf_counter()
+    body = asyncio.run(generate_suggestions(TRANSCRIPT))
+
+    assert time.perf_counter() - started < 1
+    assert body["suggestions"] and body["timings"]["hedged"] is True
+    assert len(slow.calls) == 2 and all(s.closed for s in slow.streams)
+
+
+def test_the_hedge_can_go_to_a_backup_model_on_the_other_host(monkeypatch):
+    from backend import config as cfg
+
+    class Slow(_FakeAsyncClient):
+        def __init__(self):
+            super().__init__("{}")
+
+            async def create(**kwargs):
+                self.calls.append(kwargs)
+                self.streams.append(_FakeStream(_model_reply([]), first_delay=5))
+                return self.streams[-1]
+
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+
+    fast_host, backup_host = Slow(), _FakeAsyncClient(_model_reply([]))
+    _use(monkeypatch, fast_host)
+    monkeypatch.setattr("backend.agents.suggestion_agent.get_async_llm_client", lambda: backup_host)
+    monkeypatch.setattr(cfg, "SUGGESTION_HEDGE_FIRST_TOKEN_MS", 50)
+    monkeypatch.setattr(cfg, "SUGGESTION_HEDGE_MODEL", "gpt-5.4-mini")
+
+    body = asyncio.run(generate_suggestions(TRANSCRIPT))
+
+    assert body["suggestions"] and body["timings"]["hedged"] is True
+    assert body["timings"]["model"] == "gpt-5.4-mini"
+    assert [c["model"] for c in backup_host.calls] == ["gpt-5.4-mini"] and len(fast_host.calls) == 1
+    assert all(s.closed for s in fast_host.streams)

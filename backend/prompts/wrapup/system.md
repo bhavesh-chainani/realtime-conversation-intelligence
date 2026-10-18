@@ -5,6 +5,7 @@ You write the wrap-up for a call that has just ended at a Singapore employment a
 ## Inputs
 
 - **TODAY**: the date, for due dates and the follow-up date.
+- **CALENDAR**: the next 14 days. To name a date, copy it from here exactly, weekday included; never work out a weekday yourself.
 - **CALLER**: the details on the caller card.
 - **CUSTOMER RECORD**: the caller's prior cases, if any. Open cases may show the next action and when it is due.
 - **SERVICE GUIDE** (at the end of these instructions): the centre's advice per issue type (route, deadline, documents, follow-up).

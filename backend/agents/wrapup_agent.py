@@ -50,33 +50,43 @@ async def generate_wrapup(
         raise ValueError("LLM client is not configured")
     profile = customer_profile or {}
     today = clock.today()
-    response = await client.chat.completions.create(
-        model=get_wrapup_model(),
-        temperature=0.2,
-        max_completion_tokens=cfg.WRAPUP_MAX_TOKENS,
-        timeout=cfg.WRAPUP_TIMEOUT_SECONDS,
-        response_format={"type": "json_object"},
-        messages=[
-            # The guide sits in the system prompt so the provider's prompt cache covers it.
-            {"role": "system", "content": f"{system_prompt('wrapup')}\n\n{issue_guides.render()}"},
-            {
-                "role": "user",
-                "content": user_prompt(
-                    "wrapup",
-                    today=clock.today_label(),
-                    caller=caller_line(profile),
-                    customer_record=format_customer_record(profile, customer_cases, today),
-                    conversation_transcript=conversation_transcript,
-                ),
-            },
-        ],
-        **llm_extra_params(get_wrapup_model()),
-    )
-    parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
-    wrapup = validate_wrapup(parsed, profile, customer_cases, today)
-    if contains_foreign_script(wrapup):
-        raise ForeignScriptError("Wrap-up contained non-English text")
-    return wrapup
+    messages = [
+        # The guide sits in the system prompt so the provider's prompt cache covers it.
+        {"role": "system", "content": f"{system_prompt('wrapup')}\n\n{issue_guides.render()}"},
+        {
+            "role": "user",
+            "content": user_prompt(
+                "wrapup",
+                today=clock.today_label(),
+                calendar=clock.calendar_label(),
+                caller=caller_line(profile),
+                customer_record=format_customer_record(profile, customer_cases, today),
+                conversation_transcript=conversation_transcript,
+            ),
+        },
+    ]
+
+    async def draft() -> dict[str, Any]:
+        response = await client.chat.completions.create(
+            model=get_wrapup_model(),
+            temperature=0.2,
+            max_completion_tokens=cfg.WRAPUP_MAX_TOKENS,
+            timeout=cfg.WRAPUP_TIMEOUT_SECONDS,
+            response_format={"type": "json_object"},
+            messages=messages,
+            **llm_extra_params(get_wrapup_model()),
+        )
+        parsed = json.loads(strip_code_fences(response.choices[0].message.content or ""))
+        wrapup = validate_wrapup(parsed, profile, customer_cases, today)
+        if contains_foreign_script(wrapup):
+            raise ForeignScriptError("Wrap-up contained non-English text")
+        return wrapup
+
+    try:
+        return await draft()
+    except ValueError as exc:  # malformed JSON or a stray non-English word: ask once more
+        logger.warning("[wrapup] unusable draft, asking again: %s", exc)
+        return await draft()
 
 
 def _text(value: Any) -> str:
@@ -123,7 +133,7 @@ def validate_wrapup(
             actions.append(
                 {
                     "owner": "caller" if item.get("owner") == "caller" else "centre",
-                    "action": _text(item.get("action")),
+                    "action": clock.fix_weekdays(_text(item.get("action")), today),
                     "due": _iso_date(item.get("due")),
                 }
             )
@@ -138,24 +148,25 @@ def validate_wrapup(
     follow_up = {
         "date": follow_date,
         "channel": (channel if channel in ("phone", "email", "sms") else "phone" if has_phone else "email"),
-        "reason": _text(follow_raw.get("reason")),
+        "reason": clock.fix_weekdays(_text(follow_raw.get("reason")), today),
     }
 
     msg_raw = raw.get("message_to_caller") if isinstance(raw.get("message_to_caller"), dict) else {}
     msg_channel = "email" if profile.get("email") else "sms"
-    body = str(msg_raw.get("body") or "").strip()
+    body = clock.fix_weekdays(str(msg_raw.get("body") or "").strip(), today)
     message = {
         "channel": msg_channel,
-        "subject": _text(msg_raw.get("subject")) if msg_channel == "email" else "",
+        "subject": clock.fix_weekdays(_text(msg_raw.get("subject")), today) if msg_channel == "email" else "",
         "body": body,
     }
 
     return {
-        "summary": _text(raw.get("summary")),
+        "summary": clock.fix_weekdays(_text(raw.get("summary")), today),
         "issue_type": issue_type,
         "case": case,
         "actions": actions,
-        "next_action": _text(raw.get("next_action")) or (actions[0]["action"] if actions else ""),
+        "next_action": clock.fix_weekdays(_text(raw.get("next_action")), today)
+        or (actions[0]["action"] if actions else ""),
         "follow_up": follow_up,
         "message_to_caller": message,
     }

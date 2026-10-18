@@ -168,3 +168,33 @@ def test_save_case_endpoint(client, monkeypatch):
 
     monkeypatch.setattr("backend.case_store.save", invalid)
     assert client.post("/cases", json=payload).json()["status"] == "invalid"
+
+
+def test_an_unusable_draft_is_asked_again_once(monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+
+    from backend.agents import wrapup_agent
+
+    good = json.dumps(_raw(summary="Called on Thursday 9 October about the renewal."))
+    replies = iter(['{"summary": "مرحبا"}', good])
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=next(replies)))])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(wrapup_agent, "get_async_llm_client", lambda: client)
+    monkeypatch.setattr(wrapup_agent.clock, "today", lambda: TODAY)
+
+    wrapup = asyncio.run(wrapup_agent.generate_wrapup("Customer: hi", VERIFIED, CASES))
+
+    assert len(calls) == 2
+    assert wrapup["summary"] == "Called on Friday 9 October about the renewal."  # weekday corrected too
+
+
+def test_wrong_weekdays_are_corrected_in_the_wrapup():
+    raw = _raw(follow_up={"date": "2026-10-09", "channel": "phone", "reason": "Call on Monday 9 October."})
+    assert validate_wrapup(raw, VERIFIED, CASES, TODAY)["follow_up"]["reason"] == "Call on Friday 9 October."

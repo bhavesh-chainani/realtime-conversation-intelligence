@@ -59,6 +59,14 @@ test("events are validated and normalised", () => {
   });
 });
 
+test("a suggestion draft carries its text", () => {
+  assert.deepEqual(parseAssistEvent({ type: "suggestion_draft", round: 1, text: "When did they" }), {
+    type: "suggestion_draft",
+    text: "When did they",
+  });
+  assert.equal(parseAssistEvent({ type: "suggestion_draft", round: 1 }), null);
+});
+
 test("history results outside ok carry no cases or match", () => {
   const r = parseHistoryResult({
     status: "not_found",

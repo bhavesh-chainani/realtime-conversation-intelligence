@@ -16,6 +16,8 @@ export type AssistEvent =
   | { type: "history"; status: "loading"; lookupKey: string | null }
   | ({ type: "history" } & HistoryResult)
   | { type: "suggesting" }
+  /** The suggestion's wording so far, while the model writes it. */
+  | { type: "suggestion_draft"; text: string }
   | {
       type: "suggestions";
       suggestions: Suggestion[];
@@ -101,6 +103,8 @@ export function parseAssistEvent(raw: unknown): AssistEvent | null {
       return { type: "history", ...parseHistoryResult(ev) };
     case "suggesting":
       return { type: "suggesting" };
+    case "suggestion_draft":
+      return typeof ev.text === "string" ? { type: "suggestion_draft", text: ev.text } : null;
     case "suggestions":
       return {
         type: "suggestions",

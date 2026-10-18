@@ -101,6 +101,30 @@ test("an empty answer keeps the current suggestion", () => {
   assert.deepEqual(s.suggestions, [{ topic: "a" }]);
 });
 
+test("the draft shows while the suggestion streams, and latency counts from its first words", () => {
+  let s = streaming(); // the caller stopped at 100 - 700 = -600
+  s = send(s, { type: "suggesting" });
+  s = send(s, { type: "suggestion_draft", text: "When did" }, s.gen, 400);
+  s = send(s, { type: "suggestion_draft", text: "When did they last pay you?" }, s.gen, 600);
+  assert.equal(s.draft, "When did they last pay you?");
+  s = send(s, { type: "suggestions", suggestions: [{ topic: "a" }], fallback: false, timings: {} }, s.gen, 900);
+  assert.equal(s.draft, null);
+  assert.deepEqual(s.suggestions, [{ topic: "a" }]);
+  assert.equal(s.suggestionMeta?.latencyMs, 1000);
+});
+
+test("a draft is dropped by a new round, the end of the stream or a new stream", () => {
+  const drafting = send(streaming(), { type: "suggestion_draft", text: "Old wording" });
+  assert.equal(send(drafting, { type: "suggesting" }).draft, null);
+  assert.equal(assistReducer(drafting, { type: "streamEnd", gen: 1 }).draft, null);
+  assert.equal(send(drafting, { type: "done" }).draft, null);
+  const next = streaming(drafting, 2);
+  assert.deepEqual([next.draft, next.firstWordsAt], [null, null]);
+  // An empty answer keeps the card on screen but drops the draft.
+  const declined = send(drafting, { type: "suggestions", suggestions: [], fallback: false, timings: {} });
+  assert.equal(declined.draft, null);
+});
+
 test("an abandoned stream puts the history status back", () => {
   let s = streaming();
   s = send(s, { type: "history", status: "loading", lookupKey: "id:91234567" });

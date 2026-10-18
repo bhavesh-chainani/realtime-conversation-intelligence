@@ -28,7 +28,7 @@ cd frontend && npm run format && npm run build
 ## Where things live
 
 - `backend/orchestrator.py`: the order agents run in for a turn, and the `/assist` event schema (documented at the top).
-- `backend/agents/`: `entity_agent.py`, `suggestion_agent.py`. Each calls the LLM once through `backend/llm.py`.
+- `backend/agents/`: `entity_agent.py`, `suggestion_agent.py`. Each calls the LLM once through `backend/llm.py`. The suggestion streams (`suggestion_draft` events; `possibleConversation` is the first key so it streams first), hedges on the first token, and can use its own fast host (`SUGGESTION_BASE_URL`, `get_suggestion_llm_client()`).
 - `backend/prompts/<agent>/`: `system.md` (sent as is) and `user.md` (a `str.format` template). Edit prompts here, never inline in Python.
 - `backend/profile.py`: field precedence (manual > records > heard > ai) and when to look a caller up. `frontend/app/lib/customer-profile.ts` mirrors the precedence; both are tested against `tests/fixtures/profile_precedence.json`, so change all three together.
 - `backend/customer_history.py`: read-only Postgres lookup and how the record is rendered into the suggestion prompt.
@@ -42,7 +42,7 @@ cd frontend && npm run format && npm run build
 ## Conventions
 
 - Agent order and data flow are decided in the backend (`orchestrator.py`); the frontend only renders events and sends staff actions.
-- New LLM calls go through `get_async_llm_client()` in `backend/llm.py` (LiteLLM proxy, async only).
+- New LLM calls go through `get_async_llm_client()` in `backend/llm.py` (LiteLLM proxy, async only); the suggestion agent uses `get_suggestion_llm_client()`.
 - No demo or scripted paths: the app is live-mic only. `scripts/demo_db.py` is the only demo data.
 - Backend tests use fakes for the LLM, DB and agents (see `tests/test_orchestrator.py`); they never call external services.
 - Python is formatted with ruff (110 columns), the frontend with prettier (120 columns). CI checks both.

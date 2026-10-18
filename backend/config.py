@@ -84,15 +84,28 @@ LLM_REASONING_EFFORT = _str("LLM_REASONING_EFFORT")
 LLM_SERVICE_TIER = _str("LLM_SERVICE_TIER")
 
 SUGGESTION_MODEL = _str("SUGGESTION_MODEL", "gpt-4o-mini")
+# Optional own host for the suggestion agent (what Staff wait on), e.g. a fast-inference provider with an
+# OpenAI-compatible API. Empty = the LLM_* host. On its own host, the service tier defaults to empty.
+SUGGESTION_BASE_URL = _str("SUGGESTION_BASE_URL", LLM_BASE_URL)
+SUGGESTION_API_KEY = _str("SUGGESTION_API_KEY", LLM_API_KEY)
+SUGGESTION_REASONING_EFFORT = _str("SUGGESTION_REASONING_EFFORT", LLM_REASONING_EFFORT)
+SUGGESTION_SERVICE_TIER = _str(
+    "SUGGESTION_SERVICE_TIER", LLM_SERVICE_TIER if SUGGESTION_BASE_URL == LLM_BASE_URL else ""
+)
 SUGGESTION_TEMPERATURE = _float("SUGGESTION_TEMPERATURE", 0.3)
 SUGGESTION_MAX = _int("MAX_SUGGESTIONS", 1)
 SUGGESTION_TIMEOUT_SECONDS = _float("SUGGESTION_TIMEOUT_SECONDS", LLM_TIMEOUT_SECONDS)
 SUGGESTION_MAX_TOKENS = _int("SUGGESTION_MAX_TOKENS", 900)
-# Providers stall for seconds at random: after this long, send the same request again and use
-# whichever answers first. 0 turns it off. A normal answer takes about 1.2-2 s.
-SUGGESTION_HEDGE_AFTER_MS = _int("SUGGESTION_HEDGE_AFTER_MS", 2000)
+# Providers stall for seconds at random: if the streamed answer has not started after this long, send the
+# same request again and stream whichever starts first. 0 turns it off. A normal first token takes 0.4-0.9 s.
+SUGGESTION_HEDGE_FIRST_TOKEN_MS = _int("SUGGESTION_HEDGE_FIRST_TOKEN_MS", 1200)
+# Optional: send the hedge's second request to this model on the LLM_* host instead of repeating it on the
+# suggestion host. For a fast suggestion host whose slow moments are slower than the LLM_* host.
+SUGGESTION_HEDGE_MODEL = _str("SUGGESTION_HEDGE_MODEL")
 
-EXTRACTION_MODEL = _str("EXTRACTION_MODEL", SUGGESTION_MODEL)
+# Extraction and wrap-up run on the LLM_* host, so they default to the suggestion model only when it is there too.
+_LLM_HOST_MODEL = SUGGESTION_MODEL if SUGGESTION_BASE_URL == LLM_BASE_URL else "gpt-4o-mini"
+EXTRACTION_MODEL = _str("EXTRACTION_MODEL", _LLM_HOST_MODEL)
 EXTRACTION_TIMEOUT_SECONDS = _float("EXTRACTION_TIMEOUT_SECONDS", LLM_TIMEOUT_SECONDS)
 
 # --- Customer DB: read-only Postgres view ------------------------------------------------------
@@ -112,7 +125,7 @@ CASE_STORE_CASES_TABLE = _str("CASE_STORE_CASES_TABLE", "demo.customer_cases")
 
 # --- Wrap-up agent: end-of-call summary, actions, follow-up and message to the caller ----------
 
-WRAPUP_MODEL = _str("WRAPUP_MODEL", SUGGESTION_MODEL)
+WRAPUP_MODEL = _str("WRAPUP_MODEL", _LLM_HOST_MODEL)
 WRAPUP_TIMEOUT_SECONDS = _float("WRAPUP_TIMEOUT_SECONDS", 45)
 WRAPUP_MAX_TOKENS = _int("WRAPUP_MAX_TOKENS", 1500)
 

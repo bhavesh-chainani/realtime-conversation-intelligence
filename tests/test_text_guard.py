@@ -40,7 +40,7 @@ def test_foreign_suggestion_is_rejected(monkeypatch):
         }
     )
     fake = _SequencedClient(reply)
-    monkeypatch.setattr("backend.agents.suggestion_agent.get_async_llm_client", lambda: fake)
+    monkeypatch.setattr("backend.agents.suggestion_agent.get_suggestion_llm_client", lambda: fake)
 
     body = asyncio.run(suggest_with_fallback("Staff: Hi\nCustomer: My salary was cut.", 1))
 
