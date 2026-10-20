@@ -39,8 +39,8 @@ OPENER = "Hello, Employment Advice Centre, how can I help you today?"
 
 # Per customer turn across every call in this run, in ms: first streamed words, finished suggestion, LLM time.
 TIMINGS: dict[str, list[float]] = {"first words": [], "shown": [], "llm": []}
-# Sarah's last day matches her seeded dismissal case, opened 12 days before the demo DB was seeded.
-SARAH_LAST_DAY = clock.today() - timedelta(days=12)
+# Sarah's last day at ABC: new on the demo call, two weeks after her maternity pay complaint.
+SARAH_LAST_DAY = clock.today() - timedelta(days=21)
 MODELS: set[str] = set()  # suggestion models the backend reported
 
 STORIES = {
@@ -86,38 +86,40 @@ STORIES = {
         "opening": "Hi, I'm calling because my salary was cut this month and nobody told me why.",
     },
     "sarah": {
-        "title": "Main demo: returning caller, dismissal after maternity leave, deadline close",
+        "title": "Main demo: overdue action on an open case, then a new dismissal that connects to it",
         "facts": (
-            "Your name is Sarah Tan. Phone 9234 5678, email sarah.tan@gmail.com. You called the centre "
-            "before. ABC Pte Ltd let you go two weeks after you came back from "
-            "maternity leave. They said your role was redundant, but they hired a replacement. Your last day "
-            f"was {SARAH_LAST_DAY:%A} {SARAH_LAST_DAY.day} {SARAH_LAST_DAY:%B}. Your final month's salary "
-            "(SGD 3,400) and one month's notice pay have not been paid. You have not filed the TADM claim "
-            "yet because you were not sure how. You have the dismissal letter, your contract and your last "
-            "three payslips, and you can send them today. Before the call ends, ask whether you can also get "
-            "back the unpaid final salary and notice pay."
+            "Your name is Sarah Tan. Phone 9234 5678, email sarah.tan@gmail.com. About five weeks ago you "
+            "called the centre because ABC Pte Ltd paid only 8 of your 16 weeks of maternity leave pay; you "
+            "complained to HR in writing and were told to send the centre the HR email and your payslips, but "
+            "you have not sent them yet. HR never replied. Two weeks after your complaint, ABC told you your "
+            "role was redundant and let you go, but then hired someone to replace you. Your last day was "
+            f"{SARAH_LAST_DAY:%A} {SARAH_LAST_DAY.day} {SARAH_LAST_DAY:%B}. You have the dismissal letter. You "
+            "have not filed any TADM claim. You can send the HR email, payslips and dismissal letter today. "
+            "When Staff asks about the maternity pay case, say HR never replied, and that two weeks after you "
+            "complained they told you your role was redundant and let you go, and then hired a replacement."
         ),
-        "opening": (
-            "Hi, I called before about being let go by ABC. They still haven't paid me and I don't "
-            "know what to do next."
-        ),
+        "opening": "Hi, I've just been let go by my company and I don't know what to do.",
         # (check, pattern over Staff's lines, only within the first N lines or None)
         "expect": [
-            ("raised her open case's next action early", r"payslip|file|filed|claim|dismissal letter", 3),
+            (
+                "raised the overdue maternity pay action early",
+                r"maternity|payslip|hr email|hr reply|\bhr\b",
+                3,
+            ),
+            (
+                "connected the dismissal to the maternity pay complaint",
+                r"retaliat|connected to|related to your|link (this|it)|linked to|add (this|it|the dismissal) to"
+                r"|same case|because you (complained|raised)",
+                None,
+            ),
             ("named TADM", r"tadm", None),
             (
                 "gave the 1-month dismissal deadline",
                 r"month|\b\d+ days\b|by (mon|tue|wed|thu|fri|sat|sun)|by \d{1,2} \w+|deadline",
                 None,
             ),
-            (
-                "covered the unpaid salary and notice pay",
-                r"notice pay|final (month|salary)|unpaid salary",
-                None,
-            ),
-            ("gave the 6-month salary deadline (she has left)", r"6 months|six months", None),
         ],
-        "cites": ["CASE-2026-04811"],
+        "cites": ["CASE-2026-03522"],
     },
 }
 

@@ -81,20 +81,18 @@ You play the caller. Follow-up dates are relative to the day the data was seeded
 3. **Repeat employer.** Katherine Liao (9123 4567): her pay was cut after she complained about forfeited
    leave. The assistant raises her open Brightpath leave case, links the new issue to it and advises a TADM
    claim.
-4. **Main demo: Sarah Tan (9234 5678, sarah.tan@gmail.com).** ABC Pte Ltd let her go two weeks
-   after she came back from maternity leave, and her final salary and notice pay are unpaid. Her record has an open
-   wrongful dismissal case (claim not filed yet, with its 1-month filing deadline) and an open unpaid-salary case
-   with overdue documents. One presenter plays Staff, the other Sarah. Agree the beats, then say them in your own
-   words:
+4. **Main demo: Sarah Tan (9234 5678, sarah.tan@gmail.com).** Five weeks ago she reported that ABC Pte Ltd paid only
+   half her maternity leave pay; she still owes the centre her HR email and payslips. Now ABC has let her go. One
+   presenter plays Staff, the other Sarah. Agree the beats, then say them in your own words:
 
    | Beat | Sarah says (gist) | What the audience sees |
    | --- | --- | --- |
-   | 1 | "I called before. ABC let me go and still hasn't paid me." | Suggestion: ask for name, number and email |
-   | 2 | Name, "nine two three four, five six seven eight", email | Caller card fills, 2 open cases; suggestion asks about both pending actions and gives the dismissal claim's filing date |
-   | 3 | Hasn't filed yet; explains the maternity-leave timing and the replacement hire | Advice: TADM wrongful dismissal claim by the recorded date; documents to send; cites CASE-2026-04811 |
-   | 4 | "Can I also get my final salary and notice pay back?" | TADM salary claim within 6 months of her last day; links CASE-2026-04812 |
+   | 1 | "I've just been let go by my company and I don't know what to do." | Suggestion: ask for name, number and email |
+   | 2 | Name, "nine two three four, five six seven eight", email | Caller card fills, 1 open case with an overdue action; suggestion asks about the maternity pay case first |
+   | 3 | "Not yet. HR never replied, and two weeks after I complained they said my role was redundant, then hired someone else." | Suggestion: this may be retaliation for her complaint; it will be added to her open case |
+   | 4 | Her last day was about three weeks ago; she has the dismissal letter | Advice: TADM wrongful dismissal claim within 1 month of her last day, documents to send |
    | 5 | "When will you follow up?" | A follow-up date with the right weekday; warm close |
-   | 6 | Staff clicks **End call**, then **Save to case system** | Case note, actions, follow-up and the message to Sarah; the saved case |
+   | 6 | Staff clicks **End call**, then **Save to case system** | Case note, actions, follow-up and the message to Sarah; the case is updated |
 
    Staff speaks first (the first new voice is Staff). If the roles come out swapped, click **Swap roles**. Say the
    phone number digit by digit. Rehearse without a microphone with `python scripts/simulate_call.py --story sarah`.

@@ -30,11 +30,9 @@ CUSTOMERS = [
     ("CUST-0011", "Sarah Tan", "+65 9234 5678", "sarah.tan@gmail.com"),
 ]
 
-# Sarah's last day of work, and the wrongful dismissal filing deadline a month later, as a case system would
-# record them (relative to the day the script runs, like the other dates).
-SARAH_LAST_DAY = date.today() - timedelta(days=12)
-SARAH_CLAIM_BY = SARAH_LAST_DAY + timedelta(days=30)
-SARAH_SALARY_CLAIM_BY = SARAH_LAST_DAY + timedelta(days=182)  # salary claims: 6 months after leaving
+# The day Sarah complained to ABC's HR in writing about her maternity leave pay (relative to the day the script
+# runs, like the other dates). Her dismissal soon after is new on the demo call, so it is not in the record.
+SARAH_HR_EMAIL = date.today() - timedelta(days=36)
 
 # Dates are days relative to the day the script runs, so open cases always have a current or overdue
 # follow-up. (customer_id, case_id, company, case_type, case_status, case_summary,
@@ -94,35 +92,28 @@ CASES = [
     ("CUST-0010", "CASE-2026-04120", "Sunshine Childcare Centre", "Overtime pay", "Advice given",
      "Overtime for weekend events not paid since July. Advised to file a TADM claim.",
      21, "Caller to confirm the TADM claim was filed", -3),
-    # Sarah: a recent dismissal close to the 1-month filing deadline, with final pay still owed.
-    ("CUST-0011", "CASE-2025-05530", "Lumina Events Pte Ltd", "Annual leave pay", "Resolved",
-     "Eight days of unused annual leave not paid out on resignation. Employer paid SGD 1,120 after TADM "
-     "mediation.",
-     480, None, None),
-    ("CUST-0011", "CASE-2026-04811", "ABC Pte Ltd", "Wrongful dismissal", "Open",
-     f"Dismissed without notice two weeks after returning from maternity leave; told her role was "
-     f"redundant, but a replacement was hired. Last day of work {SARAH_LAST_DAY:%A} {SARAH_LAST_DAY.day} {SARAH_LAST_DAY:%B %Y}. TADM wrongful "
-     f"dismissal claim not yet filed: it must be filed by {SARAH_CLAIM_BY:%A} {SARAH_CLAIM_BY.day} {SARAH_CLAIM_BY:%B %Y} (1 month from the last day).",
-     12, "Caller to file the TADM wrongful dismissal claim and send the dismissal letter", 3),
-    ("CUST-0011", "CASE-2026-04812", "ABC Pte Ltd", "Unpaid salary", "Open",
-     f"Final month's salary (SGD 3,400) and one month's notice pay not paid after the dismissal. As she has "
-     f"left, the TADM salary claim must be filed within 6 months of the last day, by "
-     f"{SARAH_SALARY_CLAIM_BY:%A} {SARAH_SALARY_CLAIM_BY.day} {SARAH_SALARY_CLAIM_BY:%B %Y}.",
-     12, "Caller to send her last three payslips and the contract", -2),
+    # Sarah (main demo): one open case with an overdue action. On the call she reports being let go soon after
+    # this complaint, which the assistant should connect to it.
+    ("CUST-0011", "CASE-2026-03522", "ABC Pte Ltd", "Maternity leave pay", "Open",
+     f"Employer paid only 8 of her 16 weeks of maternity leave pay. Caller raised it with HR in writing on "
+     f"{SARAH_HR_EMAIL:%A} {SARAH_HR_EMAIL.day} {SARAH_HR_EMAIL:%B %Y}. Advised a TADM salary claim if HR does "
+     f"not reply within 2 weeks.",
+     35, "Caller to send the HR email and her payslips for the leave period", -3),
 ]  # fmt: skip
 
 # What the centre advises per issue type. Demo content: check with the centre's legal team before use.
 # (issue_type, applies_when, facts_to_gather, documents, route, deadline, follow_up)
 ISSUE_GUIDES = [
     ("Unpaid or late salary",
-     "Salary, overtime pay or final pay not paid, or paid late.",
+     "Salary, overtime pay, maternity leave pay or final pay not paid, or paid late.",
      "Employer; which months or amounts are unpaid; whether the caller still works there (last day if "
      "not); whether they have asked the employer in writing.",
      "Payslips, bank statements showing pay dates, contract or offer letter, timesheets, messages with "
      "the employer.",
      "File a salary claim online with TADM (Tripartite Alliance for Dispute Management), which arranges "
      "mediation. If mediation fails, the claim can go to the Employment Claims Tribunals (ECT).",
-     "Generally within 1 year of the amount falling due if still employed, or within 6 months of leaving.",
+     "If the caller has left (dismissed or resigned): generally within 6 months of the last day of work. If "
+     "still employed: generally within 1 year of the amount falling due.",
      "Call back in 7 days to confirm the TADM claim was submitted and help with missing documents."),
     ("Unauthorised salary deductions",
      "Money deducted from pay for damage, losses, accommodation, fines or other charges.",
@@ -159,7 +150,9 @@ ISSUE_GUIDES = [
      "Date of dismissal and last day of work; reason given; whether notice or notice pay was given; "
      "length of service; whether the caller resigned or was dismissed.",
      "Dismissal letter or messages, contract, payslips, warning letters, notes of what was said.",
-     "File a wrongful dismissal claim online with TADM for mediation; unresolved claims go to the ECT.",
+     "File a wrongful dismissal claim online with TADM for mediation; unresolved claims go to the ECT. "
+     "Unpaid final salary or notice pay is a separate TADM salary claim, with its own deadline (see Unpaid "
+     "or late salary).",
      "Generally within 1 month of the last day of employment, so act quickly.",
      "Call back in 3 days: the deadline is short."),
     ("Work injury",
