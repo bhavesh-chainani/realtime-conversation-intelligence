@@ -1,0 +1,74 @@
+[
+  {
+    "case": "empty field takes any source",
+    "values": {},
+    "sources": {},
+    "source": "ai",
+    "patch": { "name": "Katherine Liao", "email": "" },
+    "accepted": { "name": "Katherine Liao" }
+  },
+  {
+    "case": "staff edits always win",
+    "values": { "contact_number": "81111111" },
+    "sources": { "contact_number": "manual" },
+    "source": "records",
+    "patch": { "contact_number": "91234567" },
+    "accepted": {}
+  },
+  {
+    "case": "records beat heard and ai",
+    "values": { "name": "Katherine Liao" },
+    "sources": { "name": "records" },
+    "source": "heard",
+    "patch": { "name": "Catherine Liao" },
+    "accepted": {}
+  },
+  {
+    "case": "records replace heard",
+    "values": { "name": "Catherine Liao" },
+    "sources": { "name": "heard" },
+    "source": "records",
+    "patch": { "name": "Katherine Liao" },
+    "accepted": { "name": "Katherine Liao" }
+  },
+  {
+    "case": "ai may not reformat a heard contact number",
+    "values": { "contact_number": "91234567" },
+    "sources": { "contact_number": "heard" },
+    "source": "ai",
+    "patch": { "contact_number": "91234568", "purpose_of_call": "Leave dispute" },
+    "accepted": { "purpose_of_call": "Leave dispute" }
+  },
+  {
+    "case": "ai may correct a heard email",
+    "values": { "email": "liao@gmail.com" },
+    "sources": { "email": "heard" },
+    "source": "ai",
+    "patch": { "email": "katherine.liao@gmail.com" },
+    "accepted": { "email": "katherine.liao@gmail.com" }
+  },
+  {
+    "case": "ai may update other heard fields",
+    "values": { "name": "Katherine" },
+    "sources": { "name": "heard" },
+    "source": "ai",
+    "patch": { "name": "Katherine Liao" },
+    "accepted": { "name": "Katherine Liao" }
+  },
+  {
+    "case": "same value from the same source is not a change",
+    "values": { "email": "katherine.liao@gmail.com" },
+    "sources": { "email": "ai" },
+    "source": "ai",
+    "patch": { "email": " katherine.liao@gmail.com " },
+    "accepted": {}
+  },
+  {
+    "case": "unknown fields are ignored",
+    "values": {},
+    "sources": {},
+    "source": "heard",
+    "patch": { "employer": "Brightpath" },
+    "accepted": {}
+  }
+]

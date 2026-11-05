@@ -1,0 +1,14 @@
+TODAY: {today}
+CALENDAR (next 14 days): {calendar}
+
+{customer_record}
+
+{caller_card}
+
+SUGGESTION STAFF CAN SEE NOW (from the previous turn):
+{previous_suggestions}
+
+LIVE CALL TRANSCRIPT (most recent line last):
+{conversation_transcript}
+
+Give the {max_suggestions} most useful suggestion(s) for what Staff should say next. Return the JSON object only.

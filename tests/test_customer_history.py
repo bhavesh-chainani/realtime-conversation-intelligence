@@ -1,0 +1,268 @@
+from __future__ import annotations
+
+from backend.customer_history import (
+    customer_history_service,
+    format_caller_card,
+    format_customer_record,
+)
+
+
+class _FakeService:
+    def lookup(self, phone, email):
+        if phone == "+65 8234 5678":
+            return {
+                "status": "ok",
+                "match_strategy": "contact_number",
+                "customer": {"name": "Raja", "contact_number": "8234 5678", "email": "raja@gmail.com"},
+                "cases": [
+                    {
+                        "case_id": "#CH298D",
+                        "company": "ABC",
+                        "type": "Employer dispute",
+                        "status": "Resolved",
+                        "summary": "Salary underpayment complaint settled through mediation.",
+                    }
+                ],
+                "open_count": 0,
+                "summary": "Raja has 1 matching case in customer history.",
+            }
+        return {
+            "status": "not_found",
+            "summary": "No prior cases found for the provided details.",
+            "cases": [],
+        }
+
+
+def test_customer_history_endpoint_happy_path(client, monkeypatch):
+    monkeypatch.setattr("backend.customer_history.customer_history_service", _FakeService())
+
+    r = client.post(
+        "/customer-history",
+        json={"contact_number": "+65 8234 5678"},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["customer"]["name"] == "Raja"
+    assert len(body["cases"]) == 1
+    # Keyed on the record's phone and email, which the caller card now holds.
+    assert body["lookup_key"] == "id:82345678|raja@gmail.com"
+    # Only a phone / email match prefills the caller card.
+    assert body["prefill"] == {
+        "name": "Raja",
+        "contact_number": "8234 5678",
+        "email": "raja@gmail.com",
+    }
+
+
+def test_customer_history_endpoint_no_match(client, monkeypatch):
+    monkeypatch.setattr("backend.customer_history.customer_history_service", _FakeService())
+
+    r = client.post("/customer-history", json={"contact_number": "8111 2222"})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "not_found"
+    assert body["cases"] == []
+    assert body["lookup_key"] == "id:81112222"
+    assert body["prefill"] is None
+
+
+def test_customer_history_service_requires_a_valid_phone_or_email(monkeypatch):
+    def never(*args):
+        raise AssertionError("queried the DB")
+
+    monkeypatch.setattr(customer_history_service, "_query_rows", never)
+    for phone, email in (("", ""), ("9123", "katherine at example")):
+        body = customer_history_service.lookup(phone, email)
+        assert body["status"] == "invalid_input"
+        assert body["cases"] == []
+
+
+def test_a_name_alone_never_looks_up(client):
+    """A name cannot prove who the caller is, so the endpoint ignores it and finds nothing to search."""
+    body = client.post("/customer-history", json={"name": "Katherine Liao"}).json()
+    assert body["status"] == "invalid_input"
+    assert body["lookup_key"] is None and body["prefill"] is None
+
+
+def test_lookup_returns_the_record_open_count_and_open_cases_first(monkeypatch):
+    from backend import config as cfg
+
+    rows = [
+        {
+            "customer_name": "Katherine Liao",
+            "contact_number": "+65 9123 4567",
+            "email": "katherine.liao@gmail.com",
+            "case_id": "CASE-2025-10421",
+            "company": "Brightpath Logistics Pte Ltd",
+            "case_type": "Salary dispute",
+            "case_status": "Resolved",
+            "case_summary": "Paid after mediation.",
+        },
+        {
+            "customer_name": "Katherine Liao",
+            "contact_number": "+65 9123 4567",
+            "email": "katherine.liao@gmail.com",
+            "case_id": "CASE-2026-03117",
+            "company": "Brightpath Logistics Pte Ltd",
+            "case_type": "Leave entitlement",
+            "case_status": "Open",
+            "case_summary": "Awaiting employer response.",
+            "follow_up_due": "2026-10-08",
+        },
+    ]
+    monkeypatch.setattr(cfg, "CUSTOMER_HISTORY_DATABASE_URL", "postgresql://fake")
+    queried = []
+
+    def fake_query(clean_phone, clean_email):
+        queried.append((clean_phone, clean_email))
+        return rows, "contact_number"
+
+    monkeypatch.setattr(customer_history_service, "_query_rows", fake_query)
+
+    body = customer_history_service.lookup("+65 9123 4567", " K.Liao@Gmail.com ")
+
+    # The service queries with normalised values.
+    assert queried == [("91234567", "k.liao@gmail.com")]
+    assert body["status"] == "ok"
+    assert body["customer"] == {
+        "name": "Katherine Liao",
+        "contact_number": "+65 9123 4567",
+        "email": "katherine.liao@gmail.com",
+    }
+    assert body["open_count"] == 1
+    assert (
+        body["summary"]
+        == "Katherine Liao has 2 matching cases in customer history. Matched on contact number."
+    )
+    assert [c["case_id"] for c in body["cases"]] == ["CASE-2026-03117", "CASE-2025-10421"]
+    # View columns are mapped to case fields; missing ones become "".
+    assert (
+        body["cases"][0]["type"] == "Leave entitlement" and body["cases"][0]["follow_up_due"] == "2026-10-08"
+    )
+    assert body["cases"][1]["next_action"] == ""
+
+
+def test_a_failed_lookup_does_not_leak_the_database_error(monkeypatch):
+    from backend import config as cfg
+
+    monkeypatch.setattr(cfg, "CUSTOMER_HISTORY_DATABASE_URL", "postgresql://fake")
+
+    def boom(*args):
+        raise RuntimeError("password authentication failed for user demo")
+
+    monkeypatch.setattr(customer_history_service, "_query_rows", boom)
+    body = customer_history_service.lookup("91234567", None)
+    assert body["status"] == "error" and "password" not in str(body)
+
+
+def test_customer_record_names_how_it_was_matched():
+    cases = [{"case_id": "CASE-1", "status": "Open"}]
+    profile = {
+        "name": "Katherine Liao",
+        "contact_number": "91234567",
+        "email": "k@gmail.com",
+    }
+
+    by_phone = format_customer_record({**profile, "record_match": "contact_number"}, cases)
+    assert "matched on contact number" in by_phone
+    assert "Name: Katherine Liao | Phone: 91234567 | Email: k@gmail.com" in by_phone
+
+    by_email = format_customer_record({**profile, "record_match": "email"}, cases)
+    assert "matched on email" in by_email
+
+
+def test_caller_card_lists_what_is_known_and_what_to_ask_for():
+    card = format_caller_card({})
+    assert "Name: not given | Contact number: not given | Email: not given" in card
+    assert "Ask for the caller's full name, contact number and email address in one question" in card
+
+    card = format_caller_card({"name": "Katherine Liao", "lookup_status": "not_started"})
+    assert "Name: Katherine Liao" in card
+    assert "Ask for the caller's contact number and email address in one question" in card
+
+    card = format_caller_card({"contact_number": "9123 45", "lookup_status": "not_started"})
+    assert "a complete contact number" in card
+
+
+def test_caller_card_history_check_states():
+    def check(**profile):
+        return format_caller_card(profile).split("HISTORY CHECK: ", 1)[1]
+
+    # A phone was heard and is being looked up: still collect the email meanwhile.
+    pending = check(lookup_status="pending", name="Rajesh Kumar", contact_number="82345678")
+    assert pending.startswith("in progress") and "Ask for the caller's email address" in pending
+    assert "verified (matched on email)" in check(lookup_status="verified", record_match="email")
+    # Only a name so far: the check has not run, and asks for both contact details.
+    assert "contact number and email address in one question, so the history check can run" in check(
+        lookup_status="not_started", name="Katherine Liao"
+    )
+    # Not found by phone: ask for the email to check once more; with both, a new caller.
+    assert "Ask for the caller's email address" in check(
+        lookup_status="not_found", name="A B", contact_number="81112222"
+    )
+    assert "new caller" in check(
+        lookup_status="not_found",
+        name="A B",
+        contact_number="81112222",
+        email="a@b.com",
+    )
+    assert "could not be checked" in check(lookup_status="unavailable")
+
+
+def test_customer_record_shows_next_action_and_overdue_follow_up():
+    from datetime import date
+
+    cases = [
+        {
+            "case_id": "CASE-2026-01954",
+            "status": "Pending documents",
+            "opened_on": "2026-08-06",
+            "next_action": "Caller to send the medical report",
+            "follow_up_due": "2026-10-03",
+        },
+        {
+            "case_id": "CASE-2025-08833",
+            "status": "Closed",
+            "next_action": "old",
+            "follow_up_due": "2025-01-01",
+        },
+    ]
+    text = format_customer_record({"record_match": "contact_number"}, cases, date(2026, 10, 5))
+    assert (
+        "opened 2026-08-06 | next: Caller to send the medical report | follow-up due 2026-10-03 (OVERDUE)"
+    ) in text
+    assert (
+        "ACTIONS TO RAISE FIRST: CASE-2026-01954: Caller to send the medical report (due 2026-10-03 (OVERDUE))"
+    ) in text
+    closed_line = text.splitlines()[-1]
+    assert "next:" not in closed_line and "follow-up" not in closed_line
+
+
+def test_actions_due_soon_are_raised_first_too_earliest_first():
+    from datetime import date
+
+    cases = [
+        {
+            "case_id": "CASE-B",
+            "status": "Open",
+            "next_action": "File the claim",
+            "follow_up_due": "2026-10-15",
+        },
+        {
+            "case_id": "CASE-A",
+            "status": "Open",
+            "next_action": "Send payslips",
+            "follow_up_due": "2026-10-12",
+        },
+        {"case_id": "CASE-C", "status": "Open", "next_action": "Later", "follow_up_due": "2026-10-30"},
+    ]
+    text = format_customer_record({"record_match": "contact_number"}, cases, date(2026, 10, 14))
+    first = next(line for line in text.splitlines() if line.startswith("ACTIONS TO RAISE FIRST"))
+    assert first == (
+        "ACTIONS TO RAISE FIRST: CASE-A: Send payslips (due 2026-10-12 (OVERDUE)); "
+        "CASE-B: File the claim (due 2026-10-15 (due in 1 day))"
+    )
+    assert "CASE-C" not in first and "follow-up due 2026-10-30 |" not in first

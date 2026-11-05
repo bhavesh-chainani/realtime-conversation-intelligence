@@ -1,0 +1,248 @@
+{
+ "note": "Real u3-rt-pro formatted final from the 'hard' eval audio: AssemblyAI merged the staff and customer lines into one turn labelled B. truth = ground-truth speech spans (ms).",
+ "turn": {
+  "type": "Turn",
+  "turn_order": 1,
+  "turn_is_formatted": true,
+  "end_of_turn": true,
+  "transcript": "This is Bhavesh. May I have your name and NRIC, please? Hi, Bhavesh. My name is Katherine Liao, and my NRIC is S1234567A. Right.",
+  "speaker_label": "B",
+  "words": [
+   {
+    "start": 6385,
+    "end": 6482,
+    "text": "This",
+    "confidence": 0.991207,
+    "speaker": "PENDING",
+    "word_is_final": true
+   },
+   {
+    "start": 6546,
+    "end": 6578,
+    "text": "is",
+    "confidence": 0.999964,
+    "speaker": "PENDING",
+    "word_is_final": true
+   },
+   {
+    "start": 6708,
+    "end": 6966,
+    "text": "Bhavesh.",
+    "confidence": 0.989924,
+    "speaker": "PENDING",
+    "word_is_final": true
+   },
+   {
+    "start": 7677,
+    "end": 7758,
+    "text": "May",
+    "confidence": 0.999779,
+    "speaker": "A",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 7822,
+    "end": 7839,
+    "text": "I",
+    "confidence": 0.999981,
+    "speaker": "A",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 7839,
+    "end": 7952,
+    "text": "have",
+    "confidence": 0.999983,
+    "speaker": "A",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 8000,
+    "end": 8097,
+    "text": "your",
+    "confidence": 0.999984,
+    "speaker": "A",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 8097,
+    "end": 8275,
+    "text": "name",
+    "confidence": 0.999939,
+    "speaker": "A",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 8339,
+    "end": 8436,
+    "text": "and",
+    "confidence": 0.999669,
+    "speaker": "A",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 8549,
+    "end": 9147,
+    "text": "NRIC,",
+    "confidence": 0.972589,
+    "speaker": "A",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 9212,
+    "end": 9486,
+    "text": "please?",
+    "confidence": 0.999911,
+    "speaker": "A",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 10181,
+    "end": 10278,
+    "text": "Hi,",
+    "confidence": 0.508417,
+    "speaker": "PENDING",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 10343,
+    "end": 10536,
+    "text": "Bhavesh.",
+    "confidence": 0.834835,
+    "speaker": "PENDING",
+    "speaker_confidence": 0.805421,
+    "word_is_final": true
+   },
+   {
+    "start": 10666,
+    "end": 10746,
+    "text": "My",
+    "confidence": 0.999834,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 10763,
+    "end": 10859,
+    "text": "name",
+    "confidence": 0.999964,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 10908,
+    "end": 10940,
+    "text": "is",
+    "confidence": 0.998056,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 10989,
+    "end": 11344,
+    "text": "Katherine",
+    "confidence": 0.999824,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 11393,
+    "end": 11635,
+    "text": "Liao,",
+    "confidence": 0.533037,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 11958,
+    "end": 12023,
+    "text": "and",
+    "confidence": 0.999315,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 12039,
+    "end": 12120,
+    "text": "my",
+    "confidence": 0.999861,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 12184,
+    "end": 12394,
+    "text": "NRIC",
+    "confidence": 0.99972,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 12604,
+    "end": 12637,
+    "text": "is",
+    "confidence": 0.997948,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 12830,
+    "end": 15512,
+    "text": "S1234567A.",
+    "confidence": 0.989913,
+    "speaker": "B",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   },
+   {
+    "start": 16142,
+    "end": 16207,
+    "text": "Right.",
+    "confidence": 0.884234,
+    "speaker": "A",
+    "speaker_confidence": 1.0,
+    "word_is_final": true
+   }
+  ]
+ },
+ "truth": [
+  {
+   "role": "staff",
+   "start_ms": 4030,
+   "end_ms": 9576
+  },
+  {
+   "role": "customer",
+   "start_ms": 10176,
+   "end_ms": 15578
+  },
+  {
+   "role": "staff",
+   "start_ms": 16011,
+   "end_ms": 16439
+  },
+  {
+   "role": "staff",
+   "start_ms": 16662,
+   "end_ms": 20666
+  }
+ ]
+}
